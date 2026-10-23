@@ -6,7 +6,7 @@ Severity: **S1** blocks release · **S2** noticeable / needs work · **S3** cosm
 
 | # | Issue | Impact | Plan |
 |---|---|---|---|
-| 1 | **No native APK/AAB in this build.** The sandbox has no Android SDK, JDK, Gradle or Godot editor, and Godot release downloads are unreachable from it. | The game ships as a web build + installable PWA, not a Play-Store-ready binary. | Documented, executable route in `docs/ANDROID_PACKAGING.md` (Capacitor/TWA wrapper or Godot port). |
+| 1 | **Debug-signed test APK only (not a Play Store release AAB).** `npm run build:apk` packages `dist/` into `banglar-tesla-v0.1.0-android-test-debug.apk` (`com.shostalab.banglartesla`) signed with a standard Android debug key. | Suitable for direct sideloading on Android phones (`Install unknown apps`), not Play Console upload. | Build a release-signed `.aab` from `android/` (`./gradlew bundleRelease`) with a private upload keystore before Play Store submission. |
 | 2 | **No measured performance on real phones.** Frame time was only observed under a software rasteriser, which is not representative. | Cannot claim "30 FPS on low-end devices". | Quality presets, dynamic fallback and strict draw-call discipline are in place; must be profiled on real hardware before release. |
 
 ## S2 — Notable gaps in the slice

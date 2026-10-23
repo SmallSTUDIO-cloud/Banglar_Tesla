@@ -92,7 +92,9 @@ export class AppUI {
   private settingsReturn: (() => void) | null = null;
   private lastHintKey: string | null = null;
   private wheelActive = false;
+  private wheelPointerId: number | null = null;
   private wheelStartX = 0;
+  private touchReleaseCallbacks: Array<() => void> = [];
   private garageTab: 'paint' | 'upgrades' | 'accessories' | 'vehicles' = 'paint';
   private garageFrom: 'menu' | 'pause' | 'result' = 'menu';
   private storeTab: 'vehicles' | 'upgrades' | 'paint' | 'accessories' = 'vehicles';
@@ -128,6 +130,51 @@ export class AppUI {
       void this.installEvent;
       this.refreshMenuChrome();
     });
+    window.addEventListener('blur', () => this.releaseTouchInputs());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.releaseTouchInputs();
+    });
+  }
+
+  releaseTouchInputs(): void {
+    for (const release of this.touchReleaseCallbacks) release();
+    this.bridge.input.setTouchSteer(0);
+    this.bridge.input.setWheelSteer(0);
+    this.bridge.input.setPedal(false);
+    this.bridge.input.setBrake(false);
+  }
+
+  /** Handles Android hardware back / browser back navigation. Returns true if consumed. */
+  handleBackAction(): boolean {
+    switch (this.current) {
+      case 'hud':
+        this.bridge.pauseGame();
+        return true;
+      case 'pause':
+        this.bridge.resumeGame();
+        return true;
+      case 'settings':
+        this.closeSettings();
+        return true;
+      case 'garage':
+        this.closeGarage();
+        return true;
+      case 'store':
+        this.show('menu');
+        this.bridge.setShowroomVisible(false);
+        return true;
+      case 'credits':
+        this.show('menu');
+        return true;
+      case 'tutorial':
+        this.finishTutorial();
+        return true;
+      case 'result':
+        this.bridge.returnToMenu();
+        return true;
+      default:
+        return false;
+    }
   }
 
   // -------------------------------------------------------------- screens
@@ -139,6 +186,7 @@ export class AppUI {
   }
 
   show(name: string | null): void {
+    if (name !== 'hud') this.releaseTouchInputs();
     for (const [, el] of this.screens) el.classList.add('hidden');
     this.current = name;
     if (name) this.screens.get(name)?.classList.remove('hidden');
@@ -294,7 +342,7 @@ export class AppUI {
     const obMeter = h('div', { class: 'ob-meter' }, h('i'));
     const objective = h('div', { class: 'objective' }, objectiveLabel, objectiveTitle, objectiveSub, obMeter);
 
-    const wallet = h('div', { class: 'wallet' }, h('span', { text: '৳' }), h('span', { text: formatTaka(this.state.balance) }));
+    const wallet = h('div', { class: 'wallet' }, h('span', { class: 'menu-money-icon', html: ICONS.coin }), h('span', { text: formatTaka(this.state.balance) }));
     const pauseBtn = h('button', { class: 'icon-btn', attrs: { type: 'button', 'aria-label': 'pause' }, html: ICONS.pause, on: { click: () => this.bridge.pauseGame() } });
     const camBtn = h('button', { class: 'icon-btn', attrs: { type: 'button', 'aria-label': 'camera' }, html: ICONS.camera, on: { click: () => this.bridge.toggleCamera() } });
     const mini = h('div', { class: 'minimap' });
@@ -329,29 +377,67 @@ export class AppUI {
     const horn = h('button', { class: 'touch-btn horn', attrs: { type: 'button', 'aria-label': 'bell' }, html: ICONS.bell });
 
     const holdButton = (btn: HTMLElement, onDown: () => void, onUp: () => void): void => {
-      const down = (ev: Event): void => {
+      const activePointers = new Set<number>();
+      const down = (ev: PointerEvent): void => {
         ev.preventDefault();
+        void this.bridge.audio.init();
+        activePointers.add(ev.pointerId);
         btn.classList.add('active');
         onDown();
         try {
-          (btn as HTMLElement).setPointerCapture((ev as PointerEvent).pointerId);
+          btn.setPointerCapture(ev.pointerId);
         } catch {
-          /* ignore */
+          /* synthetic or unsupported pointer capture */
         }
       };
-      const up = (ev: Event): void => {
+      const up = (ev: PointerEvent): void => {
         ev.preventDefault();
-        btn.classList.remove('active');
-        onUp();
+        activePointers.delete(ev.pointerId);
+        if (activePointers.size === 0) {
+          btn.classList.remove('active');
+          onUp();
+        }
       };
+      this.touchReleaseCallbacks.push(() => {
+        if (activePointers.size > 0 || btn.classList.contains('active')) {
+          activePointers.clear();
+          btn.classList.remove('active');
+          onUp();
+        }
+      });
       btn.addEventListener('pointerdown', down);
       btn.addEventListener('pointerup', up);
       btn.addEventListener('pointercancel', up);
-      btn.addEventListener('pointerleave', up);
+      btn.addEventListener('lostpointercapture', up);
       btn.addEventListener('contextmenu', (e) => e.preventDefault());
     };
-    holdButton(steerLeft, () => this.bridge.input.setTouchSteer(-1), () => this.bridge.input.setTouchSteer(0));
-    holdButton(steerRight, () => this.bridge.input.setTouchSteer(1), () => this.bridge.input.setTouchSteer(0));
+    let steerLeftHeld = false;
+    let steerRightHeld = false;
+    const syncTouchSteer = (): void => {
+      this.bridge.input.setTouchSteer((steerRightHeld ? 1 : 0) - (steerLeftHeld ? 1 : 0));
+    };
+    holdButton(
+      steerLeft,
+      () => {
+        steerLeftHeld = true;
+        syncTouchSteer();
+      },
+      () => {
+        steerLeftHeld = false;
+        syncTouchSteer();
+      },
+    );
+    holdButton(
+      steerRight,
+      () => {
+        steerRightHeld = true;
+        syncTouchSteer();
+      },
+      () => {
+        steerRightHeld = false;
+        syncTouchSteer();
+      },
+    );
     holdButton(pedal, () => this.bridge.input.setPedal(true), () => this.bridge.input.setPedal(false));
     holdButton(brake, () => this.bridge.input.setBrake(true), () => this.bridge.input.setBrake(false));
     horn.addEventListener('pointerdown', (ev) => {
@@ -414,25 +500,42 @@ export class AppUI {
       style: 'position:absolute;left:calc(var(--safe-l) + 1.1rem);bottom:calc(var(--safe-b) + 1.1rem);pointer-events:auto;',
     }, ring);
     const start = (ev: PointerEvent): void => {
+      ev.preventDefault();
+      void this.bridge.audio.init();
       this.wheelActive = true;
+      this.wheelPointerId = ev.pointerId;
       this.wheelStartX = ev.clientX;
-      ring.setPointerCapture(ev.pointerId);
+      try {
+        ring.setPointerCapture(ev.pointerId);
+      } catch {
+        /* synthetic or unsupported pointer capture */
+      }
     };
     const move = (ev: PointerEvent): void => {
-      if (!this.wheelActive) return;
+      if (!this.wheelActive || ev.pointerId !== this.wheelPointerId) return;
       const dx = clamp((ev.clientX - this.wheelStartX) / 44, -1, 1);
       knob.style.transform = `translateX(${dx * 22}px)`;
       this.bridge.input.setWheelSteer(dx);
     };
-    const end = (): void => {
+    const end = (ev: PointerEvent): void => {
+      if (this.wheelPointerId !== null && ev.pointerId !== this.wheelPointerId) return;
       this.wheelActive = false;
+      this.wheelPointerId = null;
       knob.style.transform = 'translateX(0)';
       this.bridge.input.setWheelSteer(0);
     };
+    this.touchReleaseCallbacks.push(() => {
+      this.wheelActive = false;
+      this.wheelPointerId = null;
+      knob.style.transform = 'translateX(0)';
+      this.bridge.input.setWheelSteer(0);
+    });
     ring.addEventListener('pointerdown', start);
     ring.addEventListener('pointermove', move);
     ring.addEventListener('pointerup', end);
     ring.addEventListener('pointercancel', end);
+    ring.addEventListener('lostpointercapture', end);
+    ring.addEventListener('contextmenu', (e) => e.preventDefault());
     return { el };
   }
 
@@ -442,14 +545,17 @@ export class AppUI {
     this.hudWheel.classList.toggle('hidden', !wheel);
     this.hudSteerPad.classList.toggle('hidden', wheel);
     this.hudSteerPad.firstElementChild?.classList.toggle('hidden', false);
-    this.hudPedal.classList.toggle('hidden', wheel);
-    this.hudBrake.classList.toggle('hidden', wheel);
-    // handedness: swap the two clusters
+    // Pedal and Brake must always remain accessible on touch devices, including in analog wheel mode.
+    this.hudPedal.classList.remove('hidden');
+    this.hudBrake.classList.remove('hidden');
+    // handedness: swap the two clusters and keep Pedal under the outer driving thumb
     const left = this.hudLeft;
     const bottom = left.parentElement;
     if (!bottom) return;
     const leftFirst = settings.handedness === 'right';
     bottom.style.flexDirection = leftFirst ? 'row' : 'row-reverse';
+    const rightCluster = this.hudPedal.parentElement as HTMLElement | null;
+    if (rightCluster) rightCluster.style.flexDirection = leftFirst ? 'row' : 'row-reverse';
     // mirror the wheel to the opposite corner when left-handed
     this.hudWheel.style.left = settings.handedness === 'right' ? 'calc(var(--safe-l) + 1.1rem)' : 'auto';
     this.hudWheel.style.right = settings.handedness === 'right' ? 'auto' : 'calc(var(--safe-r) + 1.1rem)';
@@ -1407,7 +1513,7 @@ export class AppUI {
 
   showJobOffer(offer: MissionOffer, pickupName: string, dropName: string, onAccept: () => void, onDecline: () => void): void {
     this.hideJobOffer();
-    const card = h('div', { class: 'glass' , style: 'position:absolute;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-b) + 9.6rem);width:min(440px,92vw);padding:.8rem .9rem;border-radius:16px;pointer-events:auto;display:flex;flex-direction:column;gap:.45rem;' },
+    const card = h('div', { class: 'glass job-offer-card' },
       h('div', { class: 'screentag', text: offer.daily ? t('mission.daily') : t('mission.standard') }),
       h('div', { class: 'spread' },
         h('h3', { text: `${pickupName} → ${dropName}` }),

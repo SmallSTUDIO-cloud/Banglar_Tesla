@@ -1,8 +1,11 @@
 # Shipping to Android
 
-This document is deliberately blunt: **no APK was produced in the build sandbox**, because the
-sandbox has no Android toolchain and no Godot. Below are the two real routes, with the work each
-requires. Neither route was executed here.
+`android/` contains the native Android WebView wrapper (`com.shostalab.banglartesla`, `Banglar Tesla`, `sensorLandscape`, immersive fullscreen, offline bundled `assets/public/` via `AssetWebViewClient`, and hardware Back-button pause handling).
+
+* **Local reproducible debug APK build:** `npm run build:apk` → `artifacts/banglar-tesla-v0.1.0-android-test-debug.apk` (signed with APK Signature Scheme v1 + v2 + v3, `minSdkVersion 24`, `targetSdkVersion 34`, zero permissions).
+* **Android Studio / Gradle build:** run `npm run build`, open `android/` in Android Studio (or run `cd android && ./gradlew assembleDebug` / `./gradlew bundleRelease`).
+
+Below are the additional background notes from the initial vertical slice.
 
 ---
 

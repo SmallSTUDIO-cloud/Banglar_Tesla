@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
+import { ensureChromiumEnv, teardownHarness } from './chromium-env.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
@@ -61,7 +62,7 @@ const browser = await puppeteer.launch({
   args: [...chromium.args, '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
   executablePath: await chromium.executablePath(),
   headless: 'shell',
-  env: { ...process.env, LD_LIBRARY_PATH: '/tmp/tools/probe/libs/lib' },
+  env: ensureChromiumEnv(),
   defaultViewport: { width: 900, height: 506, deviceScaleFactor: 1 },
 });
 const page = await browser.newPage();
@@ -178,8 +179,7 @@ check('English menu is reachable and renders', backToMenuEn.screen === 'menu');
 
 check('no page errors during the click-through', errors.length === 0, errors.slice(0, 2).join(' | '));
 
-await browser.close();
-server.kill('SIGTERM');
+await teardownHarness(browser, server);
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} UI checks passed`);
 fs.writeFileSync(path.join(root, 'artifacts', 'ui-flow-results.json'), JSON.stringify(results, null, 2));

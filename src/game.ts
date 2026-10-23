@@ -541,6 +541,11 @@ export class Game implements UIBridge {
     this.togglePause(true);
   }
 
+  /** Handles Android hardware Back button / gesture. Returns true if handled in-game. */
+  handleBackButton(): boolean {
+    return this.ui.handleBackAction();
+  }
+
   private togglePause(force?: boolean): void {
     if (this.mode === 'menu') return;
     const next = force ?? !this.paused;

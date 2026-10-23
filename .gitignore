@@ -5,3 +5,13 @@ artifacts/
 *.log
 .DS_Store
 coverage/
+*.apk
+*.aab
+*.idsig
+*.keystore
+*.jks
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/assets/public/

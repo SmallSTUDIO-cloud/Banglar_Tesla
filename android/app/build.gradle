@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.shostalab.banglartesla'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.shostalab.banglartesla"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0-android-test"
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+tasks.register('syncWebDist', Copy) {
+    from '../../dist'
+    into 'src/main/assets/public'
+}
+
+preBuild.dependsOn(syncWebDist)

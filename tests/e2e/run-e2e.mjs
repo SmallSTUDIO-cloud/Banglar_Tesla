@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
+import { ensureChromiumEnv, teardownHarness } from './chromium-env.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
@@ -67,7 +68,7 @@ async function main() {
     ],
     executablePath: exe,
     headless: 'shell',
-    env: { ...process.env, LD_LIBRARY_PATH: '/tmp/tools/probe/libs/lib' },
+    env: ensureChromiumEnv(),
     defaultViewport: { width: 900, height: 506, deviceScaleFactor: 1 },
   });
 
@@ -236,8 +237,7 @@ async function main() {
 
     await page.screenshot({ path: path.join(artifacts, '07-final.png') });
   } finally {
-    await browser.close();
-    server.kill('SIGTERM');
+    await teardownHarness(browser, server);
   }
 
   const failed = results.filter((r) => !r.ok);

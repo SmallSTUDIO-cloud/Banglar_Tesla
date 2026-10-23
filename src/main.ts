@@ -23,7 +23,12 @@ async function boot(): Promise<void> {
 
   try {
     const game = new Game(canvas);
-    (window as unknown as { __banglarTesla?: Game }).__banglarTesla = game;
+    const win = window as unknown as {
+      __banglarTesla?: Game;
+      __banglarTeslaAndroidBack?: () => boolean;
+    };
+    win.__banglarTesla = game;
+    win.__banglarTeslaAndroidBack = () => game.handleBackButton();
     await game.init();
     game.start();
   } catch (err) {
@@ -39,9 +44,10 @@ async function boot(): Promise<void> {
 
 void boot();
 
-// PWA: offline cache after the first successful visit (production builds only,
-// so the dev server and automated tests always see fresh code).
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
+// PWA: offline cache after the first successful visit (production web builds only;
+// the native Android APK already serves bundled offline assets from AssetManager).
+const isBundledApkHost = window.location.hostname === 'appassets.androidplatform.net';
+if ('serviceWorker' in navigator && import.meta.env.PROD && !isBundledApkHost) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register(new URL('sw.js', window.location.href).pathname).catch((err) => {
       console.warn('[pwa] service worker registration failed', err);
