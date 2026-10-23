@@ -1,0 +1,36 @@
+{
+  "id": "/",
+  "name": "Banglar Tesla — বাংলার টেসলা",
+  "short_name": "Banglar Tesla",
+  "description": "ঢাকার রাস্তায় নিজের স্টাইলে — a 3D Dhaka cycle-rickshaw driving game with passenger jobs, traffic and rickshaw art.",
+  "lang": "bn",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0b1512",
+  "theme_color": "#0E3B2E",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
