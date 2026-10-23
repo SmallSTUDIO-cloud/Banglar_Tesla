@@ -1,0 +1,148 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches:
+      - arena/7873a750-banglar-tesla
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Debug Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies, typecheck, test, and build web bundle
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build & sign Android APK with Android SDK tools
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          BUILD_TOOLS="$(ls -d "$SDK_ROOT"/build-tools/* | sort -V | tail -n 1)"
+          PLATFORM_JAR="$(ls "$SDK_ROOT"/platforms/android-*/android.jar | sort -V | tail -n 1)"
+          echo "Using BUILD_TOOLS=$BUILD_TOOLS"
+          echo "Using PLATFORM_JAR=$PLATFORM_JAR"
+
+          WORK_DIR="$(mktemp -d)"
+          mkdir -p "$WORK_DIR/classes" "$WORK_DIR/dex" android/app/src/main/assets/public artifacts
+          rm -rf android/app/src/main/assets/public/*
+          cp -r dist/* android/app/src/main/assets/public/
+
+          # 1. Compile resources & link manifest + offline web assets
+          "$BUILD_TOOLS/aapt2" compile --dir android/app/src/main/res -o "$WORK_DIR/res.zip"
+          "$BUILD_TOOLS/aapt2" link \
+            -o "$WORK_DIR/unaligned.apk" \
+            -I "$PLATFORM_JAR" \
+            --manifest android/app/src/main/AndroidManifest.xml \
+            -A android/app/src/main/assets \
+            --java "$WORK_DIR/gen" \
+            --min-sdk-version 24 \
+            --target-sdk-version 34 \
+            --version-code 1 \
+            --version-name 0.1.0-android-test \
+            -0 .ttf -0 .png -0 .jpg -0 .webp -0 .mp3 -0 .ogg -0 .wav \
+            --auto-add-overlay \
+            "$WORK_DIR/res.zip"
+
+          # 2. Compile Java sources -> DEX
+          find android/app/src/main/java "$WORK_DIR/gen" -name "*.java" > "$WORK_DIR/sources.txt"
+          javac --release 11 -classpath "$PLATFORM_JAR" -d "$WORK_DIR/classes" @"$WORK_DIR/sources.txt"
+          find "$WORK_DIR/classes" -name "*.class" > "$WORK_DIR/classes.txt"
+          "$BUILD_TOOLS/d8" --min-api 24 --lib "$PLATFORM_JAR" --output "$WORK_DIR/dex" @"$WORK_DIR/classes.txt"
+
+          # 3. Package classes.dex, zipalign (4-byte), and debug-sign (v1+v2+v3)
+          cp "$WORK_DIR/dex/classes.dex" "$WORK_DIR/classes.dex"
+          (cd "$WORK_DIR" && zip -q -9 unaligned.apk classes.dex)
+          "$BUILD_TOOLS/zipalign" -f -p 4 "$WORK_DIR/unaligned.apk" "$WORK_DIR/aligned.apk"
+
+          KEYSTORE="$WORK_DIR/debug.keystore"
+          keytool -genkeypair -keystore "$KEYSTORE" -storepass android -alias androiddebugkey \
+            -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+          OUT_APK="artifacts/banglar-tesla-v0.1.0-android-test-debug.apk"
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$OUT_APK" \
+            "$WORK_DIR/aligned.apk"
+
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$OUT_APK"
+          "$BUILD_TOOLS/aapt2" dump badging "$OUT_APK"
+          ls -lh "$OUT_APK"
+
+      - name: Upload APK build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: banglar-tesla-android-apk
+          path: artifacts/banglar-tesla-v0.1.0-android-test-debug.apk
+          if-no-files-found: error
+
+      - name: Publish APK to GitHub Release v0.1.0-android-test
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v0.1.0-android-test"
+          APK="artifacts/banglar-tesla-v0.1.0-android-test-debug.apk"
+          SHA="$(sha256sum "$APK" | awk '{print $1}')"
+          NOTES=$(cat <<EOF
+          ## Banglar Tesla — বাংলার টেসলা (Android Test Build \`v0.1.0-android-test\`)
+
+          Installable debug-signed Android \`.apk\` packaging the full 3D Dhaka cycle-rickshaw game (**Passenger Duty**, **Free Ride**, **Daily Challenge**, \`৳\` economy, rickshaw garage/store/upgrades/paint/art, Bangla & English UI, procedural synth audio, and local save persistence) for offline Android phone testing.
+
+          ### APK Details
+          - **File:** \`banglar-tesla-v0.1.0-android-test-debug.apk\`
+          - **App Name:** \`Banglar Tesla\`
+          - **Application ID:** \`com.shostalab.banglartesla\`
+          - **Version:** \`0.1.0-android-test\` (\`versionCode: 1\`)
+          - **Android Compatibility:** Android 7.0+ (\`minSdkVersion 24\`, \`targetSdkVersion 34\`)
+          - **Orientation:** Landscape (\`sensorLandscape\`, immersive fullscreen)
+          - **Permissions Requested:** None (runs 100% offline from bundled APK assets)
+          - **Signing:** Android debug signature (\`APK Signature Scheme v1 + v2 + v3\`)
+          - **SHA-256:** \`$SHA\`
+
+          ### Phone Installation Steps
+          1. Tap **\`banglar-tesla-v0.1.0-android-test-debug.apk\`** under **Assets** below to download it on your Android phone.
+          2. Open the downloaded \`.apk\` from your browser downloads or **Files** app.
+          3. Enable **Install unknown apps / Allow from this source** if prompted, then tap **Install**.
+          4. If Play Protect warns about an unrecognized developer (normal for debug test builds), tap **More details** → **Install anyway**.
+          5. Open **Banglar Tesla** and hold your phone horizontally (landscape).
+          EOF
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+            gh release edit "$TAG" --title "Banglar Tesla — Android Test Build" --notes "$NOTES"
+          else
+            gh release create "$TAG" "$APK" \
+              --target "${{ github.sha }}" \
+              --title "Banglar Tesla — Android Test Build" \
+              --notes "$NOTES"
+          fi
