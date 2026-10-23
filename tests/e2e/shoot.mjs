@@ -99,6 +99,17 @@ for (const shot of shots) {
     await page.evaluate(() => window.__banglarTesla.debugRickshawShot(Math.PI, 3.2, 1.5, 40));
     await new Promise((r) => setTimeout(r, 600));
     await page.screenshot({ path: path.join(out, 'shot-rear.png') });
+  } else if (shot === 'passenger') {
+    await page.evaluate(() => {
+      const g = window.__banglarTesla;
+      g.debugStartMode('duty');
+      g.debugAcceptOffer();
+      g.debugTeleportToPickup();
+      g.debugStepUntil(() => g.debugSnapshot().missionState === 'toDropoff', 16);
+      g.debugRickshawShot(Math.PI * 0.72, 4.0, 1.75, 42);
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    await page.screenshot({ path: path.join(out, 'shot-passenger.png') });
   } else if (shot === 'garage') {
     await page.evaluate(() => window.__banglarTesla.debugOpenGarageForTest());
     await new Promise((r) => setTimeout(r, 1500));

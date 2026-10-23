@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "test:e2e": "node tests/e2e/run-e2e.mjs",
     "test:ui": "node tests/e2e/ui-flow.mjs",
-    "shots": "node tests/e2e/shoot.mjs"
+    "shots": "node tests/e2e/shoot.mjs",
+    "perf": "node tests/e2e/perf.mjs"
   },
   "dependencies": {
     "three": "0.186.1"

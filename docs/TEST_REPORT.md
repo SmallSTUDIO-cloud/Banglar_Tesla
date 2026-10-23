@@ -28,6 +28,7 @@ Environment as measured in the Arena build sandbox on **2026-10-23** (Asia/Dhaka
 | 4b | `npm run test:ui` (`tests/e2e/ui-flow.mjs`) | **PASS — 17/17 checks** driving the game only through real DOM clicks |
 | 5 | `node tests/e2e/shoot.mjs menu,duty,garage,night,rain,rear` (landscape 960×540) | Screenshots reviewed visually at each iteration |
 | 6 | `PORTRAIT=1 node tests/e2e/shoot.mjs menu,duty,garage` (412×892) | Portrait layouts reviewed and fixed |
+| 7 | `node tests/e2e/perf.mjs` | Renderer counters captured (see §6) |
 
 `artifacts/e2e-results.json` holds the machine-readable result of the last E2E run (the folder is
 git-ignored; re-run to regenerate).
@@ -146,6 +147,28 @@ remembers where each sheet was opened from.
 | Night | Whole street flooded grey by the room light probe; no lamp pools near the player | Dimmed `scene.environmentIntensity` at night, added warm shop/window glow layer, more + stronger lamps with bulbs, night player fill light |
 | Rain | Rain invisible | Replaced point particles with short bright streaks (one draw call) and wet-road darkening/sheen |
 | Portrait (412×892) | Pedal button clipped off-screen; mood text rotated | Portrait-specific control sizing, tighter padding, mood pill fix |
+
+---
+
+## 6. Renderer counters (measured, not estimated)
+
+`tests/e2e/perf.mjs` boots the game, enters Free Ride and reads `renderer.info` after the scene
+has settled. Software rasteriser, so **frame time is not representative** — draw calls and
+triangle counts are, because they are properties of the scene, not the GPU.
+
+| Quality | Draw calls | Triangles | Geometries | Textures | Programs |
+|---|---|---|---|---|---|
+| Balanced | **316** | 197,174 | 195 | 18 | 20 |
+| Low | **180** | 104,178 | (same scene, fewer traffic/pedestrian instances and no shadows) | | |
+
+Before optimisation the Balanced count was **389**; merging each traffic vehicle's wheels into one
+mesh (−4 to −6 calls per vehicle, doubled by the shadow pass) and collapsing the hero rickshaw's
+static painted parts into one mesh per material brought it to 316. Both changes are visual no-ops
+at gameplay distance (verified with before/after screenshots).
+
+Budget guidance for a mid-range phone: keep total draw calls under ~350 at Balanced; the shadow
+pass roughly doubles the cost of casting meshes, which is why the traffic vehicles no longer cast
+wheel shadows and the `ধীরে চলুন` boards, posters and lamp glows never cast at all.
 
 ---
 

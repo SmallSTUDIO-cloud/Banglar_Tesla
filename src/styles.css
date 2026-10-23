@@ -1146,6 +1146,17 @@ input[type='range']::-moz-range-thumb {
   align-items: center;
   justify-content: center;
 }
+.result-screen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(80% 70% at 50% 45%, rgba(4, 10, 8, 0.55), rgba(4, 10, 8, 0.82));
+}
+.result-card {
+  position: relative;
+  z-index: 1;
+}
 .result-card {
   width: min(500px, 100%);
   padding: 1.1rem;

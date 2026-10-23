@@ -12,6 +12,7 @@ import { createWheel } from '../world/geo';
 import { rickshawArtTexture, clothTexture, FONT_FAMILY } from '../world/textures';
 import type { CosmeticCategory, VehicleDef } from '../economy/catalog';
 import { damp, TAU } from '../core/mathx';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export interface RickshawLook {
   palette: VehicleDef['palette'];
@@ -133,6 +134,7 @@ export class RickshawVisual {
   private artMat: THREE.MeshStandardMaterial;
   private canopyMat: THREE.MeshStandardMaterial;
   private tasselMat: THREE.MeshStandardMaterial;
+  private sideMat: THREE.MeshStandardMaterial;
   private flowerMeshes: THREE.Object3D[] = [];
   private artMesh: THREE.Mesh;
   private wheelSpin = 0;
@@ -151,14 +153,20 @@ export class RickshawVisual {
 
     this.bodyMat = mat(look.palette.body, 0.42, 0.22);
     this.trimMat = mat(look.palette.trim, 0.32, 0.72);
+    // Real rickshaw hoods are oilcloth in dark greens, reds or blacks, but they
+    // always carry a painted border. Lift the base tone so the shape reads at
+    // gameplay distance instead of becoming a black hole in the frame.
     this.canopyMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(look.palette.canopy).lerp(new THREE.Color('#4a4038'), 0.35),
+      color: new THREE.Color(look.palette.canopy).lerp(new THREE.Color('#6d5a4a'), 0.62),
+      emissive: new THREE.Color('#241c16'),
+      emissiveIntensity: 0.55,
       map: clothTexture(),
-      roughness: 0.94,
-      metalness: 0.02,
+      roughness: 0.9,
+      metalness: 0.03,
       side: THREE.DoubleSide,
     });
     this.tasselMat = mat(look.tassel, 0.85, 0.02);
+    this.sideMat = mat(new THREE.Color(look.palette.body).multiplyScalar(1.15), 0.5, 0.2);
 
     // ---------------------------------------------------------- chassis
     const frameMat = mat('#2a2b2e', 0.45, 0.6);
@@ -340,7 +348,7 @@ export class RickshawVisual {
 
     // side panels with painted trim
     for (const side of [-1, 1]) {
-      const sidePanel = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.6, 0.9), this.bodyMat);
+      const sidePanel = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.6, 0.9), this.sideMat);
       sidePanel.position.set(side * 0.53, 0.62, -0.55);
       sidePanel.castShadow = true;
       this.body.add(sidePanel);
@@ -357,6 +365,11 @@ export class RickshawVisual {
     canopyMesh.castShadow = true;
     canopyMesh.receiveShadow = true;
     this.canopy.add(canopyMesh);
+    for (const side of [-1, 1]) {
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.05, 1.2), this.trimMat);
+      edge.position.set(side * 0.6, 0.78, 0);
+      this.canopy.add(edge);
+    }
     // painted valance along the canopy edge (bright band that separates the
     // hood from the street behind it)
     const valance = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 0.02), this.trimMat);
@@ -371,10 +384,15 @@ export class RickshawVisual {
       this.canopy.add(bow);
     }
     // rear curtain with art
-    const curtain = new THREE.Mesh(new THREE.PlaneGeometry(1.06, 0.5), this.canopyMat);
-    curtain.position.set(0, 0.55, -0.62);
+    const curtain = new THREE.Mesh(new THREE.PlaneGeometry(1.04, 0.46), this.artMat);
+    curtain.position.set(0, 0.66, -0.618);
     curtain.rotation.y = Math.PI;
     this.canopy.add(curtain);
+    // rolled-up cloth bundle at the top of the curtain (as on a real hood)
+    const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.08, 8), this.trimMat);
+    roll.rotation.z = Math.PI / 2;
+    roll.position.set(0, 0.92, -0.62);
+    this.canopy.add(roll);
 
     // tassels along the canopy edge
     for (let i = 0; i < 9; i++) {
@@ -501,6 +519,7 @@ export class RickshawVisual {
     reflector.position.set(0, 0.42, -1.02);
     this.body.add(reflector);
 
+    this.mergeStaticBody();
     this.applyLook(look);
     this.root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
@@ -512,6 +531,71 @@ export class RickshawVisual {
 
   headlight!: THREE.SpotLight;
   bellMesh!: THREE.Mesh;
+
+  /**
+   * Collapse the ~40 individual painted parts of the chassis into one mesh per
+   * material. The hero vehicle is on screen every frame, so this is the single
+   * biggest draw-call saving in the game (each material is also doubled by the
+   * shadow pass). Animated parts (steering, wheels, crank, legs, canopy, tassels)
+   * are excluded and stay as separate objects.
+   */
+  private mergeStaticBody(): void {
+    const animated = new Set<THREE.Object3D>([
+      this.steering,
+      this.crank,
+      this.canopy,
+      ...this.wheels,
+      ...this.tassels,
+      ...this.legs.map((l) => l.thigh),
+      ...this.legs.map((l) => l.shin),
+      this.artMesh,
+      this.headlight,
+      this.headlight.target,
+    ]);
+    const byMaterial = new Map<THREE.MeshStandardMaterial, THREE.BufferGeometry[]>();
+    const victims: THREE.Object3D[] = [];
+    this.body.updateMatrixWorld(true);
+    for (const child of [...this.body.children]) {
+      if (!(child instanceof THREE.Mesh)) continue;
+      if (animated.has(child)) continue;
+      if (child instanceof THREE.InstancedMesh) continue;
+      if (animated.has(child.parent as THREE.Object3D)) continue;
+      const mat = child.material as THREE.MeshStandardMaterial;
+      if (!mat || Array.isArray(mat)) continue;
+      const geo = child.geometry.clone();
+      geo.applyMatrix4(child.matrix);
+      // keep attribute sets identical for merging
+      if (!geo.getAttribute('uv')) {
+        geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(geo.getAttribute('position').count * 2), 2));
+      }
+      if (!geo.getAttribute('color')) {
+        const count = geo.getAttribute('position').count;
+        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3).fill(1), 3));
+      }
+      for (const name of Object.keys(geo.attributes)) {
+        if (!['position', 'normal', 'uv', 'color'].includes(name)) geo.deleteAttribute(name);
+      }
+      let list = byMaterial.get(mat);
+      if (!list) {
+        list = [];
+        byMaterial.set(mat, list);
+      }
+      list.push(geo);
+      victims.push(child);
+    }
+    for (const child of victims) this.body.remove(child);
+    for (const [mat, geos] of byMaterial) {
+      if (geos.length === 0) continue;
+      const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+      if (!merged) continue;
+      if (geos.length > 1) for (const g of geos) g.dispose();
+      const mesh = new THREE.Mesh(merged, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      this.body.add(mesh);
+    }
+  }
 
   /** Change paint / art / tassels / flowers without rebuilding the rig. */
   applyLook(look: RickshawLook): void {

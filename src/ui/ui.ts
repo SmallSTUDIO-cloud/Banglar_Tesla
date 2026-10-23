@@ -668,6 +668,22 @@ export class AppUI {
     onFree: () => void;
     onGarage: () => void;
   }): void {
+    // toasts would sit on top of the result card; clear them first
+    this.clearToasts();
+    this.renderResult(payload);
+  }
+
+  private renderResult(payload: {
+    fare: FareBreakdown;
+    offer: MissionOffer;
+    distance: number;
+    time: number;
+    daily: boolean;
+    unlock?: string | null;
+    onNext: () => void;
+    onFree: () => void;
+    onGarage: () => void;
+  }): void {
     clear(this.resultEl);
     const { fare, offer, distance, time } = payload;
     const good = fare.mood >= 65;
@@ -1426,6 +1442,10 @@ export class AppUI {
       el.style.transition = 'opacity .3s ease';
       window.setTimeout(() => el.remove(), 320);
     }, 2400);
+  }
+
+  clearToasts(): void {
+    while (this.toastStack.firstChild) this.toastStack.removeChild(this.toastStack.firstChild);
   }
 
   // ----------------------------------------------------------------- misc

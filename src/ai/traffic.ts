@@ -239,9 +239,8 @@ export class TrafficSystem {
       const pos = sampleRoute(v.route, v.s, { x: 0, z: 0, yaw: 0 });
       v.model.group.position.set(pos.x, 0, pos.z);
       v.model.group.rotation.y = pos.yaw;
-      for (const wheel of v.model.wheels) {
-        wheel.rotation.x -= (v.speed / v.wheelRadius) * dt;
-      }
+      // Wheels are baked into one mesh per vehicle (see vehicles.ts), so there
+      // is nothing to spin here; the brake light still communicates motion. 
       const brakeMat = v.brakeLight.material as THREE.MeshStandardMaterial;
       brakeMat.emissiveIntensity = v.speed < 0.4 ? 2.2 : accel < -1.2 ? 1.6 : 0.3;
       const nearPlayer = Math.hypot(pos.x - this.playerX, pos.z - this.playerZ) < 90;

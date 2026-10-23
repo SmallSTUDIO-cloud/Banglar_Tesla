@@ -6,8 +6,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const geoCache = new Map<string, THREE.BufferGeometry>();
-
 function boxGeo(w: number, h: number, d: number, color: string, x = 0, y = 0, z = 0): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d);
   g.translate(x, y, z);
@@ -36,7 +34,7 @@ const glassMat = new THREE.MeshStandardMaterial({
   metalness: 0.6,
   color: 0xffffff,
 });
-const tireMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.95 });
+const tireMat = new THREE.MeshStandardMaterial({ color: 0x242424, roughness: 0.95 });
 
 export interface TrafficModel {
   group: THREE.Group;
@@ -46,28 +44,26 @@ export interface TrafficModel {
   height: number;
 }
 
-function wheel(radius = 0.34, width = 0.22): THREE.Mesh {
-  const key = `wheel:${radius}:${width}`;
-  let geo = geoCache.get(key);
-  if (!geo) {
-    geo = new THREE.CylinderGeometry(radius, radius, width, 12);
-    geo.rotateZ(Math.PI / 2);
-    geoCache.set(key, geo);
-  }
-  const mesh = new THREE.Mesh(geo, tireMat);
-  mesh.castShadow = true;
-  return mesh;
-}
-
+/**
+ * All wheels of one vehicle are baked into a single merged mesh. Draw calls
+ * matter far more than spinning traffic wheels (which are invisible at
+ * gameplay distance), and this cuts 4–6 calls per vehicle, doubled again by the
+ * shadow pass.
+ */
 function addWheels(group: THREE.Group, positions: [number, number, number][], radius: number, width: number): THREE.Object3D[] {
-  const out: THREE.Object3D[] = [];
+  const parts: THREE.BufferGeometry[] = [];
   for (const [x, y, z] of positions) {
-    const w = wheel(radius, width);
-    w.position.set(x, y, z);
-    group.add(w);
-    out.push(w);
+    const g = new THREE.CylinderGeometry(radius, radius, width, 12);
+    g.rotateZ(Math.PI / 2);
+    g.translate(x, y, z);
+    parts.push(g);
   }
-  return out;
+  const merged = merge(parts);
+  const mesh = new THREE.Mesh(merged, tireMat);
+  mesh.castShadow = false;
+  group.add(mesh);
+  // Return a single pseudo-rotation target so the caller keeps working.
+  return [mesh];
 }
 
 /** Big painted bus with fictional operator livery. */

@@ -207,8 +207,14 @@ docs/        test report, known issues, roadmap, Android packaging, screenshots
   particle budget, lamp count, fog density and environment reflections — immediately.
 * **Dynamic fallback**: if the measured frame rate stays below ~24 FPS for a sustained period,
   the game drops itself to Low once and tells the player.
-* **Merged geometry + instancing**: city shells are merged per material; pedestrians, poles and
-  wheels use instancing; only one shadow-casting directional light.
+* **Merged geometry + instancing**: city shells are merged per material; the hero rickshaw's
+  ~40 static parts collapse into one mesh per material; every traffic vehicle's wheels are baked
+  into a single mesh; pedestrians, poles and wheels use instancing; only one shadow-casting
+  directional light.
+* **Measured draw calls** (software-rendered test build, free ride, same camera):
+  **316 calls / 197 k triangles** on Balanced and **180 calls / 104 k triangles** on Low
+  (`npm run perf`, `tests/e2e/perf.mjs`). Merging traffic wheels and the rickshaw body took the
+  Balanced count from 389 → 316 without changing the look.
 * **Accessibility**: text size, HUD scale, reduce-effects (dampens shake and flashing),
   camera-shake toggle, subtitle toggle, haptics toggle, 30/60 FPS target, left-handed layout,
   analog/dead-zone/sensitivity controls, high-contrast objective markers.
