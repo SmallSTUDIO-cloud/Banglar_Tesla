@@ -50,6 +50,7 @@ export function button(label: string, opts: {
   disabled?: boolean;
   onClick?: () => void;
   class?: string;
+  attrs?: Record<string, string | number | boolean | undefined>;
 } = {}): HTMLButtonElement {
   const classes = ['btn'];
   if (opts.variant) classes.push(opts.variant);
@@ -61,7 +62,7 @@ export function button(label: string, opts: {
   if (opts.sub) content.append(h('span', { class: 'sub', text: opts.sub }));
   const btn = h('button', {
     class: classes.join(' '),
-    attrs: { type: 'button', disabled: opts.disabled, 'aria-disabled': opts.disabled },
+    attrs: { ...(opts.attrs ?? {}), type: 'button', disabled: opts.disabled, 'aria-disabled': opts.disabled },
     on: { click: () => opts.onClick?.() },
   }, content);
   return btn;

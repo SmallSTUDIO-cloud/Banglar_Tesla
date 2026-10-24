@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { computeFare, repairCost, levelForRides, deriveVehicle, canAfford, vehicleStats } from '../../src/economy/economy';
 import { VEHICLES, vehicleById } from '../../src/economy/catalog';
+import { GameState } from '../../src/core/gameState';
 import { ECONOMY } from '../../src/core/config';
 
 describe('fare math', () => {
@@ -106,6 +107,104 @@ describe('vehicle stats', () => {
         expect(v.stats[key]).toBeGreaterThan(0);
         expect(v.stats[key]).toBeLessThanOrEqual(1);
       }
+    }
+  });
+});
+
+function memoryStorage(): Storage {
+  const map = new Map<string, string>();
+  return {
+    get length() {
+      return map.size;
+    },
+    clear: () => map.clear(),
+    getItem: (k: string) => map.get(k) ?? null,
+    key: (i: number) => Array.from(map.keys())[i] ?? null,
+    removeItem: (k: string) => {
+      map.delete(k);
+    },
+    setItem: (k: string, v: string) => {
+      map.set(k, v);
+    },
+  };
+}
+
+describe('Electric Rickshaw, Rickshaw Roadster COMING SOON & multi-level upgrades', () => {
+  it('makes Electric Rickshaw purchasable, faster, regenerative, and persistent across reload', () => {
+    const store = memoryStorage();
+    const state = new GameState(store);
+    state.addMoney(5000);
+    const before = state.balance;
+    const bought = state.buyVehicle('electric');
+    expect(bought.ok).toBe(true);
+    expect(state.balance).toBe(before - vehicleById('electric').price);
+    expect(state.selectedVehicleId).toBe('electric');
+
+    // Double purchase cannot deduct twice
+    const duplicate = state.buyVehicle('electric');
+    expect(duplicate.ok).toBe(false);
+    expect(state.balance).toBe(before - vehicleById('electric').price);
+
+    const classicDerived = deriveVehicle(vehicleById('classic'), {}, 100);
+    const elecDerived = deriveVehicle(vehicleById('electric'), {}, 100);
+    expect(elecDerived.isElectric).toBe(true);
+    expect(elecDerived.maxSpeed).toBeGreaterThan(classicDerived.maxSpeed + 1.5);
+    expect(elecDerived.accel).toBeGreaterThan(classicDerived.accel);
+    expect(elecDerived.regenFactor).toBeGreaterThan(0);
+
+    state.saveNow();
+    const reloaded = new GameState(store);
+    expect(reloaded.ownsVehicle('electric')).toBe(true);
+    expect(reloaded.selectedVehicleId).toBe('electric');
+  });
+
+  it('strictly blocks purchasing or selecting Rickshaw Roadster — COMING SOON even with huge funds', () => {
+    const store = memoryStorage();
+    const state = new GameState(store);
+    state.addMoney(999_999);
+    const before = state.balance;
+    const roadster = vehicleById('roadster');
+    expect(roadster.comingSoon).toBe(true);
+
+    const res = state.buyVehicle('roadster');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe('coming-soon');
+    expect(state.balance).toBe(before);
+    expect(state.ownsVehicle('roadster')).toBe(false);
+    expect(state.selectVehicle('roadster')).toBe(false);
+    expect(state.selectedVehicleId).not.toBe('roadster');
+  });
+
+  it('produces measurable improvements across all 6 upgrade categories and persists levels', () => {
+    const store = memoryStorage();
+    const state = new GameState(store);
+    state.addMoney(20_000);
+
+    const v = vehicleById('electric');
+    const base = deriveVehicle(v, {}, 100);
+
+    for (const id of ['bearings', 'brakes', 'tyres', 'steering', 'seat', 'efficiency']) {
+      const balBefore = state.balance;
+      const r1 = state.buyUpgrade(id);
+      expect(r1.ok).toBe(true);
+      expect(state.upgradeLevel(id)).toBe(1);
+      expect(state.balance).toBeLessThan(balBefore);
+    }
+
+    const upgraded = deriveVehicle(v, state.progress.upgrades, 100);
+    expect(upgraded.maxSpeed).toBeGreaterThan(base.maxSpeed);
+    expect(upgraded.accel).toBeGreaterThan(base.accel);
+    expect(upgraded.brakeDecel).toBeGreaterThan(base.brakeDecel);
+    expect(upgraded.grip).toBeGreaterThan(base.grip);
+    expect(upgraded.steerMaxLow).toBeGreaterThan(base.steerMaxLow);
+    expect(upgraded.damageMultiplier).toBeLessThan(base.damageMultiplier);
+    expect(upgraded.batteryDrainMultiplier).toBeLessThan(base.batteryDrainMultiplier);
+    expect(upgraded.regenFactor).toBeGreaterThan(base.regenFactor);
+
+    state.saveNow();
+    const reloaded = new GameState(store);
+    for (const id of ['bearings', 'brakes', 'tyres', 'steering', 'seat', 'efficiency']) {
+      expect(reloaded.upgradeLevel(id)).toBe(1);
     }
   });
 });

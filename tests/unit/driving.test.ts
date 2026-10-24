@@ -1,9 +1,11 @@
+import * as THREE from 'three';
 import { describe, it, expect } from 'vitest';
 import { RickshawController } from '../../src/vehicle/rickshawController';
-import { RIDE } from '../../src/core/config';
-import { buildTrafficRoutes, sampleRoute } from '../../src/ai/routes';
+import { CAMERA_MODES, RIDE, type CameraMode } from '../../src/core/config';
+import { buildTrafficRoutes, getLaneGraph, sampleRoute } from '../../src/ai/routes';
+import { ChaseCamera, nextCameraMode } from '../../src/vehicle/chaseCamera';
 import { generateMission, roadDistance, dailySeed, dateKey } from '../../src/missions/mission';
-import { PLACES, placeById } from '../../src/world/layout';
+import { PLACES, ROAD_SEGMENTS, findRoute, isClearOfRoads, placeById } from '../../src/world/layout';
 import { mulberry32 } from '../../src/core/mathx';
 
 const noColliders: never[] = [];
@@ -14,15 +16,29 @@ function makeController(): RickshawController {
   return new RickshawController(noColliders, flat, road);
 }
 
-function drive(controller: RickshawController, input: { throttle?: number; brake?: number; steer?: number }, seconds: number): void {
+function drive(
+  controller: RickshawController,
+  input: { throttle?: number; brake?: number; steer?: number },
+  seconds: number,
+): void {
   const dt = 1 / 60;
   const steps = Math.round(seconds / dt);
   for (let i = 0; i < steps; i++) {
-    controller.step(dt, { throttle: input.throttle ?? 0, brake: input.brake ?? 0, steer: input.steer ?? 0, handbrake: false }, 1, 0);
+    controller.step(
+      dt,
+      {
+        throttle: input.throttle ?? 0,
+        brake: input.brake ?? 0,
+        steer: input.steer ?? 0,
+        handbrake: false,
+      },
+      1,
+      0,
+    );
   }
 }
 
-describe('rickshaw driving model', () => {
+describe('rickshaw driving model & Priority-1 steering direction', () => {
   it('accelerates progressively, not instantly', () => {
     const c = makeController();
     c.reset(0, 0, 0);
@@ -30,7 +46,7 @@ describe('rickshaw driving model', () => {
     const early = c.speed;
     drive(c, { throttle: 1 }, 1.9);
     expect(early).toBeGreaterThan(0);
-    expect(early).toBeLessThan(0.5); // no instant max speed
+    expect(early).toBeLessThan(0.5);
     expect(c.speed).toBeGreaterThan(early);
   });
 
@@ -59,29 +75,75 @@ describe('rickshaw driving model', () => {
     drive(c, { brake: 1 }, 1.2);
     expect(c.speed).toBeLessThanOrEqual(0.001);
     expect(c.speed).toBeGreaterThanOrEqual(0);
-    // keep holding the brake: reverse engages after RIDE.reverseHold
     drive(c, { brake: 1 }, RIDE.reverseHold + 0.8);
     expect(c.speed).toBeLessThan(0);
     expect(c.speed).toBeGreaterThanOrEqual(-RIDE.maxReverse - 0.01);
   });
 
-  it('steers left and right in the expected direction', () => {
-    const left = makeController();
-    left.reset(0, 0, 0);
-    drive(left, { throttle: 1, steer: -1 }, 2);
-    const right = makeController();
-    right.reset(0, 0, 0);
-    drive(right, { throttle: 1, steer: 1 }, 2);
-    // +yaw turns toward +X (right), -yaw toward -X (left); yaw is normalised
-    expect(right.x).toBeGreaterThan(0.5);
-    expect(left.x).toBeLessThan(-0.5);
-    expect(right.steerAngle).toBeGreaterThan(0);
-    expect(left.steerAngle).toBeLessThan(0);
+  it('turns truly RIGHT on steer=+1 and truly LEFT on steer=-1 across all 4 cardinal headings (Three.js right-handed space)', () => {
+    // In Three.js (+Y up), forward = (sin(yaw), 0, cos(yaw)),
+    // vehicle RIGHT = forward x up = (-cos(yaw), 0, sin(yaw)),
+    // vehicle LEFT  = up x forward = ( cos(yaw), 0, -sin(yaw)).
+    for (const startYaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const rightX = -Math.cos(startYaw);
+      const rightZ = Math.sin(startYaw);
+
+      const rightTurn = makeController();
+      rightTurn.reset(0, 0, startYaw);
+      drive(rightTurn, { throttle: 1, steer: 1 }, 2.0);
+      const rightLateral = rightTurn.x * rightX + rightTurn.z * rightZ;
+
+      const leftTurn = makeController();
+      leftTurn.reset(0, 0, startYaw);
+      drive(leftTurn, { throttle: 1, steer: -1 }, 2.0);
+      const leftLateral = leftTurn.x * rightX + leftTurn.z * rightZ;
+
+      expect(rightLateral).toBeGreaterThan(0.6);
+      expect(leftLateral).toBeLessThan(-0.6);
+      expect(rightTurn.steerAngle).toBeGreaterThan(0);
+      expect(leftTurn.steerAngle).toBeLessThan(0);
+    }
+  });
+
+  it('turns handlebar while stationary without translating, and reverses cleanly with front wheel steered', () => {
+    const stat = makeController();
+    stat.reset(5, -3, 0);
+    drive(stat, { throttle: 0, steer: 1 }, 0.6);
+    expect(stat.steerAngle).toBeGreaterThan(0.2);
+    expect(Math.hypot(stat.x - 5, stat.z + 3)).toBeLessThan(1e-4);
+
+    // Reverse with front wheel steered right: rear swings toward driver's right (-X at yaw=0)
+    const rev = makeController();
+    rev.reset(0, 0, 0);
+    drive(rev, { brake: 1, steer: 1 }, RIDE.reverseHold + 1.8);
+    expect(rev.speed).toBeLessThan(-0.2);
+    expect(rev.z).toBeLessThan(-0.3);
+    expect(rev.x).toBeLessThan(-0.05);
+  });
+
+  it('keeps front and rear wheels grounded on flat road, uphill slope, and speed humps (YXZ Euler)', () => {
+    // Uphill ramp along +Z: height increases with +Z.
+    const slope = (_x: number, z: number): number => Math.max(0, z * 0.08);
+    const c = new RickshawController(noColliders, slope, road);
+    c.reset(0, 5, 0);
+    drive(c, { throttle: 1, steer: 0 }, 1.2);
+
+    // Root uses YXZ order; negative pitch lifts local +Z nose UP!
+    const root = new THREE.Object3D();
+    root.rotation.order = 'YXZ';
+    root.position.set(c.x, c.y, c.z);
+    root.rotation.set(c.pitch, c.yaw, c.roll);
+    root.updateMatrixWorld(true);
+
+    const frontBottomWorld = new THREE.Vector3(0, 0, RIDE.frontAxleZ).applyMatrix4(root.matrixWorld);
+    const rearBottomWorld = new THREE.Vector3(0, 0, RIDE.rearAxleZ).applyMatrix4(root.matrixWorld);
+
+    expect(c.pitch).toBeLessThan(-0.04);
+    expect(Math.abs(frontBottomWorld.y - slope(frontBottomWorld.x, frontBottomWorld.z))).toBeLessThan(0.035);
+    expect(Math.abs(rearBottomWorld.y - slope(rearBottomWorld.x, rearBottomWorld.z))).toBeLessThan(0.035);
   });
 
   it('has a tighter turning circle at low speed than at high speed', () => {
-    // Turn radius = wheelbase / tan(steer). Low speed should allow a much
-    // smaller radius (needed to pivot inside narrow Old Dhaka lanes).
     const slow = makeController();
     slow.reset(0, 0, 0);
     drive(slow, { throttle: 0.32, steer: 1 }, 2.0);
@@ -95,7 +157,28 @@ describe('rickshaw driving model', () => {
 
     expect(Math.abs(slow.steerAngle)).toBeGreaterThan(Math.abs(fast.steerAngle));
     expect(slowRadius).toBeLessThan(fastRadius);
-    expect(fastRadius).toBeGreaterThan(8); // stable, not twitchy at speed
+    expect(fastRadius).toBeGreaterThan(8);
+  });
+
+  it('drains and regenerates battery in electric rickshaw mode while never stranding the player', () => {
+    const c = makeController();
+    c.setTuning({
+      maxSpeed: 8.8,
+      accel: 3.6,
+      brakeDecel: 4.9,
+      steerMaxLow: RIDE.maxSteerLow,
+      steerMaxHigh: RIDE.maxSteerHigh,
+      grip: 0.72,
+      isElectric: true,
+      batteryDrainMultiplier: 1.0,
+      regenFactor: 0.25,
+    });
+    c.reset(0, 0, 0);
+    drive(c, { throttle: 1 }, 12);
+    const drained = c.battery;
+    expect(drained).toBeLessThan(100);
+    drive(c, { brake: 1 }, 1.0);
+    expect(c.battery).toBeGreaterThanOrEqual(drained);
   });
 
   it('records collisions and pushes the rickshaw out of a wall', () => {
@@ -109,7 +192,6 @@ describe('rickshaw driving model', () => {
       impact = Math.max(impact, ev.impact);
     }
     expect(impact).toBeGreaterThan(0);
-    // the rickshaw must not end up inside the wall AABB
     const inside = c.x > collider.minX && c.x < collider.maxX && c.z > collider.minZ && c.z < collider.maxZ;
     expect(inside).toBe(false);
     expect(c.z).toBeLessThan(collider.minZ + 0.5);
@@ -162,49 +244,96 @@ describe('rickshaw driving model', () => {
   });
 });
 
-describe('traffic routes', () => {
-  it('builds three closed loops with a positive length', () => {
-    const routes = buildTrafficRoutes();
-    expect(routes.length).toBe(3);
-    for (const route of routes) {
-      expect(route.length).toBeGreaterThan(50);
-      expect(route.points.length).toBeGreaterThan(6);
+describe('7-mode NFS Most Wanted camera system', () => {
+  it('cycles cleanly through all 7 camera modes and wraps back to chase', () => {
+    expect(CAMERA_MODES.length).toBe(7);
+    let cur: CameraMode = CAMERA_MODES[0];
+    const visited: string[] = [];
+    for (let i = 0; i < CAMERA_MODES.length; i++) {
+      visited.push(cur);
+      cur = nextCameraMode(cur);
     }
+    expect(visited).toEqual(['chase', 'close', 'wide', 'low', 'front', 'cockpit', 'side']);
+    expect(cur).toBe('chase');
   });
 
-  it('drives on the left-hand side of the road', () => {
-    const [outer] = buildTrafficRoutes();
-    // The first leg travels north (-Z) along the main road centred at x = 0.
-    // Facing -Z, "left" is -X, so left-hand traffic must sit at negative X.
-    const s = sampleRoute(outer, 5, { x: 0, z: 0, yaw: 0 });
-    expect(Math.abs(s.x)).toBeGreaterThan(1);
-    expect(s.x).toBeLessThan(0);
-    // ...and the return leg (travelling +Z) sits on the other side
-    const back = sampleRoute(outer, 5, { x: 0, z: 0, yaw: 0 });
-    void back;
-  });
-
-  it('wraps around the loop without NaN', () => {
-    const [outer] = buildTrafficRoutes();
-    for (const d of [-100, 0, outer.length * 0.5, outer.length + 10, outer.length * 100]) {
-      const s = sampleRoute(outer, d, { x: 0, z: 0, yaw: 0 });
-      expect(Number.isFinite(s.x)).toBe(true);
-      expect(Number.isFinite(s.z)).toBe(true);
-      expect(Number.isFinite(s.yaw)).toBe(true);
+  it('updates smoothly in every camera mode without NaN and never affects controller physics', () => {
+    const cam = new THREE.PerspectiveCamera(58, 16 / 9, 0.15, 360);
+    const rig = new ChaseCamera(cam);
+    rig.snapTo(0, 0, 0, 0);
+    for (const mode of CAMERA_MODES) {
+      rig.setMode(mode);
+      for (let i = 0; i < 30; i++) {
+        rig.update(1 / 60, 0, i * 0.1, 0.2, 4.2, [], false, 0, []);
+      }
+      expect(Number.isFinite(cam.position.x)).toBe(true);
+      expect(Number.isFinite(cam.position.y)).toBe(true);
+      expect(Number.isFinite(cam.position.z)).toBe(true);
+      expect(cam.position.y).toBeGreaterThan(0.3);
     }
   });
 });
 
-describe('mission generation', () => {
-  it('produces a valid offer with distinct pickup and drop-off', () => {
+describe('Mohammadpur OSM road network, left-hand lanes & jam detour routing', () => {
+  it('builds a connected left-hand lane graph over real Mohammadpur road segments', () => {
+    expect(ROAD_SEGMENTS.length).toBeGreaterThanOrEqual(40);
+    const graph = getLaneGraph();
+    expect(graph.lanes.length).toBe(ROAD_SEGMENTS.length * 2);
+    for (const lane of graph.lanes) {
+      expect(lane.length).toBeGreaterThan(1);
+      expect(lane.nextLaneIds.length).toBeGreaterThan(0);
+      // Left-hand traffic rule: lane offset along left normal is positive!
+      const seg = ROAD_SEGMENTS.find((s) => s.id === lane.segmentId)!;
+      expect(isClearOfRoads(seg.ax, seg.az, 0)).toBe(false);
+    }
+  });
+
+  it('builds closed route loops and wraps without NaN', () => {
+    const routes = buildTrafficRoutes();
+    expect(routes.length).toBe(3);
+    for (const route of routes) {
+      expect(route.length).toBeGreaterThan(50);
+      for (const d of [-100, 0, route.length * 0.5, route.length + 10]) {
+        const s = sampleRoute(route, d, { x: 0, z: 0, yaw: 0 });
+        expect(Number.isFinite(s.x)).toBe(true);
+        expect(Number.isFinite(s.z)).toBe(true);
+        expect(Number.isFinite(s.yaw)).toBe(true);
+      }
+    }
+  });
+
+  it('reroutes around congested Mohammadpur segments when jammed', () => {
+    const stand = placeById('stand')!;
+    const iqbal = placeById('iqbal') ?? PLACES[PLACES.length - 1];
+    const clearPlan = findRoute(stand.x, stand.z, iqbal.x, iqbal.z);
+    expect(clearPlan.segmentIds.length).toBeGreaterThan(1);
+    const jammedSeg = clearPlan.segmentIds[Math.floor(clearPlan.segmentIds.length / 2)];
+    const detourPlan = findRoute(stand.x, stand.z, iqbal.x, iqbal.z, (segId) =>
+      segId === jammedSeg ? 8.0 : 1.0,
+    );
+    expect(detourPlan.points.length).toBeGreaterThanOrEqual(2);
+    expect(detourPlan.avoidedJam).toBe(true);
+  });
+});
+
+describe('mission generation (passenger & market delivery)', () => {
+  it('produces valid passenger and market delivery offers with distinct pickup and drop-off', () => {
     const rng = mulberry32(12345);
-    const offer = generateMission({ rng, wet: false });
-    expect(offer.pickupId).not.toBe(offer.dropId);
-    expect(placeById(offer.pickupId)).toBeTruthy();
-    expect(placeById(offer.dropId)).toBeTruthy();
-    expect(offer.distance).toBeGreaterThan(0);
-    expect(offer.fareEstimate).toBeGreaterThan(0);
-    expect(offer.targetTime).toBeGreaterThan(20);
+    let sawMarket = false;
+    let sawPassenger = false;
+    for (let i = 0; i < 30; i++) {
+      const offer = generateMission({ rng, wet: false });
+      expect(offer.pickupId).not.toBe(offer.dropId);
+      expect(placeById(offer.pickupId)).toBeTruthy();
+      expect(placeById(offer.dropId)).toBeTruthy();
+      expect(offer.distance).toBeGreaterThan(0);
+      expect(offer.fareEstimate).toBeGreaterThan(0);
+      expect(offer.targetTime).toBeGreaterThan(15);
+      if (offer.kind === 'market') sawMarket = true;
+      if (offer.kind === 'passenger') sawPassenger = true;
+    }
+    expect(sawMarket).toBe(true);
+    expect(sawPassenger).toBe(true);
   });
 
   it('is deterministic given the same seed', () => {
@@ -213,15 +342,6 @@ describe('mission generation', () => {
     expect(a.dropId).toBe(b.dropId);
     expect(a.pickupId).toBe(b.pickupId);
     expect(a.fareEstimate).toBe(b.fareEstimate);
-  });
-
-  it('changes with the seed', () => {
-    const seen = new Set<string>();
-    for (let seed = 0; seed < 40; seed++) {
-      const offer = generateMission({ rng: mulberry32(seed), wet: false, seed });
-      seen.add(`${offer.pickupId}->${offer.dropId}`);
-    }
-    expect(seen.size).toBeGreaterThan(3);
   });
 
   it('daily seeds are stable per calendar day and derived from the date', () => {

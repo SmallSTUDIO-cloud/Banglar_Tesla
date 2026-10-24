@@ -1,730 +1,742 @@
 /**
- * The hero asset: a hand-painted Bangladeshi pedal cycle rickshaw, built from
- * primitives with a full animation rig (steering, wheels, pedalling legs,
- * canopy sway, ornaments) and swappable paint / art / tassel cosmetics.
+ * Detailed Bangladeshi three-wheeled passenger rickshaw rig:
+ *   - Classic Pedal Rickshaw (traditional tubular steel frame, chain drive,
+ *     sprung saddle, curved mudguards, brass bell, dual mirrors, hand-painted
+ *     backplate art, quilted bench, bamboo-ribbed folding hood & tassels)
+ *   - Banglar Bidyut Electric Rickshaw (48V battery pack, rear brushless DC
+ *     hub/axle motor, finned controller, handlebar LED battery meter, dual headlamps)
+ *   - Rickshaw Roadster (non-purchasable aerodynamic concept preview)
  *
- * Local axes: +Z is forward, +Y up, origin on the ground between the rear axle
- * and the passenger bench.
+ * Performance & Physics Architecture:
+ *   - `root.rotation.order = 'YXZ'` prevents pitch/roll cross-talk at any yaw.
+ *   - Exact tyre radii (`front = 0.370m`, `rear = 0.386m`) match `RIDE` constants
+ *     in `config.ts` so tyres kiss the road without sinking on flat/sloped ground.
+ *   - Static sub-parts inside `chassis` and `steering` are merged by material
+ *     via `Bucket`, delivering ~160 sculpted rickshaw parts in ~12 draw calls.
  */
 
 import * as THREE from 'three';
-import { createWheel } from '../world/geo';
-import { rickshawArtTexture, clothTexture, FONT_FAMILY } from '../world/textures';
-import type { CosmeticCategory, VehicleDef } from '../economy/catalog';
-import { damp, TAU } from '../core/mathx';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RIDE } from '../core/config';
+import type { VehicleKind } from '../economy/catalog';
+import { Bucket, createWheel } from '../world/geo';
+import { rickshawArtTexture } from '../world/textures';
 
 export interface RickshawLook {
-  palette: VehicleDef['palette'];
-  art: string;
-  tassel: string;
-  flowers: string;
-  mirror: string;
+  frameColor: string;
+  canopyColor: string;
+  canopyTrim: string;
+  wheelTrim: string;
+  artMotif: string;
+  artPrimary: string;
+  artSecondary: string;
+  fairyLights: boolean;
+  bellUpgrade: boolean;
   bell: string;
+  mirrorSet: boolean;
+  flowersColor: string | null;
+  kind?: VehicleKind;
 }
 
-function mat(color: THREE.ColorRepresentation, roughness = 0.55, metalness = 0.1): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
-}
+export const DEFAULT_LOOK: RickshawLook = {
+  frameColor: '#0e6b50',
+  canopyColor: '#b31329',
+  canopyTrim: '#f2b938',
+  wheelTrim: '#d9d9d9',
+  artMotif: 'lotus',
+  artPrimary: '#134e3a',
+  artSecondary: '#f3b93a',
+  fairyLights: false,
+  bellUpgrade: false,
+  bell: 'classic',
+  mirrorSet: false,
+  flowersColor: null,
+  kind: 'pedal',
+};
 
-function canopyGeometry(width: number, radius: number, length: number): THREE.BufferGeometry {
-  const cols = 10;
-  const rows = 8;
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-  for (let r = 0; r <= rows; r++) {
-    const t = r / rows;
-    const z = -length / 2 + t * length;
-    for (let c = 0; c <= cols; c++) {
-      const s = c / cols;
-      // arched roof: lower at the sides
-      const x = (s - 0.5) * width;
-      const arc = Math.cos((s - 0.5) * Math.PI) ;
-      const y = radius * (0.55 + 0.45 * arc) * (1 - 0.06 * Math.sin(t * Math.PI));
-      positions.push(x, y, z);
-      uvs.push(s, t);
-    }
-  }
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const a = r * (cols + 1) + c;
-      const b = a + 1;
-      const d = a + cols + 1;
-      const e = d + 1;
-      indices.push(a, d, b, b, d, e);
-    }
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-  return geo;
-}
-
-function upholsteryTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#7d1d1a';
-  ctx.fillRect(0, 0, 128, 128);
-  ctx.strokeStyle = 'rgba(240,200,120,0.55)';
-  ctx.lineWidth = 2;
-  for (let i = -128; i < 256; i += 22) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i + 128, 128);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(i, 128);
-    ctx.lineTo(i + 128, 0);
-    ctx.stroke();
-  }
-  ctx.fillStyle = 'rgba(240,200,120,0.8)';
-  for (let y = 11; y < 128; y += 22) {
-    for (let x = 11; x < 128; x += 22) {
-      ctx.beginPath();
-      ctx.arc(x, y, 2.4, 0, TAU);
-      ctx.fill();
-    }
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(2, 2);
-  return tex;
-}
-
-function plateTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#e8dcc0';
-  ctx.fillRect(0, 0, 128, 64);
-  ctx.strokeStyle = '#2a2a2a';
-  ctx.lineWidth = 5;
-  ctx.strokeRect(4, 4, 120, 56);
-  ctx.fillStyle = '#1a1a1a';
-  ctx.font = `700 30px ${FONT_FAMILY}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('ঢাকা', 64, 34);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
-export class RickshawVisual {
+export class RickshawRig {
   readonly root = new THREE.Group();
-  readonly body = new THREE.Group();
-  readonly wheels: THREE.Group[] = [];
+  readonly chassis = new THREE.Group();
   readonly steering = new THREE.Group();
+  readonly frontWheel: THREE.Group;
+  readonly rearWheels: [THREE.Group, THREE.Group];
   readonly crank = new THREE.Group();
-  readonly canopy = new THREE.Group();
-  readonly tassels: THREE.Object3D[] = [];
-  readonly legs: { thigh: THREE.Mesh; shin: THREE.Mesh; side: number; hip: THREE.Vector3 }[] = [];
-  /** Anchor for the seated passenger (bench position). */
-  readonly seatAnchor = new THREE.Object3D();
-  private bodyMat: THREE.MeshStandardMaterial;
-  private trimMat: THREE.MeshStandardMaterial;
-  private artMat: THREE.MeshStandardMaterial;
-  private canopyMat: THREE.MeshStandardMaterial;
-  private tasselMat: THREE.MeshStandardMaterial;
-  private sideMat: THREE.MeshStandardMaterial;
-  private flowerMeshes: THREE.Object3D[] = [];
-  private artMesh: THREE.Mesh;
-  private wheelSpin = 0;
-  private crankAngle = 0;
-  private sway = 0;
-  private roll = 0;
-  private pitch = 0;
-  private bob = 0;
+  readonly puller = new THREE.Group();
+  readonly passengerMount = new THREE.Group();
+  readonly headlampLight: THREE.SpotLight | null;
+  readonly fairyBulbMaterials: THREE.MeshStandardMaterial[] = [];
+  private tasselBar = new THREE.Group();
 
-  constructor(_vehicle: VehicleDef, look: RickshawLook) {
-    this.root.name = 'player-rickshaw';
-    this.root.add(this.body);
+  readonly frontWheelRadius = RIDE.frontWheelRadius;
+  readonly rearWheelRadius = RIDE.rearWheelRadius;
+  private look: RickshawLook;
+  private isElectric: boolean;
 
-    this.seatAnchor.position.set(0, 0.74, -0.62);
-    this.body.add(this.seatAnchor);
+  constructor(look: RickshawLook = DEFAULT_LOOK, opts: { isPlayer?: boolean } = {}) {
+    this.look = look;
+    this.isElectric = look.kind === 'electric' || look.kind === 'roadster';
+    const isRoadster = look.kind === 'roadster';
 
-    this.bodyMat = mat(look.palette.body, 0.42, 0.22);
-    this.trimMat = mat(look.palette.trim, 0.32, 0.72);
-    // Real rickshaw hoods are oilcloth in dark greens, reds or blacks, but they
-    // always carry a painted border. Lift the base tone so the shape reads at
-    // gameplay distance instead of becoming a black hole in the frame.
-    this.canopyMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(look.palette.canopy).lerp(new THREE.Color('#6d5a4a'), 0.62),
-      emissive: new THREE.Color('#241c16'),
-      emissiveIntensity: 0.55,
-      map: clothTexture(),
-      roughness: 0.9,
-      metalness: 0.03,
-      side: THREE.DoubleSide,
+    this.root.name = 'rickshaw';
+    // Critical: apply world Yaw (Y) first, then local Pitch (X), then local Roll (Z)!
+    this.root.rotation.order = 'YXZ';
+    this.root.add(this.chassis);
+
+    // Rig-owned materials (vertexColors enabled so merged buckets carry rich multi-tone parts)
+    const metalMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: isRoadster ? 0.25 : 0.36,
+      metalness: isRoadster ? 0.78 : 0.62,
     });
-    this.tasselMat = mat(look.tassel, 0.85, 0.02);
-    this.sideMat = mat(new THREE.Color(look.palette.body).multiplyScalar(1.15), 0.5, 0.2);
-
-    // ---------------------------------------------------------- chassis
-    const frameMat = mat('#2a2b2e', 0.45, 0.6);
-    const woodMat = mat('#7c4a22', 0.8, 0.05);
-    const chrome = mat('#d3d7da', 0.22, 0.85);
-
-    // main spine
-    const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 1.7, 8), frameMat);
-    spine.rotation.x = Math.PI / 2;
-    spine.position.set(0, 0.5, 0.0);
-    spine.castShadow = true;
-    this.body.add(spine);
-
-    // lower chassis rails to rear axle
-    for (const side of [-1, 1]) {
-      const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 1.1, 6), frameMat);
-      rail.rotation.x = Math.PI / 2;
-      rail.position.set(side * 0.3, 0.42, -0.32);
-      this.body.add(rail);
-      const stay = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.75, 6), frameMat);
-      stay.position.set(side * 0.42, 0.6, -0.5);
-      stay.rotation.z = side * 0.35;
-      this.body.add(stay);
-    }
-
-    // rear axle
-    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.24, 8), frameMat);
-    axle.rotation.z = Math.PI / 2;
-    axle.position.set(0, 0.36, -0.42);
-    this.body.add(axle);
-
-    // ---------------------------------------------------------- wheels
-    const rearL = createWheel(0.36, '#171717', '#c9c9c9', 18);
-    rearL.position.set(-0.56, 0.36, -0.42);
-    const rearR = createWheel(0.36, '#171717', '#c9c9c9', 18);
-    rearR.position.set(0.56, 0.36, -0.42);
-    const frontWheel = createWheel(0.34, '#171717', '#c9c9c9', 18);
-    frontWheel.position.set(0, 0, 0);
-    this.wheels.push(rearL, rearR, frontWheel);
-    this.body.add(rearL, rearR);
-
-    // mudguards over the rear wheels
-    const guardMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(look.palette.body).multiplyScalar(0.82),
-      roughness: 0.5,
-      metalness: 0.3,
-      side: THREE.DoubleSide,
+    const chromeMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.2,
+      metalness: 0.88,
     });
-    for (const side of [-1, 1]) {
-      const guard = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.41, 0.41, 0.2, 14, 1, true, -Math.PI * 0.42, Math.PI * 0.84),
-        guardMat,
-      );
-      guard.rotation.z = Math.PI / 2;
-      guard.position.set(side * 0.56, 0.4, -0.42);
-      guard.castShadow = true;
-      this.body.add(guard);
-    }
-
-    // ------------------------------------------------ steering + front fork
-    this.steering.position.set(0, 0, 0.76);
-    this.body.add(this.steering);
-    const fork = new THREE.Group();
-    this.steering.add(fork);
-    const forkGeo = new THREE.CylinderGeometry(0.026, 0.026, 0.64, 6);
-    for (const side of [-1, 1]) {
-      const blade = new THREE.Mesh(forkGeo, frameMat);
-      blade.position.set(side * 0.055, 0.06, 0.02);
-      blade.rotation.x = -0.12;
-      fork.add(blade);
-    }
-    fork.add(frontWheel);
-    const frontGuard = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.38, 0.38, 0.13, 14, 1, true, -Math.PI * 0.45, Math.PI * 0.9),
-      guardMat,
-    );
-    frontGuard.rotation.z = Math.PI / 2;
-    frontGuard.position.set(0, 0.02, 0);
-    fork.add(frontGuard);
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.72, 8), frameMat);
-    stem.position.set(0, 0.52, -0.02);
-    stem.rotation.x = -0.18;
-    this.steering.add(stem);
-    // handlebar
-    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.62, 8), chrome);
-    bar.rotation.z = Math.PI / 2;
-    bar.position.set(0, 0.86, -0.1);
-    this.steering.add(bar);
-    for (const side of [-1, 1]) {
-      const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.14, 8), mat('#20201f', 0.9, 0.0));
-      grip.rotation.z = Math.PI / 2;
-      grip.position.set(side * 0.28, 0.86, -0.1);
-      this.steering.add(grip);
-      const brakeLever = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.16, 4), chrome);
-      brakeLever.rotation.x = Math.PI / 2.4;
-      brakeLever.position.set(side * 0.24, 0.82, -0.02);
-      this.steering.add(brakeLever);
-    }
-    // front lamp + reflector
-    const lampHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.07, 0.1, 10), frameMat);
-    lampHousing.rotation.x = Math.PI / 2;
-    lampHousing.position.set(0, 0.72, 0.14);
-    this.steering.add(lampHousing);
-    const lampLens = new THREE.Mesh(
-      new THREE.CircleGeometry(0.055, 12),
-      new THREE.MeshStandardMaterial({ color: 0xfff2c8, emissive: 0xffe9a8, emissiveIntensity: 1.6 }),
-    );
-    lampLens.position.set(0, 0.72, 0.2);
-    this.steering.add(lampLens);
-    const headlight = new THREE.SpotLight(0xffe6b0, 0, 26, 0.5, 0.5, 1.4);
-    headlight.position.set(0, 0.72, 0.24);
-    headlight.target.position.set(0, 0.1, 6);
-    this.steering.add(headlight, headlight.target);
-    this.headlight = headlight;
-
-    // bell on the bar
-    const bell = new THREE.Mesh(
-      new THREE.SphereGeometry(0.045, 10, 8, 0, TAU, 0, Math.PI / 2),
-      mat('#e2b45a', 0.28, 0.85),
-    );
-    bell.position.set(0.16, 0.9, -0.12);
-    this.steering.add(bell);
-    this.bellMesh = bell;
-
-    // ------------------------------------------------------------- seating
-    const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.3), mat('#2b2622', 0.85, 0.02));
-    saddle.position.set(0, 0.88, 0.16);
-    saddle.rotation.x = 0.06;
-    this.body.add(saddle);
-    const seatPost = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.34, 6), chrome);
-    seatPost.position.set(0, 0.71, 0.16);
-    this.body.add(seatPost);
-
-    const upholstery = upholsteryTexture();
-    const benchMat = new THREE.MeshStandardMaterial({ map: upholstery, color: 0xffffff, roughness: 0.86 });
-    const bench = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.12, 0.62), benchMat);
-    bench.position.set(0, 0.68, -0.62);
-    bench.castShadow = true;
-    this.body.add(bench);
-    const backrest = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.42, 0.09), benchMat);
-    backrest.position.set(0, 0.9, -0.9);
-    backrest.rotation.x = -0.12;
-    this.body.add(backrest);
-    // bench frame
-    const benchBase = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.1, 0.7), woodMat);
-    benchBase.position.set(0, 0.58, -0.62);
-    this.body.add(benchBase);
-    for (const side of [-1, 1]) {
-      const armRail = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 1.2, 6), chrome);
-      armRail.rotation.x = Math.PI / 2;
-      armRail.position.set(side * 0.5, 0.92, -0.45);
-      this.body.add(armRail);
-    }
-
-    // passenger footboard
-    const footboard = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.05, 0.34), woodMat);
-    footboard.position.set(0, 0.3, -0.12);
-    this.body.add(footboard);
-
-    // -------------------------------------------------------- rear panel art
-    this.artMat = new THREE.MeshStandardMaterial({
-      map: rickshawArtTexture(look.art, look.palette.panel, look.palette.trim),
-      roughness: 0.62,
+    const fabricMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.84,
       metalness: 0.04,
+      side: THREE.DoubleSide,
     });
-    const artGeo = new THREE.PlaneGeometry(0.98, 0.86);
-    this.artMesh = new THREE.Mesh(artGeo, this.artMat);
-    this.artMesh.position.set(0, 0.82, -1.03);
-    this.artMesh.rotation.y = Math.PI;
-    this.body.add(this.artMesh);
-    // panel frame
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.06, 0.94, 0.05), this.trimMat);
-    frame.position.set(0, 0.82, -0.985);
-    this.body.add(frame);
-    const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.15), new THREE.MeshStandardMaterial({ map: plateTexture() }));
-    plate.position.set(0, 0.44, -1.02);
-    plate.rotation.y = Math.PI;
-    this.body.add(plate);
+    const woodLeatherMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.68,
+      metalness: 0.06,
+    });
+    const glowMat = new THREE.MeshStandardMaterial({
+      color: 0xfff3c8,
+      emissive: new THREE.Color(this.isElectric ? 0xdff8ff : 0xffd27a),
+      emissiveIntensity: 0.65,
+      roughness: 0.25,
+    });
 
-    // side panels with painted trim
+    const bMetal = new Bucket('rickshaw.chassis.metal', metalMat);
+    const bChrome = new Bucket('rickshaw.chassis.chrome', chromeMat);
+    const bFabric = new Bucket('rickshaw.chassis.fabric', fabricMat);
+    const bWood = new Bucket('rickshaw.chassis.wood', woodLeatherMat);
+
+    // --------------------------------------------------- 1. WHEELS (exact ground contact)
+    this.frontWheel = createWheel(this.frontWheelRadius, '#1a1c1f', look.wheelTrim, 18);
+    const rearL = createWheel(this.rearWheelRadius, '#1a1c1f', look.wheelTrim, 20);
+    const rearR = createWheel(this.rearWheelRadius, '#1a1c1f', look.wheelTrim, 20);
+    this.rearWheels = [rearL, rearR];
+
+    rearL.position.set(RIDE.rearTrackHalf, this.rearWheelRadius, RIDE.rearAxleZ);
+    rearR.position.set(-RIDE.rearTrackHalf, this.rearWheelRadius, RIDE.rearAxleZ);
+    this.chassis.add(rearL, rearR);
+
+    // Steering pivot sits directly above the front axle (z = +0.80m)
+    this.steering.position.set(0, 0, RIDE.frontAxleZ);
+    this.frontWheel.position.set(0, this.frontWheelRadius, 0);
+    this.steering.add(this.frontWheel);
+    this.chassis.add(this.steering);
+
+    const frameCol = look.frameColor;
+    const trimCol = look.canopyTrim;
+    const rearZ = RIDE.rearAxleZ; // -0.68
+    const rearY = this.rearWheelRadius; // 0.386
+
+    // ----------------------------------- 2. REAR AXLE, LEAF SPRINGS & FENDERS
+    // Solid steel rear axle + central differential/sprocket drum
+    bChrome.cylinder({ x: 0, y: rearY, z: rearZ }, 0.022, RIDE.rearTrackHalf * 2.08, '#9aa3ad', { z: Math.PI / 2 });
+    bMetal.cylinder({ x: 0.06, y: rearY, z: rearZ }, 0.068, 0.14, '#24292e', { z: Math.PI / 2 });
+
+    // Twin multi-leaf semi-elliptic springs + shackles under passenger carriage
+    for (const sx of [-0.37, 0.37]) {
+      bMetal.box({ x: sx, y: rearY + 0.055, z: rearZ }, { x: 0.048, y: 0.022, z: 0.56 }, '#2c3136');
+      bMetal.box({ x: sx, y: rearY + 0.074, z: rearZ }, { x: 0.044, y: 0.018, z: 0.42 }, '#3a4046');
+      bMetal.box({ x: sx, y: rearY + 0.09, z: rearZ }, { x: 0.04, y: 0.016, z: 0.28 }, '#464d54');
+      bChrome.box({ x: sx, y: rearY + 0.06, z: rearZ - 0.26 }, { x: 0.055, y: 0.06, z: 0.03 }, '#b9c0c7');
+      bChrome.box({ x: sx, y: rearY + 0.06, z: rearZ + 0.26 }, { x: 0.055, y: 0.06, z: 0.03 }, '#b9c0c7');
+    }
+
+    // Sculpted rear arched mudguards (segmented curved steel fenders + gold trim)
     for (const side of [-1, 1]) {
-      const sidePanel = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.6, 0.9), this.sideMat);
-      sidePanel.position.set(side * 0.53, 0.62, -0.55);
-      sidePanel.castShadow = true;
-      this.body.add(sidePanel);
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.08, 0.9), this.trimMat);
-      stripe.position.set(side * 0.54, 0.86, -0.55);
-      this.body.add(stripe);
+      const wx = side * RIDE.rearTrackHalf;
+      const segs = 9;
+      for (let i = 0; i < segs; i++) {
+        const a0 = -0.35 + (i / segs) * (Math.PI + 0.45);
+        const r = this.rearWheelRadius + 0.038;
+        const fy = rearY + Math.sin(a0) * r;
+        const fz = rearZ + Math.cos(a0) * r;
+        const pitch = a0 - Math.PI * 0.5;
+        bMetal.box({ x: wx, y: fy, z: fz }, { x: 0.125, y: 0.016, z: 0.155 }, frameCol, { x: -pitch });
+        bMetal.box({ x: wx + side * 0.058, y: fy - 0.008, z: fz }, { x: 0.014, y: 0.032, z: 0.155 }, trimCol, { x: -pitch });
+      }
+      // Mudguard stay rods
+      bChrome.cylinder({ x: wx + side * 0.045, y: rearY + 0.12, z: rearZ - 0.2 }, 0.006, 0.42, '#cfd6dd', { x: 0.68 });
+      bChrome.cylinder({ x: wx + side * 0.045, y: rearY + 0.12, z: rearZ + 0.2 }, 0.006, 0.42, '#cfd6dd', { x: -0.68 });
+      // Rear rubber mudflap with brass studs
+      bWood.box({ x: wx, y: 0.21, z: rearZ - this.rearWheelRadius - 0.03 }, { x: 0.12, y: 0.14, z: 0.012 }, '#181a1d');
+      bChrome.cylinder({ x: wx, y: 0.17, z: rearZ - this.rearWheelRadius - 0.038 }, 0.012, 0.01, trimCol, { x: Math.PI / 2 });
     }
 
-    // -------------------------------------------------------------- canopy
-    this.canopy.position.set(0, 0, -0.42);
-    this.body.add(this.canopy);
-    const canopyMesh = new THREE.Mesh(canopyGeometry(1.24, 1.28, 1.24), this.canopyMat);
-    canopyMesh.position.set(0, 0.52, 0);
-    canopyMesh.castShadow = true;
-    canopyMesh.receiveShadow = true;
-    this.canopy.add(canopyMesh);
+    // ----------------------------------------- 3. TUBULAR STEEL BICYCLE FRAME
+    // Twin lower chassis rails from rear axle forward to bottom bracket (z = 0.06, y = 0.42)
+    for (const sx of [-0.36, 0.36]) {
+      bMetal.cylinder({ x: sx * 0.62, y: 0.41, z: -0.30 }, 0.019, 0.86, frameCol, {
+        x: Math.PI / 2 - 0.04,
+        z: sx * 0.38,
+      });
+      bMetal.box({ x: sx, y: 0.52, z: -0.62 }, { x: 0.035, y: 0.035, z: 0.78 }, frameCol);
+    }
+    // Crossbars
+    bMetal.cylinder({ x: 0, y: 0.52, z: -0.26 }, 0.018, 0.76, frameCol, { z: Math.PI / 2 });
+    bMetal.cylinder({ x: 0, y: 0.52, z: -0.96 }, 0.018, 0.76, frameCol, { z: Math.PI / 2 });
+
+    // Classic diamond bicycle front triangle: BB(0.06,0.42) -> SeatPost(-0.04,0.92) -> HeadTube(0.80,0.94)
+    bMetal.cylinder({ x: 0, y: 0.67, z: 0.01 }, 0.02, 0.52, frameCol, { x: -0.19 }); // seat tube
+    bMetal.cylinder({ x: 0, y: 0.67, z: 0.43 }, 0.022, 0.90, frameCol, { x: 0.96 }); // main down tube
+    bMetal.cylinder({ x: 0, y: 0.91, z: 0.40 }, 0.019, 0.84, frameCol, { x: Math.PI / 2 - 0.05 }); // horizontal top tube
+    // Bangladeshi double-bar reinforcement tube (iconic heavy-duty rickshaw truss!)
+    bMetal.cylinder({ x: 0, y: 0.81, z: 0.41 }, 0.016, 0.82, trimCol, { x: Math.PI / 2 + 0.06 });
+
+    // Sprung leather rider saddle + twin rear coil springs
+    bChrome.cylinder({ x: 0, y: 0.96, z: -0.05 }, 0.013, 0.12, '#cfd6de');
+    bWood.box({ x: 0, y: 1.03, z: -0.06 }, { x: 0.18, y: 0.048, z: 0.25 }, '#3b2416');
+    bWood.box({ x: 0, y: 1.035, z: 0.04 }, { x: 0.09, y: 0.042, z: 0.11 }, '#3b2416');
+    for (const sx of [-0.055, 0.055]) {
+      bChrome.cylinder({ x: sx, y: 0.985, z: -0.13 }, 0.022, 0.055, '#b8c0c8');
+    }
+
+    // ------------------------ 4. DRIVETRAIN: CHAIN vs ELECTRIC BATTERY/MOTOR
+    if (this.isElectric) {
+      // Under-seat 48V battery box + yellow hazard stripe + rear brushless DC motor
+      bMetal.box({ x: 0, y: 0.44, z: -0.44 }, { x: 0.54, y: 0.18, z: 0.38 }, '#1c2630');
+      bMetal.box({ x: 0, y: 0.45, z: -0.245 }, { x: 0.48, y: 0.05, z: 0.015 }, '#f2b938');
+      bChrome.box({ x: 0.18, y: 0.54, z: -0.44 }, { x: 0.14, y: 0.04, z: 0.22 }, '#9aa8b8'); // finned controller
+      bMetal.cylinder({ x: -0.08, y: rearY, z: rearZ }, 0.105, 0.22, '#1f4e5f', { z: Math.PI / 2 }); // BLDC axle motor
+      bChrome.cylinder({ x: -0.08, y: rearY, z: rearZ }, 0.11, 0.04, '#39d2c0', { z: Math.PI / 2 });
+    } else {
+      // Sheet-metal chain guard + upper/lower roller chain runs
+      bMetal.box({ x: 0.075, y: 0.425, z: -0.28 }, { x: 0.026, y: 0.085, z: 0.72 }, frameCol, { x: 0.04 });
+      bChrome.box({ x: 0.068, y: 0.445, z: -0.31 }, { x: 0.01, y: 0.012, z: 0.74 }, '#474c52', { x: 0.05 });
+      bChrome.box({ x: 0.068, y: 0.375, z: -0.31 }, { x: 0.01, y: 0.012, z: 0.74 }, '#474c52', { x: 0.02 });
+    }
+
+    // Rotating crankset, chainring & rubber pedals
+    this.crank.position.set(0, 0.42, 0.06);
+    const bCrank = new Bucket('rickshaw.crank', chromeMat);
+    bCrank.cylinder({ x: 0.065, y: 0, z: 0 }, 0.095, 0.01, '#cfd6de', { z: Math.PI / 2 });
+    bCrank.cylinder({ x: 0, y: 0, z: 0 }, 0.016, 0.19, '#b8c0c8', { z: Math.PI / 2 });
+    bCrank.box({ x: 0.095, y: 0.08, z: 0 }, { x: 0.014, y: 0.17, z: 0.024 }, '#d5dce4');
+    bCrank.box({ x: -0.095, y: -0.08, z: 0 }, { x: 0.014, y: 0.17, z: 0.024 }, '#d5dce4');
+    bCrank.box({ x: 0.135, y: 0.155, z: 0 }, { x: 0.085, y: 0.024, z: 0.055 }, '#232629');
+    bCrank.box({ x: -0.135, y: -0.155, z: 0 }, { x: 0.085, y: 0.024, z: 0.055 }, '#232629');
+    const crankMesh = bCrank.build({ cast: false, receive: false }, true);
+    if (crankMesh) this.crank.add(crankMesh);
+    this.chassis.add(this.crank);
+
+    // ----------------------- 5. STEERING FORK, HANDLEBARS, BELL, MIRRORS, LAMP
+    const bSteerMetal = new Bucket('rickshaw.steer.metal', metalMat);
+    const bSteerChrome = new Bucket('rickshaw.steer.chrome', chromeMat);
+    const bSteerWood = new Bucket('rickshaw.steer.wood', woodLeatherMat);
+
+    // Head tube + chrome headset cups
+    bSteerMetal.cylinder({ x: 0, y: 0.89, z: -0.01 }, 0.025, 0.22, frameCol, { x: -0.16 });
+    bSteerChrome.cylinder({ x: 0, y: 1.00, z: -0.03 }, 0.03, 0.025, '#dce3ea', { x: -0.16 });
+    bSteerChrome.cylinder({ x: 0, y: 0.78, z: 0.01 }, 0.03, 0.025, '#dce3ea', { x: -0.16 });
+
+    // Fork crown + twin tapered fork blades down to front axle (0, 0.370, 0)
+    bSteerMetal.box({ x: 0, y: 0.76, z: 0.01 }, { x: 0.15, y: 0.038, z: 0.05 }, frameCol);
+    for (const fx of [-0.058, 0.058]) {
+      bSteerMetal.cylinder({ x: fx, y: 0.565, z: 0.005 }, 0.015, 0.41, frameCol);
+      bSteerChrome.box({ x: fx, y: this.frontWheelRadius, z: 0 }, { x: 0.018, y: 0.05, z: 0.045 }, '#cfd6de');
+    }
+
+    // Curved front mudguard + front mudflap + stay rods
+    for (let i = 0; i < 8; i++) {
+      const a0 = 0.22 + (i / 8) * 2.25;
+      const r = this.frontWheelRadius + 0.034;
+      const fy = this.frontWheelRadius + Math.sin(a0) * r;
+      const fz = Math.cos(a0) * r;
+      const pitch = a0 - Math.PI * 0.5;
+      bSteerMetal.box({ x: 0, y: fy, z: fz }, { x: 0.105, y: 0.015, z: 0.135 }, frameCol, { x: -pitch });
+    }
+    bSteerChrome.cylinder({ x: 0.05, y: 0.44, z: -0.18 }, 0.005, 0.38, '#cfd6de', { x: 0.85 });
+    bSteerChrome.cylinder({ x: -0.05, y: 0.44, z: -0.18 }, 0.005, 0.38, '#cfd6de', { x: 0.85 });
+    bSteerWood.box({ x: 0, y: 0.22, z: -this.frontWheelRadius - 0.02 }, { x: 0.11, y: 0.11, z: 0.01 }, '#1b1d20');
+
+    // Front rod/caliper brake assembly
+    bSteerChrome.box({ x: 0, y: 0.73, z: 0.048 }, { x: 0.11, y: 0.03, z: 0.025 }, '#c6cdd4');
+    bSteerChrome.cylinder({ x: 0.02, y: 0.94, z: 0.01 }, 0.004, 0.42, '#22262a', { x: -0.14 });
+
+    // Stem + classic swept-back Bangladeshi chrome handlebars + brake levers
+    bSteerChrome.cylinder({ x: 0, y: 1.09, z: -0.045 }, 0.016, 0.19, '#dce3ea', { x: -0.15 });
+    bSteerChrome.cylinder({ x: 0, y: 1.18, z: -0.06 }, 0.014, 0.38, '#e2e8ef', { z: Math.PI / 2 });
     for (const side of [-1, 1]) {
-      const edge = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.05, 1.2), this.trimMat);
-      edge.position.set(side * 0.6, 0.78, 0);
-      this.canopy.add(edge);
-    }
-    // painted valance along the canopy edge (bright band that separates the
-    // hood from the street behind it)
-    const valance = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 0.02), this.trimMat);
-    valance.position.set(0, 1.1, -0.63);
-    this.canopy.add(valance);
-    // wooden bows
-    for (const zOff of [-0.5, 0, 0.5]) {
-      const bow = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.022, 5, 16, Math.PI), woodMat);
-      bow.rotation.y = Math.PI / 2;
-      bow.rotation.z = 0;
-      bow.position.set(0, 0.98, zOff);
-      this.canopy.add(bow);
-    }
-    // rear curtain with art
-    const curtain = new THREE.Mesh(new THREE.PlaneGeometry(1.04, 0.46), this.artMat);
-    curtain.position.set(0, 0.66, -0.618);
-    curtain.rotation.y = Math.PI;
-    this.canopy.add(curtain);
-    // rolled-up cloth bundle at the top of the curtain (as on a real hood)
-    const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.08, 8), this.trimMat);
-    roll.rotation.z = Math.PI / 2;
-    roll.position.set(0, 0.92, -0.62);
-    this.canopy.add(roll);
-
-    // tassels along the canopy edge
-    for (let i = 0; i < 9; i++) {
-      const t = i / 8;
-      const x = -0.56 + t * 1.12;
-      const tassel = new THREE.Group();
-      const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.1, 4), this.tasselMat);
-      cord.position.y = -0.05;
-      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.026, 6, 5), this.tasselMat);
-      knot.position.y = -0.1;
-      const skirt = new THREE.Mesh(new THREE.ConeGeometry(0.036, 0.12, 6), this.tasselMat);
-      skirt.position.y = -0.19;
-      skirt.rotation.x = Math.PI;
-      tassel.add(cord, knot, skirt);
-      tassel.position.set(x, 1.32, -1.0 + Math.abs(x) * 0.12);
-      this.body.add(tassel);
-      this.tassels.push(tassel);
-    }
-
-    // plastic flowers and mirrors on the frame
-    for (const side of [-1, 1]) {
-      const mirror = new THREE.Mesh(
-        new THREE.CircleGeometry(0.06, 12),
-        new THREE.MeshStandardMaterial({ color: 0xd8e0e4, metalness: 0.9, roughness: 0.12, side: THREE.DoubleSide }),
+      // Swept-back bar bends + ribbed black rubber grips + hand-brake levers
+      bSteerChrome.cylinder(
+        { x: side * 0.23, y: 1.175, z: -0.115 },
+        0.013,
+        0.14,
+        '#e2e8ef',
+        { x: Math.PI / 2, z: side * 0.52 },
       );
-      mirror.position.set(side * 0.3, 1.0, 0.02);
-      mirror.rotation.y = side * 0.5;
-      this.body.add(mirror);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.008, 4, 12), this.trimMat);
-      ring.position.copy(mirror.position);
-      ring.rotation.copy(mirror.rotation);
-      this.body.add(ring);
+      bSteerWood.cylinder(
+        { x: side * 0.275, y: 1.17, z: -0.195 },
+        0.018,
+        0.13,
+        '#1e2024',
+        { x: Math.PI / 2 },
+      );
+      bSteerChrome.box(
+        { x: side * 0.24, y: 1.155, z: -0.17 },
+        { x: 0.012, y: 0.014, z: 0.11 },
+        '#cfd6de',
+        { y: side * 0.18 },
+      );
+    }
 
-      const flower = new THREE.Group();
-      const petalMat = new THREE.MeshStandardMaterial({ color: 0xf0a500, roughness: 0.8 });
-      for (let p = 0; p < 5; p++) {
-        const petal = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 5), petalMat);
-        const a = (p / 5) * TAU;
-        petal.position.set(Math.cos(a) * 0.035, Math.sin(a) * 0.035, 0);
-        petal.scale.set(1, 1, 0.5);
-        flower.add(petal);
+    // Polished brass rickshaw bell (`টুং টাং`) on handlebar!
+    const bellColor = look.bellUpgrade ? '#ffd452' : '#d8a93e';
+    bSteerChrome.cylinder({ x: 0.155, y: 1.215, z: -0.075 }, 0.034, 0.026, bellColor);
+    bSteerChrome.cylinder({ x: 0.155, y: 1.23, z: -0.075 }, 0.022, 0.012, '#ffe680');
+    bSteerChrome.box({ x: 0.185, y: 1.205, z: -0.095 }, { x: 0.028, y: 0.008, z: 0.022 }, '#cfd6de');
+
+    // Electric handlebar digital battery display
+    if (this.isElectric) {
+      bSteerMetal.box({ x: 0, y: 1.21, z: -0.05 }, { x: 0.095, y: 0.042, z: 0.03 }, '#141c24', { x: -0.45 });
+      bSteerChrome.box({ x: 0, y: 1.215, z: -0.062 }, { x: 0.075, y: 0.022, z: 0.008 }, '#35f2c4', { x: -0.45 });
+    }
+
+    // Side mirrors (always at least one classic left mirror; twin chrome mirrors when upgraded/electric!)
+    const mirrorSides = look.mirrorSet || this.isElectric ? [-1, 1] : [1];
+    for (const side of mirrorSides) {
+      bSteerChrome.cylinder(
+        { x: side * 0.29, y: 1.255, z: -0.12 },
+        0.005,
+        0.16,
+        '#dce3ea',
+        { z: -side * 0.38 },
+      );
+      bSteerChrome.cylinder(
+        { x: side * 0.33, y: 1.325, z: -0.12 },
+        0.044,
+        0.014,
+        look.mirrorSet ? '#ffd45a' : '#d8dfe6',
+        { x: Math.PI / 2 },
+      );
+      bSteerChrome.cylinder(
+        { x: side * 0.33, y: 1.325, z: -0.128 },
+        0.038,
+        0.004,
+        '#9fd6ff',
+        { x: Math.PI / 2 },
+      );
+    }
+
+    // Front headlamp(s) + municipal rickshaw number plate
+    bSteerChrome.cylinder({ x: 0, y: 0.92, z: 0.075 }, 0.052, 0.075, '#cfd6de', { x: Math.PI / 2 });
+    if (this.isElectric) {
+      for (const sx of [-0.11, 0.11]) {
+        bSteerChrome.cylinder({ x: sx, y: 0.84, z: 0.065 }, 0.036, 0.055, '#1e2b36', { x: Math.PI / 2 });
       }
-      const centre = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 5), mat('#7a1f14', 0.8));
-      flower.add(centre);
-      flower.position.set(side * 0.5, 1.28, -0.15);
-      flower.rotation.y = side * 0.6;
-      this.body.add(flower);
-      this.flowerMeshes.push(flower as unknown as THREE.Mesh);
+    }
+    // Front Dhaka City Corporation blue/white tin number plate
+    bSteerMetal.box({ x: 0, y: 0.68, z: 0.072 }, { x: 0.16, y: 0.075, z: 0.008 }, '#144b82');
+    bSteerChrome.box({ x: 0, y: 0.68, z: 0.077 }, { x: 0.14, y: 0.055, z: 0.004 }, '#f4f1e4');
+
+    const steerM1 = bSteerMetal.build({ cast: true, receive: false }, true);
+    const steerM2 = bSteerChrome.build({ cast: false, receive: false }, true);
+    const steerM3 = bSteerWood.build({ cast: false, receive: false }, true);
+    if (steerM1) this.steering.add(steerM1);
+    if (steerM2) this.steering.add(steerM2);
+    if (steerM3) this.steering.add(steerM3);
+
+    // Glowing headlamp lens
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.046, 14), glowMat);
+    lens.position.set(0, 0.92, 0.114);
+    this.steering.add(lens);
+
+    if (opts.isPlayer) {
+      const spot = new THREE.SpotLight(this.isElectric ? 0xe8f9ff : 0xffe4ad, 0, 22, Math.PI / 4.8, 0.55, 1.3);
+      spot.position.set(0, 0.92, 0.13);
+      spot.target.position.set(0, 0.1, 7.5);
+      this.steering.add(spot);
+      this.steering.add(spot.target);
+      this.headlampLight = spot;
+    } else {
+      this.headlampLight = null;
     }
 
-    // --------------------------------------------------------- rider (driver)
-    const skin = mat('#8a5a3c', 0.75);
-    const shirt = mat('#e8e2d2', 0.9);
-    const lungi = mat('#2f5a4a', 0.92);
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.34, 4, 10), shirt);
-    torso.position.set(0, 1.16, 0.2);
-    torso.rotation.x = 0.16;
-    torso.castShadow = true;
-    this.body.add(torso);
-    const hips = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.12, 3, 8), lungi);
-    hips.position.set(0, 0.92, 0.18);
-    this.body.add(hips);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.115, 12, 10), skin);
-    head.position.set(0, 1.47, 0.26);
-    head.castShadow = true;
-    this.body.add(head);
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8, 0, TAU, 0, Math.PI / 2), mat('#1d4a3a', 0.9));
-    cap.position.set(0, 1.5, 0.26);
-    this.body.add(cap);
-    const gamcha = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.028, 5, 10), mat('#c95a3a', 0.9));
-    gamcha.position.set(0, 1.34, 0.27);
-    gamcha.rotation.x = Math.PI / 2.2;
-    this.body.add(gamcha);
-    // arms reaching the handlebar
+    // --------------------- 6. PASSENGER CARRIAGE, QUILTED BENCH & FOOTBOARD
+    // Slatted hardwood footboard + brass nose edging + side step plates (পাদানি)
+    bWood.box({ x: 0, y: 0.545, z: -0.34 }, { x: 0.90, y: 0.036, z: 0.36 }, '#5c3b20');
+    for (let s = -2; s <= 2; s++) {
+      bWood.box({ x: 0, y: 0.566, z: -0.34 + s * 0.068 }, { x: 0.88, y: 0.008, z: 0.042 }, '#744c2b');
+    }
+    bChrome.box({ x: 0, y: 0.555, z: -0.155 }, { x: 0.91, y: 0.038, z: 0.018 }, trimCol);
     for (const side of [-1, 1]) {
-      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.042, 0.4, 3, 6), shirt);
-      arm.position.set(side * 0.22, 1.0, 0.5);
-      arm.rotation.x = 1.28;
-      arm.rotation.z = side * 0.12;
-      this.body.add(arm);
-      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.038, 6, 5), skin);
-      hand.position.set(side * 0.27, 0.88, 0.72);
-      this.body.add(hand);
+      bChrome.box({ x: side * 0.50, y: 0.43, z: -0.26 }, { x: 0.11, y: 0.02, z: 0.18 }, '#c5ccd4');
+      bMetal.cylinder({ x: side * 0.44, y: 0.48, z: -0.26 }, 0.012, 0.12, frameCol, { z: side * 0.45 });
     }
 
-    // legs (animated towards the pedals)
+    // Carriage body shell (curved side panels + under-seat storage skirt + rear apron)
+    bMetal.box({ x: 0, y: 0.64, z: -0.78 }, { x: 0.92, y: 0.20, z: 0.56 }, frameCol);
     for (const side of [-1, 1]) {
-      const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.062, 0.3, 3, 6), lungi);
-      const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.3, 3, 6), skin);
-      this.body.add(thigh, shin);
-      this.legs.push({ thigh, shin, side, hip: new THREE.Vector3(side * 0.13, 0.9, 0.16) });
-    }
-    // feet
-    for (const side of [-1, 1]) {
-      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.05, 0.16), mat('#33261c', 0.9));
-      foot.position.set(side * 0.14, 0.34, 0.42);
-      this.body.add(foot);
+      bMetal.box({ x: side * 0.455, y: 0.88, z: -0.76 }, { x: 0.042, y: 0.34, z: 0.56 }, frameCol);
+      // Decorative brass S-scroll trim & bolstered rexine armrest
+      bChrome.box({ x: side * 0.478, y: 0.88, z: -0.74 }, { x: 0.01, y: 0.18, z: 0.44 }, trimCol);
+      bFabric.box({ x: side * 0.455, y: 1.07, z: -0.73 }, { x: 0.075, y: 0.065, z: 0.52 }, look.canopyColor);
+      // Chrome grab handle at front of carriage
+      bChrome.cylinder({ x: side * 0.46, y: 1.06, z: -0.45 }, 0.011, 0.18, '#dce3ea', { x: 0.25 });
     }
 
-    // --------------------------------------------------------------- crank
-    this.crank.position.set(0, 0.4, 0.36);
-    this.body.add(this.crank);
-    const chainring = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.016, 4, 14), chrome);
-    chainring.rotation.y = Math.PI / 2;
-    this.crank.add(chainring);
-    for (const side of [-1, 1]) {
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.2, 0.03), frameMat);
-      arm.position.set(side * 0.09, side * 0.09, 0);
-      this.crank.add(arm);
-      const pedal = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.02, 0.11), mat('#2a2a2a', 0.9));
-      pedal.position.set(side * 0.135, side * 0.18, 0);
-      this.crank.add(pedal);
+    // Quilted passenger bench cushion + tufted backrest
+    bFabric.box({ x: 0, y: 0.775, z: -0.74 }, { x: 0.85, y: 0.11, z: 0.48 }, '#a91d2c');
+    bFabric.box({ x: 0, y: 0.832, z: -0.54 }, { x: 0.84, y: 0.025, z: 0.07 }, trimCol); // front piping welt
+    bFabric.box({ x: 0, y: 1.06, z: -0.99 }, { x: 0.85, y: 0.48, z: 0.095 }, '#a91d2c', { x: -0.08 });
+    // Quilted vertical pleats + brass upholstery buttons
+    for (let q = -3; q <= 3; q++) {
+      bFabric.box({ x: q * 0.11, y: 1.06, z: -0.94 }, { x: 0.015, y: 0.42, z: 0.018 }, '#811220', { x: -0.08 });
+      bChrome.cylinder({ x: q * 0.11, y: 1.10, z: -0.93 }, 0.01, 0.012, trimCol, { x: Math.PI / 2 });
     }
-    // chain line to the rear axle
-    const chain = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, 0.8), mat('#3a3a3a', 0.6, 0.7));
-    chain.position.set(0.09, 0.4, 0.0);
-    this.body.add(chain);
 
-    // reflective tape and small details
-    const reflector = new THREE.Mesh(
-      new THREE.BoxGeometry(0.08, 0.03, 0.01),
-      new THREE.MeshStandardMaterial({ color: 0xd63b2f, emissive: 0x5a0f08, emissiveIntensity: 0.6 }),
-    );
-    reflector.position.set(0, 0.42, -1.02);
-    this.body.add(reflector);
+    // Rear ornate painted tin backplate + reflectors + Dhaka rickshaw plate
+    bMetal.box({ x: 0, y: 0.98, z: -1.065 }, { x: 0.92, y: 0.68, z: 0.028 }, frameCol);
+    bChrome.box({ x: 0, y: 0.62, z: -1.08 }, { x: 0.94, y: 0.045, z: 0.03 }, trimCol); // rear bumper bar
+    for (const sx of [-0.34, 0.34]) {
+      bFabric.cylinder({ x: sx, y: 0.62, z: -1.098 }, 0.028, 0.012, '#e52521', { x: Math.PI / 2 }); // red reflectors
+    }
+    bMetal.box({ x: 0, y: 0.54, z: -1.075 }, { x: 0.20, y: 0.09, z: 0.01 }, '#f4f0de'); // license plate
 
-    this.mergeStaticBody();
-    this.applyLook(look);
-    this.root.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        obj.castShadow = true;
-        obj.receiveShadow = true;
+    const artTex = rickshawArtTexture(look.artMotif, look.artPrimary, look.artSecondary);
+    const artMat = new THREE.MeshStandardMaterial({ map: artTex, roughness: 0.46, metalness: 0.12 });
+    const artPlate = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.58), artMat);
+    artPlate.position.set(0, 1.00, -1.082);
+    artPlate.rotation.y = Math.PI;
+    this.chassis.add(artPlate);
+
+    // ----------------------- 7. FOLDING BAMBOO-RIBBED HOOD / CANOPY (`হুড`)
+    const hoodY = 1.32;
+    // Multi-segment arched convertible hood with external rib ridges + brass compass joints
+    const archSteps = [
+      { y: 1.34, z: -1.05, d: 0.18, pitch: 1.18 },
+      { y: 1.50, z: -0.98, d: 0.22, pitch: 0.78 },
+      { y: 1.64, z: -0.84, d: 0.26, pitch: 0.34 },
+      { y: 1.71, z: -0.64, d: 0.28, pitch: 0.02 },
+      { y: 1.67, z: -0.42, d: 0.25, pitch: -0.34 },
+      { y: 1.56, z: -0.25, d: 0.18, pitch: -0.68 },
+    ];
+    for (const seg of archSteps) {
+      bFabric.box({ x: 0, y: seg.y, z: seg.z }, { x: 0.98, y: 0.028, z: seg.d }, look.canopyColor, { x: seg.pitch });
+      // Bamboo/steel rib ridge + gold appliqué stripe
+      bChrome.box({ x: 0, y: seg.y + 0.018, z: seg.z }, { x: 0.995, y: 0.014, z: 0.022 }, trimCol, { x: seg.pitch });
+      // Hood side curtains
+      for (const side of [-1, 1]) {
+        bFabric.box(
+          { x: side * 0.485, y: seg.y - 0.11, z: seg.z },
+          { x: 0.02, y: 0.23, z: seg.d * 0.96 },
+          look.canopyColor,
+        );
       }
-    });
+    }
+    // Side brass folding-hood scissor arms (authentic Bangladeshi rickshaw hood mechanism!)
+    for (const side of [-1, 1]) {
+      bChrome.cylinder({ x: side * 0.495, y: hoodY + 0.10, z: -0.94 }, 0.008, 0.42, '#cfd6de', { x: -0.35 });
+      bChrome.cylinder({ x: side * 0.495, y: hoodY + 0.14, z: -0.74 }, 0.008, 0.52, '#cfd6de', { x: 0.35 });
+      bChrome.cylinder({ x: side * 0.502, y: hoodY - 0.08, z: -0.98 }, 0.018, 0.016, trimCol, { z: Math.PI / 2 });
+    }
+    if (isRoadster) {
+      // Concept Roadster rear wing spoiler!
+      bMetal.box({ x: 0, y: 1.76, z: -1.08 }, { x: 1.06, y: 0.028, z: 0.18 }, trimCol, { x: 0.18 });
+    }
+
+    // Swinging front scalloped valance + tassels (`ঝালর`)
+    this.tasselBar.position.set(0, 1.49, -0.18);
+    const bTassel = new Bucket('rickshaw.tassels', fabricMat);
+    bTassel.box({ x: 0, y: 0, z: 0 }, { x: 0.98, y: 0.075, z: 0.02 }, trimCol);
+    for (let i = -5; i <= 5; i++) {
+      const tx = i * 0.085;
+      bTassel.cone({ x: tx, y: -0.058, z: 0 }, 0.022, 0.065, i % 2 === 0 ? trimCol : look.canopyColor, {
+        x: Math.PI,
+      });
+      bTassel.cylinder({ x: tx, y: -0.095, z: 0 }, 0.006, 0.035, '#ffe885');
+    }
+    const tasselMesh = bTassel.build({ cast: false, receive: false }, true);
+    if (tasselMesh) this.tasselBar.add(tasselMesh);
+    this.chassis.add(this.tasselBar);
+
+    // Emit merged chassis meshes (~4 draw calls for the entire carriage & frame!)
+    const cm1 = bMetal.build({ cast: true, receive: true }, true);
+    const cm2 = bChrome.build({ cast: false, receive: false }, true);
+    const cm3 = bFabric.build({ cast: true, receive: true }, true);
+    const cm4 = bWood.build({ cast: false, receive: true }, true);
+    if (cm1) this.chassis.add(cm1);
+    if (cm2) this.chassis.add(cm2);
+    if (cm3) this.chassis.add(cm3);
+    if (cm4) this.chassis.add(cm4);
+
+    // Optional fairy-light garland around hood rim
+    if (look.fairyLights) {
+      const colors = [0xff5e7e, 0xffd24a, 0x4ef2b4, 0x5cc8ff];
+      const bulbGeo = new THREE.SphereGeometry(0.021, 6, 6);
+      const mats = colors.map(
+        (col) =>
+          new THREE.MeshStandardMaterial({
+            color: col,
+            emissive: col,
+            emissiveIntensity: 0.85,
+            roughness: 0.3,
+          }),
+      );
+      this.fairyBulbMaterials.push(...mats);
+      for (let i = 0; i < 12; i++) {
+        const bulb = new THREE.Mesh(bulbGeo, mats[i % mats.length]);
+        const t = i / 11;
+        bulb.position.set(-0.46 + t * 0.92, 1.54 + Math.sin(t * Math.PI) * 0.06, -0.17);
+        this.chassis.add(bulb);
+      }
+    }
+
+    // ----------------------------------------- 8. RICKSHAWWALLAH (PULLER) RIG
+    if (opts.isPlayer !== false) {
+      this.buildPuller(bWood);
+      this.chassis.add(this.puller);
+    }
+
+    // Passenger seat mount
+    this.passengerMount.position.set(0, 0.82, -0.74);
+    this.chassis.add(this.passengerMount);
   }
 
-  headlight!: THREE.SpotLight;
-  bellMesh!: THREE.Mesh;
+  private buildPuller(_unused: Bucket): void {
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.02 });
+    const b = new Bucket('rickshaw.puller', mat);
+    // Seated/pedaling posture over saddle (z = -0.05) reaching forward to grips (z = +0.61)
+    b.box({ x: 0, y: 1.24, z: 0.02 }, { x: 0.33, y: 0.40, z: 0.21 }, '#d98a3c', { x: 0.28 }); // lungi/shirt torso
+    // Checkered gamcha towel draped over shoulder!
+    b.box({ x: 0.12, y: 1.36, z: 0.06 }, { x: 0.11, y: 0.22, z: 0.25 }, '#c92a2a', { x: 0.28, z: -0.12 });
+    b.cylinder({ x: 0, y: 1.50, z: 0.11 }, 0.095, 0.19, '#8b5e3c'); // head
+    b.cylinder({ x: 0, y: 1.58, z: 0.11 }, 0.10, 0.065, '#1b1614'); // hair / cap
+    // Arms reaching handlebars
+    for (const sx of [-0.20, 0.20]) {
+      b.cylinder({ x: sx, y: 1.28, z: 0.31 }, 0.044, 0.50, '#8b5e3c', { x: 1.25, z: -sx * 0.4 });
+    }
+    // Checkered lungi + legs
+    b.cylinder({ x: 0, y: 0.98, z: 0.01 }, 0.16, 0.24, '#1d4e6e', { x: 0.2 });
+    const mesh = b.build({ cast: true, receive: false }, true);
+    if (mesh) mesh.name = 'pullerBody';
+    if (mesh) this.puller.add(mesh);
+
+    const legGeo = new THREE.CylinderGeometry(0.052, 0.044, 0.44, 7);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x1d4e6e, roughness: 0.88 });
+    const leftLeg = new THREE.Mesh(legGeo, legMat);
+    const rightLeg = new THREE.Mesh(legGeo, legMat);
+    leftLeg.name = 'leftLeg';
+    rightLeg.name = 'rightLeg';
+    leftLeg.position.set(0.105, 0.72, 0.05);
+    rightLeg.position.set(-0.105, 0.72, 0.05);
+    this.puller.add(leftLeg, rightLeg);
+  }
+
+  /** Hide rider torso/head only during cockpit over-handlebar camera so view is unobstructed. */
+  setCockpitVisibility(inCockpit: boolean): void {
+    this.puller.visible = !inCockpit;
+  }
+
+  /** Animate wheels, steering fork, pedals, puller legs, and hood tassels. */
+  applyDynamics(opts: {
+    steerAngle: number;
+    wheelSpin: number;
+    pedalPhase: number;
+    roll: number;
+    pitch: number;
+    nightFactor: number;
+  }): void {
+    // CRITICAL STEERING SIGN:
+    // Left input -> steerAngle < 0 -> steering.rotation.y = -steerAngle > 0 (CCW = LEFT!).
+    // Right input -> steerAngle > 0 -> steering.rotation.y = -steerAngle < 0 (CW = RIGHT!).
+    this.steering.rotation.y = -opts.steerAngle;
+
+    this.frontWheel.rotation.x = opts.wheelSpin * (this.rearWheelRadius / this.frontWheelRadius);
+    this.rearWheels[0].rotation.x = opts.wheelSpin;
+    this.rearWheels[1].rotation.x = opts.wheelSpin;
+
+    if (!this.isElectric) {
+      this.crank.rotation.x = opts.pedalPhase;
+    }
+
+    // Subtle body pitch/roll lives on root ('YXZ') via controller; add gentle secondary suspension compliance + tassel sway
+    this.chassis.rotation.z = opts.roll * 0.22;
+    this.tasselBar.rotation.z = -opts.roll * 1.6;
+    this.tasselBar.rotation.x = clampVal(-opts.pitch * 1.2, -0.25, 0.25);
+
+    const ll = this.puller.getObjectByName('leftLeg');
+    const rl = this.puller.getObjectByName('rightLeg');
+    if (ll && rl) {
+      if (this.isElectric) {
+        // Relaxed footrest stance on electric rickshaw
+        ll.position.y = 0.71;
+        rl.position.y = 0.71;
+        ll.rotation.x = 0.32;
+        rl.rotation.x = 0.32;
+      } else {
+        const s = Math.sin(opts.pedalPhase);
+        ll.position.y = 0.72 + s * 0.075;
+        rl.position.y = 0.72 - s * 0.075;
+        ll.rotation.x = Math.cos(opts.pedalPhase) * 0.24;
+        rl.rotation.x = -Math.cos(opts.pedalPhase) * 0.24;
+      }
+    }
+
+    if (this.headlampLight) {
+      this.headlampLight.intensity = opts.nightFactor * (this.isElectric ? 3.1 : 2.3);
+    }
+    if (this.fairyBulbMaterials.length > 0) {
+      const em = 0.45 + opts.nightFactor * 1.45;
+      for (const m of this.fairyBulbMaterials) m.emissiveIntensity = em;
+    }
+  }
+
+  get currentLook(): RickshawLook {
+    return this.look;
+  }
 
   /**
-   * Collapse the ~40 individual painted parts of the chassis into one mesh per
-   * material. The hero vehicle is on screen every frame, so this is the single
-   * biggest draw-call saving in the game (each material is also doubled by the
-   * shadow pass). Animated parts (steering, wheels, crank, legs, canopy, tassels)
-   * are excluded and stay as separate objects.
+   * Cleanly release rig-owned geometries & materials WITHOUT disposing shared
+   * `wheelCache` buffers or cached `rickshawArtTexture`!
    */
-  private mergeStaticBody(): void {
-    const animated = new Set<THREE.Object3D>([
-      this.steering,
-      this.crank,
-      this.canopy,
-      ...this.wheels,
-      ...this.tassels,
-      ...this.legs.map((l) => l.thigh),
-      ...this.legs.map((l) => l.shin),
-      this.artMesh,
-      this.headlight,
-      this.headlight.target,
-    ]);
-    const byMaterial = new Map<THREE.MeshStandardMaterial, THREE.BufferGeometry[]>();
-    const victims: THREE.Object3D[] = [];
-    this.body.updateMatrixWorld(true);
-    for (const child of [...this.body.children]) {
-      if (!(child instanceof THREE.Mesh)) continue;
-      if (animated.has(child)) continue;
-      if (child instanceof THREE.InstancedMesh) continue;
-      if (animated.has(child.parent as THREE.Object3D)) continue;
-      const mat = child.material as THREE.MeshStandardMaterial;
-      if (!mat || Array.isArray(mat)) continue;
-      const geo = child.geometry.clone();
-      geo.applyMatrix4(child.matrix);
-      // keep attribute sets identical for merging
-      if (!geo.getAttribute('uv')) {
-        geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(geo.getAttribute('position').count * 2), 2));
-      }
-      if (!geo.getAttribute('color')) {
-        const count = geo.getAttribute('position').count;
-        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3).fill(1), 3));
-      }
-      for (const name of Object.keys(geo.attributes)) {
-        if (!['position', 'normal', 'uv', 'color'].includes(name)) geo.deleteAttribute(name);
-      }
-      let list = byMaterial.get(mat);
-      if (!list) {
-        list = [];
-        byMaterial.set(mat, list);
-      }
-      list.push(geo);
-      victims.push(child);
-    }
-    for (const child of victims) this.body.remove(child);
-    for (const [mat, geos] of byMaterial) {
-      if (geos.length === 0) continue;
-      const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
-      if (!merged) continue;
-      if (geos.length > 1) for (const g of geos) g.dispose();
-      const mesh = new THREE.Mesh(merged, mat);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.matrixAutoUpdate = false;
-      this.body.add(mesh);
-    }
-  }
-
-  /** Change paint / art / tassels / flowers without rebuilding the rig. */
-  applyLook(look: RickshawLook): void {
-    this.bodyMat.color.set(look.palette.body);
-    this.trimMat.color.set(look.palette.trim);
-    this.canopyMat.color.set(look.palette.canopy);
-    this.tasselMat.color.set(look.tassel);
-    this.artMat.map?.dispose();
-    this.artMat.map = rickshawArtTexture(look.art, look.palette.panel, look.palette.trim);
-    this.artMat.needsUpdate = true;
-    const flowerColor = look.flowers === 'rose' ? 0xd64a6a : 0xf0a500;
-    this.body.traverse((obj) => {
-      if (obj instanceof THREE.Mesh && obj.material instanceof THREE.MeshStandardMaterial) {
-        if (obj.geometry instanceof THREE.SphereGeometry && obj.geometry.parameters.radius === 0.03) {
-          obj.material.color.setHex(flowerColor);
+  dispose(): void {
+    const disposedGeo = new Set<THREE.BufferGeometry>();
+    const disposedMat = new Set<THREE.Material>();
+    this.root.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        if (!obj.geometry.userData?.shared && !disposedGeo.has(obj.geometry)) {
+          disposedGeo.add(obj.geometry);
+          obj.geometry.dispose();
+        }
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const m of mats) {
+          if (!m.userData?.shared && !disposedMat.has(m)) {
+            disposedMat.add(m);
+            m.dispose();
+          }
         }
       }
     });
   }
+}
 
-  setNightLighting(on: boolean, strength = 1): void {
-    this.headlight.intensity = on ? 26 * strength : 0;
-    const lens = this.steering.children.find(
-      (c) => c instanceof THREE.Mesh && c.geometry instanceof THREE.CircleGeometry,
-    ) as THREE.Mesh | undefined;
-    if (lens) {
-      const m = lens.material as THREE.MeshStandardMaterial;
-      m.emissiveIntensity = on ? 2.4 : 0.25;
+function clampVal(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+import { cosmeticById, type CosmeticCategory, type VehicleDef } from '../economy/catalog';
+
+export function lookFrom(
+  vehicle: VehicleDef,
+  equipped: Partial<Record<CosmeticCategory, string>>,
+  _legacyGetter?: unknown,
+  upgrades?: Record<string, number>,
+): RickshawLook {
+  const paint = equipped.paint ? cosmeticById(equipped.paint) : undefined;
+  const art = equipped.art ? cosmeticById(equipped.art) : undefined;
+  const tassel = equipped.tassel ? cosmeticById(equipped.tassel) : undefined;
+  const bell = equipped.bell ? cosmeticById(equipped.bell) : undefined;
+  const flowers = equipped.flowers ? cosmeticById(equipped.flowers) : undefined;
+  const mirror = equipped.mirror ? cosmeticById(equipped.mirror) : undefined;
+
+  return {
+    frameColor: paint?.value ?? vehicle.palette.body,
+    canopyColor: vehicle.palette.canopy,
+    canopyTrim: tassel?.value ?? paint?.swatch[1] ?? vehicle.palette.trim,
+    wheelTrim: '#dce3ea',
+    artMotif: art?.value ?? 'floral',
+    artPrimary: art?.swatch[0] ?? vehicle.palette.panel,
+    artSecondary: art?.swatch[1] ?? vehicle.palette.trim,
+    fairyLights: (upgrades?.lights ?? 0) >= 2 || vehicle.kind === 'electric',
+    bellUpgrade: !!bell && bell.value !== 'classic',
+    bell: bell?.value ?? 'classic',
+    mirrorSet: !!mirror || vehicle.kind === 'electric',
+    flowersColor: flowers?.value ?? null,
+    kind: vehicle.kind,
+  };
+}
+
+/**
+ * High-level stateful visual wrapper around `RickshawRig` consumed by `Game`
+ * and `Showroom`. Supports live look/vehicle hot-swapping without leaking
+ * passenger seat anchors or shared textures.
+ */
+export class RickshawVisual {
+  rig: RickshawRig;
+  readonly root = new THREE.Group();
+  readonly seatAnchor = new THREE.Group();
+  private vehicle: VehicleDef;
+  private lookKey = '';
+  private wheelSpin = 0;
+  private pedalPhase = 0;
+  private nightFactor = 0;
+  private isPlayer: boolean;
+
+  constructor(vehicle: VehicleDef, look: RickshawLook, isPlayer = true) {
+    this.vehicle = vehicle;
+    this.isPlayer = isPlayer;
+    this.root.name = 'rickshaw-visual';
+    this.root.rotation.order = 'YXZ';
+    this.rig = new RickshawRig({ ...look, kind: vehicle.kind }, { isPlayer });
+    this.root.add(this.rig.root);
+    this.rig.passengerMount.add(this.seatAnchor);
+    this.lookKey = this.computeKey(vehicle, look);
+  }
+
+  private computeKey(vehicle: VehicleDef, look: RickshawLook): string {
+    return JSON.stringify({ id: vehicle.id, kind: vehicle.kind, ...look });
+  }
+
+  applyLook(look: RickshawLook, vehicle = this.vehicle): void {
+    const nextKey = this.computeKey(vehicle, look);
+    if (nextKey === this.lookKey) return;
+    this.vehicle = vehicle;
+    this.lookKey = nextKey;
+    this.rig.passengerMount.remove(this.seatAnchor);
+    this.root.remove(this.rig.root);
+    this.rig.dispose();
+    this.rig = new RickshawRig({ ...look, kind: vehicle.kind }, { isPlayer: this.isPlayer });
+    this.root.add(this.rig.root);
+    this.rig.passengerMount.add(this.seatAnchor);
+  }
+
+  setCockpitVisibility(inCockpit: boolean): void {
+    this.rig.setCockpitVisibility(inCockpit);
+  }
+
+  setNightLighting(on: boolean, intensity = 1): void {
+    this.nightFactor = on ? intensity : 0;
+    if (this.rig.headlampLight) {
+      this.rig.headlampLight.intensity = this.nightFactor * (this.rig.currentLook.kind === 'electric' ? 3.1 : 2.3);
     }
   }
 
-  /** Drive the animation rig. */
-  updateVisual(dt: number, speed: number, steer: number, throttle: number, lateralAccel: number, groundY: number): void {
-    this.wheelSpin -= (speed / 0.36) * dt;
-    for (const wheel of this.wheels) wheel.rotation.x = this.wheelSpin;
-    this.steering.rotation.y = damp(this.steering.rotation.y, steer * 0.9, 9, dt);
-
-    // pedalling speed follows the rickshaw speed (plus a little while pushing off)
-    const pedalling = Math.abs(speed) > 0.12 || throttle > 0.1;
-    this.crankAngle += (pedalling ? Math.max(1.6, Math.abs(speed) * 1.9) : 0) * dt;
-    this.crank.rotation.x = this.crankAngle;
-
-    // two-bone legs towards the pedals
-    for (const leg of this.legs) {
-      const pedalAngle = this.crankAngle + (leg.side > 0 ? 0 : Math.PI);
-      const pedal = new THREE.Vector3(0.14 * leg.side, 0.4 + Math.cos(pedalAngle) * 0.18, 0.36 + Math.sin(pedalAngle) * 0.18);
-      const hip = leg.hip;
-      const toPedal = pedal.clone().sub(hip);
-      const dist = toPedal.length();
-      const thighLen = 0.34;
-      const shinLen = 0.34;
-      const clamped = Math.min(Math.max(dist, 0.06), thighLen + shinLen - 0.01);
-      const dir = toPedal.clone().normalize();
-      const a = (thighLen * thighLen - shinLen * shinLen + clamped * clamped) / (2 * clamped);
-      const h = Math.sqrt(Math.max(0, thighLen * thighLen - a * a));
-      const mid = hip.clone().addScaledVector(dir, a);
-      // bend the knee forward (+Z)
-      const perp = new THREE.Vector3(0, 0, 1).cross(dir).normalize();
-      const side = new THREE.Vector3(1, 0, 0).cross(perp).normalize();
-      const knee = mid.clone().addScaledVector(side, h * 0.9);
-      this.placeLimb(leg.thigh, hip, knee, 0.34);
-      this.placeLimb(leg.shin, knee, pedal, 0.32);
+  updateVisual(
+    dt: number,
+    speed: number,
+    steerAngleOrInput: number,
+    throttle: number,
+    lateralAccel: number,
+    _groundY = 0,
+    pitch = 0,
+  ): void {
+    this.wheelSpin += (speed * dt) / this.rig.rearWheelRadius;
+    if (throttle > 0.02 || Math.abs(speed) > 0.15) {
+      this.pedalPhase += dt * Math.max(0, speed) * 2.1;
     }
-
-    // suspension / body language
-    this.bob = damp(this.bob, 0, 8, dt);
-    this.roll = damp(this.roll, -lateralAccel * 0.022, 7, dt);
-    this.pitch = damp(this.pitch, -Math.min(0.05, Math.abs(speed) * 0.004), 6, dt);
-    this.body.rotation.z = this.roll;
-    this.body.rotation.x = this.pitch;
-    this.body.position.y = groundY * 0 - this.bob;
-
-    // canopy sway + tassels
-    this.sway = damp(this.sway, -lateralAccel * 0.02 + speed * 0.004, 4, dt);
-    this.canopy.rotation.z = this.sway * 0.5;
-    this.canopy.rotation.x = Math.sin(this.crankAngle * 0.5) * 0.004;
-    for (let i = 0; i < this.tassels.length; i++) {
-      const t = this.tassels[i];
-      t.rotation.z = Math.sin(performance.now() * 0.004 + i * 0.7) * 0.16 + this.sway * 0.8;
-      t.rotation.x = Math.cos(performance.now() * 0.003 + i) * 0.1;
-    }
-  }
-
-  private placeLimb(mesh: THREE.Mesh, from: THREE.Vector3, to: THREE.Vector3, baseLen: number): void {
-    const dir = to.clone().sub(from);
-    const len = dir.length();
-    mesh.position.copy(from).addScaledVector(dir, 0.5);
-    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-    mesh.scale.set(1, Math.max(0.2, len / baseLen), 1);
-  }
-
-  setArt(style: string, panelColor: string, trim: string): void {
-    this.artMat.map?.dispose();
-    this.artMat.map = rickshawArtTexture(style, panelColor, trim);
-    this.artMat.needsUpdate = true;
+    const roll = clampVal(-lateralAccel * 0.015, -0.09, 0.09);
+    this.rig.applyDynamics({
+      steerAngle: steerAngleOrInput,
+      wheelSpin: this.wheelSpin,
+      pedalPhase: this.pedalPhase,
+      roll,
+      pitch,
+      nightFactor: this.nightFactor,
+    });
   }
 
   dispose(): void {
-    this.root.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        obj.geometry.dispose();
-        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
-        else obj.material.dispose();
-      }
-    });
+    this.rig.passengerMount.remove(this.seatAnchor);
+    this.rig.dispose();
   }
 }
 
-/** Build the look data from the selected vehicle + equipped cosmetics. */
-export function lookFrom(
-  vehicle: VehicleDef,
-  cosmetics: Record<CosmeticCategory, string>,
-  cosmeticValue: (category: CosmeticCategory) => { value: string } | undefined,
-): RickshawLook {
-  const paint = cosmeticValue('paint')?.value;
-  const art = cosmeticValue('art')?.value;
-  const tassel = cosmeticValue('tassel')?.value;
-  const flowers = cosmeticValue('flowers')?.value;
-  const mirror = cosmeticValue('mirror')?.value;
-  const bell = cosmeticValue('bell')?.value;
-  const palette = { ...vehicle.palette };
-  if (paint) palette.body = paint;
-  void cosmetics;
-  return {
-    palette,
-    art: art ?? vehicle.artStyle,
-    tassel: tassel ?? '#d63b2f',
-    flowers: flowers ?? 'marigold',
-    mirror: mirror ?? 'round',
-    bell: bell ?? 'classic',
-  };
-}

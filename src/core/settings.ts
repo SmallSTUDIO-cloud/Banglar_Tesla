@@ -3,7 +3,7 @@
  * Persisted separately from progress so that a "new game" keeps preferences.
  */
 
-import type { QualityPreset } from './config';
+import { CAMERA_MODES, type CameraMode, type QualityPreset } from './config';
 import { clamp } from './mathx';
 import type { Locale } from './i18n';
 
@@ -37,7 +37,7 @@ export interface Settings {
   hudScale: number;
   reduceEffects: boolean;
   subtitles: boolean;
-  cameraMode: 'chase' | 'close';
+  cameraMode: CameraMode;
   showPerformance: boolean;
 }
 
@@ -77,6 +77,10 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
+function isCameraMode(v: unknown): v is CameraMode {
+  return typeof v === 'string' && (CAMERA_MODES as readonly string[]).includes(v);
+}
+
 /** Validate + coerce an untrusted object into Settings. */
 export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS): Settings {
   const out: Settings = { ...base };
@@ -103,7 +107,7 @@ export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS
   }
   if (raw.steering === 'buttons' || raw.steering === 'wheel') out.steering = raw.steering;
   if (raw.handedness === 'right' || raw.handedness === 'left') out.handedness = raw.handedness;
-  if (raw.cameraMode === 'chase' || raw.cameraMode === 'close') out.cameraMode = raw.cameraMode;
+  if (isCameraMode(raw.cameraMode)) out.cameraMode = raw.cameraMode;
   if (raw.fpsTarget === 30 || raw.fpsTarget === 60) out.fpsTarget = raw.fpsTarget;
 
   num('renderScale', 0.6, 1.2, base.renderScale);

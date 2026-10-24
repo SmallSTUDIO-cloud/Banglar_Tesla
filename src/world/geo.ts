@@ -1,7 +1,7 @@
 /**
- * Static-geometry helpers. To keep draw calls phone-friendly every building,
- * kerb, window and prop is authored as small primitives and merged into a
- * handful of meshes (one per material family) at the end of world building.
+ * Static-geometry & shared vehicle-wheel helpers.
+ * Keeps draw calls mobile-friendly by merging primitives per material family
+ * and caching reusable spoked-wheel geometries with exact outer tyre radii.
  */
 
 import * as THREE from 'three';
@@ -18,6 +18,7 @@ const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 const UNIT_PLANE = new THREE.PlaneGeometry(1, 1);
 const UNIT_CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1, false);
 const UNIT_CONE = new THREE.ConeGeometry(0.5, 1, 10);
+const UNIT_TORUS = new THREE.TorusGeometry(0.5, 0.08, 8, 24);
 
 const tmpMatrix = new THREE.Matrix4();
 const tmpQuat = new THREE.Quaternion();
@@ -28,6 +29,7 @@ const tmpScale = new THREE.Vector3();
 /** Merge bucket: collects transformed primitives and emits one mesh. */
 export class Bucket {
   private parts: THREE.BufferGeometry[] = [];
+  private partXZ: { x: number; z: number }[] = [];
   private material: THREE.Material;
   readonly name: string;
 
@@ -49,11 +51,14 @@ export class Bucket {
     rotation?: { x?: number; y?: number; z?: number },
     uv?: UvRect,
   ): void {
+    const px = pos instanceof THREE.Vector3 ? pos.x : pos.x;
+    const py = pos instanceof THREE.Vector3 ? pos.y : pos.y;
+    const pz = pos instanceof THREE.Vector3 ? pos.z : pos.z;
     const geo = source.clone();
     tmpEuler.set(rotation?.x ?? 0, rotation?.y ?? 0, rotation?.z ?? 0, 'YXZ');
     tmpQuat.setFromEuler(tmpEuler);
     tmpMatrix.compose(
-      tmpVec.set(pos instanceof THREE.Vector3 ? pos.x : pos.x, pos instanceof THREE.Vector3 ? pos.y : pos.y, pos instanceof THREE.Vector3 ? pos.z : pos.z),
+      tmpVec.set(px, py, pz),
       tmpQuat,
       tmpScale.set(
         scale instanceof THREE.Vector3 ? scale.x : scale.x,
@@ -83,12 +88,12 @@ export class Bucket {
       colors[i + 2] = c.b;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    // mergeGeometries needs identical attribute sets
     if (!geo.getAttribute('uv')) {
       const count = geo.getAttribute('position').count;
       geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(count * 2), 2));
     }
     this.parts.push(geo);
+    this.partXZ.push({ x: px, z: pz });
   }
 
   box(
@@ -100,7 +105,6 @@ export class Bucket {
     this.add(UNIT_BOX, pos, size, color, rotation);
   }
 
-  /** Axis-aligned box from min/max corners (easier for buildings). */
   boxMinMax(min: THREE.Vector3, max: THREE.Vector3, color: THREE.ColorRepresentation): void {
     this.box(
       { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2, z: (min.z + max.z) / 2 },
@@ -129,6 +133,16 @@ export class Bucket {
     this.add(UNIT_CONE, pos, { x: radius * 2, y: height, z: radius * 2 }, color, rotation);
   }
 
+  torus(
+    pos: { x: number; y: number; z: number },
+    radius: number,
+    color: THREE.ColorRepresentation,
+    rotation?: { x?: number; y?: number; z?: number },
+  ): void {
+    const s = radius * 2;
+    this.add(UNIT_TORUS, pos, { x: s, y: s, z: s }, color, rotation);
+  }
+
   /** A vertical quad facing +Z by default; rotate to face a direction. */
   quad(
     pos: { x: number; y: number; z: number },
@@ -141,11 +155,15 @@ export class Bucket {
     this.add(UNIT_PLANE, pos, { x: width, y: height, z: 1 }, color, rotation, uv);
   }
 
-  build(shadows: { cast: boolean; receive: boolean } = { cast: true, receive: true }): THREE.Mesh | null {
+  build(
+    shadows: { cast: boolean; receive: boolean } = { cast: true, receive: true },
+    autoUpdate = false,
+  ): THREE.Mesh | null {
     if (this.parts.length === 0) return null;
     const merged = mergeGeometries(this.parts, false);
     for (const p of this.parts) p.dispose();
     this.parts = [];
+    this.partXZ = [];
     if (!merged) {
       console.warn(`[geo] merge failed for bucket ${this.name}`);
       return null;
@@ -156,13 +174,55 @@ export class Bucket {
     mesh.name = this.name;
     mesh.castShadow = shadows.cast;
     mesh.receiveShadow = shadows.receive;
-    mesh.matrixAutoUpdate = false;
+    mesh.matrixAutoUpdate = autoUpdate;
+    if (!autoUpdate) mesh.updateMatrix();
     return mesh;
+  }
+
+  /**
+   * Partition primitives spatially into `cols x cols` merged static sector meshes
+   * sharing `this.material`, enabling automatic frustum + shadow culling across
+   * large urban districts without altering a single vertex or pixel.
+   */
+  buildChunked(
+    cols = 4,
+    halfExtent = 270,
+    shadows: { cast: boolean; receive: boolean } = { cast: true, receive: true },
+  ): THREE.Mesh[] {
+    if (this.parts.length === 0) return [];
+    const span = (halfExtent * 2) / cols;
+    const cells: THREE.BufferGeometry[][] = Array.from({ length: cols * cols }, () => []);
+    for (let i = 0; i < this.parts.length; i++) {
+      const xz = this.partXZ[i];
+      const cx = Math.max(0, Math.min(cols - 1, Math.floor((xz.x + halfExtent) / span)));
+      const cz = Math.max(0, Math.min(cols - 1, Math.floor((xz.z + halfExtent) / span)));
+      cells[cz * cols + cx].push(this.parts[i]);
+    }
+    const out: THREE.Mesh[] = [];
+    for (let k = 0; k < cells.length; k++) {
+      if (cells[k].length === 0) continue;
+      const merged = mergeGeometries(cells[k], false);
+      for (const p of cells[k]) p.dispose();
+      if (!merged) continue;
+      merged.computeBoundingSphere();
+      merged.computeBoundingBox();
+      const mesh = new THREE.Mesh(merged, this.material);
+      mesh.name = `${this.name}.c${k}`;
+      mesh.castShadow = shadows.cast;
+      mesh.receiveShadow = shadows.receive;
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      out.push(mesh);
+    }
+    this.parts = [];
+    this.partXZ = [];
+    return out;
   }
 
   dispose(): void {
     for (const p of this.parts) p.dispose();
     this.parts = [];
+    this.partXZ = [];
   }
 }
 
@@ -186,51 +246,101 @@ export function tintedMaterial(
   return mat;
 }
 
+interface CachedWheelTemplate {
+  rubberGeo: THREE.BufferGeometry;
+  metalGeo: THREE.BufferGeometry;
+}
+
+const wheelCache = new Map<string, CachedWheelTemplate>();
+const sharedRubberMat = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  roughness: 0.9,
+  metalness: 0.04,
+});
+const sharedWheelChromeMat = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  roughness: 0.26,
+  metalness: 0.84,
+});
+
 /**
- * Build a wheel with spokes, ready for rotation around its local X axis.
- * Origin is at the hub, wheel lies in the YZ plane (axle along X).
+ * Build a crisp spoked cycle/rickshaw wheel whose OUTER rubber contact radius
+ * is EXACTLY `outerRadius` (so placing the hub at `y = outerRadius` touches
+ * `y = 0.000m` with zero sinking and zero floating).
+ * Cached across all rickshaws; marked `userData.shared = true` so vehicle
+ * disposal does not destroy shared wheel buffers.
  */
-export function createWheel(radius: number, tireColor = '#1b1b1b', rimColor = '#c9c9c9', spokes = 16): THREE.Group {
-  const group = new THREE.Group();
-  const tireGeo = new THREE.TorusGeometry(radius, Math.max(0.022, radius * 0.075), 6, 22);
-  const tire = new THREE.Mesh(
-    tireGeo,
-    new THREE.MeshStandardMaterial({ color: new THREE.Color(tireColor), roughness: 0.92, metalness: 0.02 }),
-  );
-  tire.rotation.y = Math.PI / 2;
-  tire.castShadow = true;
-  group.add(tire);
+export function createWheel(
+  outerRadius: number,
+  tireColor = '#1a1c1f',
+  rimColor = '#d8dee4',
+  spokes = 18,
+): THREE.Group {
+  const key = `${outerRadius.toFixed(3)}:${tireColor}:${rimColor}:${spokes}`;
+  let tpl = wheelCache.get(key);
+  if (!tpl) {
+    const tube = Math.max(0.026, outerRadius * 0.088);
+    const torusCenterR = outerRadius - tube;
 
-  const rimGeo = new THREE.TorusGeometry(radius * 0.9, radius * 0.022, 5, 20);
-  const rimMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(rimColor), roughness: 0.35, metalness: 0.75 });
-  const rim = new THREE.Mesh(rimGeo, rimMat);
-  rim.rotation.y = Math.PI / 2;
-  group.add(rim);
+    const rubberBucket = new Bucket('wheel.rubber', sharedRubberMat);
+    const tireSrc = new THREE.TorusGeometry(torusCenterR, tube, 8, 28);
+    rubberBucket.add(tireSrc, { x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 1 }, tireColor, { y: Math.PI / 2 });
+    // Subtle cream sidewall ring typical of Dhaka heavy-duty rickshaw tyres
+    const wallSrc = new THREE.TorusGeometry(torusCenterR - tube * 0.15, tube * 0.34, 6, 24);
+    rubberBucket.add(wallSrc, { x: 0.014, y: 0, z: 0 }, { x: 0.35, y: 1, z: 1 }, '#cfc7b2', { y: Math.PI / 2 });
+    rubberBucket.add(wallSrc, { x: -0.014, y: 0, z: 0 }, { x: 0.35, y: 1, z: 1 }, '#cfc7b2', { y: Math.PI / 2 });
+    tireSrc.dispose();
+    wallSrc.dispose();
 
-  const spokeGeo = new THREE.CylinderGeometry(radius * 0.012, radius * 0.012, radius * 0.88, 4);
-  const spokeMat = new THREE.MeshStandardMaterial({ color: 0xbfbfbf, metalness: 0.8, roughness: 0.35 });
-  const spokeMesh = new THREE.InstancedMesh(spokeGeo, spokeMat, spokes);
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const e = new THREE.Euler();
-  for (let i = 0; i < spokes; i++) {
-    const a = (i / spokes) * Math.PI * 2;
-    // spokes sit in the YZ plane, angled from hub outward
-    e.set(0, 0, 0);
-    q.setFromEuler(e);
-    const dir = new THREE.Vector3(0, Math.cos(a), Math.sin(a));
-    q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-    m.compose(dir.clone().multiplyScalar(radius * 0.44), q, new THREE.Vector3(1, 1, 1));
-    spokeMesh.setMatrixAt(i, m);
+    const metalBucket = new Bucket('wheel.metal', sharedWheelChromeMat);
+    const rimR = torusCenterR - tube * 0.62;
+    const rimSrc = new THREE.TorusGeometry(rimR, Math.max(0.012, outerRadius * 0.03), 6, 26);
+    metalBucket.add(rimSrc, { x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 1 }, rimColor, { y: Math.PI / 2 });
+    rimSrc.dispose();
+
+    // Central barrel hub + flanges + axle nuts
+    metalBucket.cylinder({ x: 0, y: 0, z: 0 }, outerRadius * 0.085, 0.085, '#b6bec6', { z: Math.PI / 2 });
+    metalBucket.cylinder({ x: 0.032, y: 0, z: 0 }, outerRadius * 0.13, 0.01, '#dce3ea', { z: Math.PI / 2 });
+    metalBucket.cylinder({ x: -0.032, y: 0, z: 0 }, outerRadius * 0.13, 0.01, '#dce3ea', { z: Math.PI / 2 });
+    metalBucket.cylinder({ x: 0, y: 0, z: 0 }, outerRadius * 0.04, 0.125, '#8c949e', { z: Math.PI / 2 });
+
+    // Criss-crossed steel wire spokes alternating left/right hub flange
+    const spokeLen = rimR * 0.96;
+    for (let i = 0; i < spokes; i++) {
+      const a = (i / spokes) * Math.PI * 2;
+      const flangeX = i % 2 === 0 ? 0.016 : -0.016;
+      const cy = Math.cos(a) * spokeLen * 0.5;
+      const cz = Math.sin(a) * spokeLen * 0.5;
+      metalBucket.cylinder(
+        { x: flangeX, y: cy, z: cz },
+        0.0038,
+        spokeLen,
+        '#d4dbe2',
+        { x: a, z: (i % 2 === 0 ? -1 : 1) * 0.03 },
+      );
+    }
+    // Brass valve stem inside rim
+    metalBucket.cylinder({ x: 0, y: -(rimR - 0.022), z: 0 }, 0.005, 0.036, '#d9b24c');
+
+    const rMesh = rubberBucket.build({ cast: true, receive: false });
+    const mMesh = metalBucket.build({ cast: false, receive: false });
+    tpl = {
+      rubberGeo: rMesh!.geometry,
+      metalGeo: mMesh!.geometry,
+    };
+    tpl.rubberGeo.userData.shared = true;
+    tpl.metalGeo.userData.shared = true;
+    sharedRubberMat.userData.shared = true;
+    sharedWheelChromeMat.userData.shared = true;
+    wheelCache.set(key, tpl);
   }
-  spokeMesh.instanceMatrix.needsUpdate = true;
-  group.add(spokeMesh);
 
-  const hub = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius * 0.14, radius * 0.14, radius * 0.22, 10),
-    new THREE.MeshStandardMaterial({ color: 0x8d8d8d, metalness: 0.7, roughness: 0.4 }),
-  );
-  hub.rotation.z = Math.PI / 2;
-  group.add(hub);
+  const group = new THREE.Group();
+  const tireMesh = new THREE.Mesh(tpl.rubberGeo, sharedRubberMat);
+  tireMesh.castShadow = true;
+  tireMesh.userData.shared = true;
+  const chromeMesh = new THREE.Mesh(tpl.metalGeo, sharedWheelChromeMat);
+  chromeMesh.userData.shared = true;
+  group.add(tireMesh, chromeMesh);
   return group;
 }

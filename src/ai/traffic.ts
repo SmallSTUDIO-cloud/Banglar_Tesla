@@ -1,33 +1,26 @@
 /**
- * Traffic system: vehicles follow closed left-hand-drive routes with simple
- * car-following, junction signals, obstacle avoidance and distance recycling.
+ * Mohammadpur Traffic & Emergent Dhaka Traffic-Jam Simulation (Sections 8, 14, 15).
+ *
+ * Key behaviours:
+ *   - High density of Bangladeshi NPC passenger cycle rickshaws (~36%) plus
+ *     battery EasyBikes, green CNGs, Mohammadpur buses, sedans, painted trucks,
+ *     parcel vans, and commuter motorbikes.
+ *   - Graph-driven navigation across all Mohammadpur street lanes (`routes.ts`).
+ *   - Realistic severe-but-recoverable Dhaka traffic jams around Town Hall,
+ *     Mohammadpur Bus Stand, Shia Mosque, and signalised intersections via
+ *     bus-stop passenger dwell, market loading pauses, and signal phases —
+ *     while guaranteeing zero permanent gridlock via stuck-release timers and
+ *     leaving alternate side streets navigable for smart detours.
  */
 
 import * as THREE from 'three';
-import { buildTrafficRoutes, sampleRoute, type Route } from './routes';
-import {
-  TRAFFIC_PALETTE,
-  VEHICLE_MAKERS,
-  type TrafficModel,
-  type VehicleKind,
-} from './vehicles';
-import { clamp, mulberry32 } from '../core/mathx';
 import type { QualitySettings } from '../core/config';
+import { angleDelta, clamp, damp, mulberry32 } from '../core/mathx';
+import { SIGNALS } from '../world/layout';
+import { getLaneGraph, sampleLane, type LaneEdge, type LaneGraph, type LanePoint } from './routes';
+import { buildTrafficMesh, type BuiltTrafficMesh, type TrafficType } from './vehicles';
 
-interface TrafficVehicle {
-  kind: VehicleKind;
-  route: Route;
-  s: number;
-  speed: number;
-  cruise: number;
-  model: TrafficModel;
-  brakeLight: THREE.Mesh;
-  wheelRadius: number;
-  length: number;
-  /** Blocked by the player / another vehicle this frame. */
-  blocked: boolean;
-  honked: number;
-}
+export type VehicleKind = TrafficType;
 
 export interface TrafficObstacle {
   x: number;
@@ -36,246 +29,435 @@ export interface TrafficObstacle {
   kind: VehicleKind;
 }
 
-export interface TrafficSignals {
-  mainGreen: boolean;
-  /** 0 = green, 1 = amber, 2 = red for the main road. */
-  state: 0 | 1 | 2;
+interface ActiveTrafficAgent {
+  kind: VehicleKind;
+  mesh: BuiltTrafficMesh;
+  lane: LaneEdge;
+  s: number;
+  speed: number;
+  cruise: number;
+  wheelSpin: number;
+  x: number;
+  z: number;
+  yaw: number;
+  lateralOffset: number;
+  targetLateral: number;
+  dwellTimer: number;
+  dwellCooldown: number;
+  stuckTimer: number;
+  honkTimer: number;
+  farAccum: number;
 }
+
+const FLEET_DISTRIBUTION: { kind: VehicleKind; weight: number; cruiseMin: number; cruiseMax: number }[] = [
+  { kind: 'rickshaw', weight: 0.36, cruiseMin: 3.4, cruiseMax: 5.1 },
+  { kind: 'cng', weight: 0.18, cruiseMin: 5.8, cruiseMax: 8.2 },
+  { kind: 'easybike', weight: 0.13, cruiseMin: 4.8, cruiseMax: 6.8 },
+  { kind: 'car', weight: 0.11, cruiseMin: 6.2, cruiseMax: 8.8 },
+  { kind: 'bus', weight: 0.09, cruiseMin: 5.2, cruiseMax: 7.4 },
+  { kind: 'motorbike', weight: 0.07, cruiseMin: 6.8, cruiseMax: 9.6 },
+  { kind: 'van', weight: 0.03, cruiseMin: 5.4, cruiseMax: 7.5 },
+  { kind: 'truck', weight: 0.03, cruiseMin: 4.9, cruiseMax: 6.8 },
+];
 
 export class TrafficSystem {
   readonly group = new THREE.Group();
-  private vehicles: TrafficVehicle[] = [];
-  private routes: Route[];
-  private rng = mulberry32(99117);
-  private signalGroup = new THREE.Group();
-  private signalLamps: { main: THREE.Mesh[]; cross: THREE.Mesh[] } = { main: [], cross: [] };
-  private cycle = 0;
-  signal: TrafficSignals = { mainGreen: true, state: 0 };
+  private graph: LaneGraph;
+  private agents: ActiveTrafficAgent[] = [];
+  private laneOccupancy = new Map<string, ActiveTrafficAgent[]>();
+  private segmentCongestion = new Map<string, number>();
+  private obstaclePool: TrafficObstacle[] = [];
+  private rng = mulberry32(88421);
+  private tmpPt: LanePoint = { x: 0, z: 0, yaw: 0 };
+
+  private clock = 0;
+  private hornCooldown = 0;
   private playerX = 0;
   private playerZ = 0;
-  private playerSpeed = 0;
-  onHorn?: (x: number, z: number, kind: VehicleKind) => void;
-  private hornCooldown = 0;
+  private heightAt: (x: number, z: number) => number = () => 0.014;
 
-  constructor(quality: QualitySettings) {
-    this.routes = buildTrafficRoutes();
-    this.group.name = 'traffic';
-    this.buildSignals();
+  onHorn?: (x: number, z: number, kind: VehicleKind) => void;
+
+  constructor(quality: QualitySettings, heightAt?: (x: number, z: number) => number) {
+    this.group.name = 'mohammadpur-traffic';
+    this.graph = getLaneGraph();
+    if (heightAt) this.heightAt = heightAt;
+    for (const lane of this.graph.lanes) {
+      this.laneOccupancy.set(lane.id, []);
+    }
     this.setQuality(quality);
   }
 
-  private buildSignals(): void {
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0x33383a, roughness: 0.7, metalness: 0.4 });
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0x1f2325, roughness: 0.8 });
-    const spots = [
-      { x: -6.6, z: 6.2, rot: 0 },
-      { x: 6.6, z: -6.2, rot: Math.PI },
-      { x: 6.6, z: 6.2, rot: Math.PI / 2 },
-      { x: -6.6, z: -6.2, rot: -Math.PI / 2 },
-    ];
-    for (const spot of spots) {
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 3.4, 6), poleMat);
-      pole.position.set(spot.x, 1.7, spot.z);
-      this.signalGroup.add(pole);
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.9, 0.26), boxMat);
-      head.position.set(spot.x, 3.5, spot.z);
-      head.rotation.y = spot.rot;
-      this.signalGroup.add(head);
-      const lamps: THREE.Mesh[] = [];
-      for (let i = 0; i < 3; i++) {
-        const lamp = new THREE.Mesh(
-          new THREE.CircleGeometry(0.1, 10),
-          new THREE.MeshStandardMaterial({
-            color: i === 0 ? 0x1f4a2a : i === 1 ? 0x4a3f1a : 0x4a1f1f,
-            emissive: 0x000000,
-            emissiveIntensity: 1.4,
-          }),
-        );
-        lamp.position.set(spot.x, 3.78 - i * 0.28, spot.z);
-        lamp.rotation.y = spot.rot;
-        lamp.translateZ(0.14);
-        this.signalGroup.add(lamp);
-        lamps.push(lamp);
-      }
-      if (Math.abs(spot.x) > Math.abs(spot.z)) {
-        this.signalLamps.main.push(...lamps);
-      } else {
-        this.signalLamps.cross.push(...lamps);
-      }
-    }
-    this.group.add(this.signalGroup);
+  setHeightSampler(fn: (x: number, z: number) => number): void {
+    this.heightAt = fn;
+  }
+
+  setPlayer(x: number, z: number, _speed: number): void {
+    this.playerX = x;
+    this.playerZ = z;
   }
 
   setQuality(quality: QualitySettings): void {
-    const wanted = quality.traffic;
-    while (this.vehicles.length > wanted) {
-      const v = this.vehicles.pop();
-      if (v) this.group.remove(v.model.group);
+    const target = Math.max(8, quality.trafficCount);
+    while (this.agents.length > target) {
+      const removed = this.agents.pop()!;
+      this.group.remove(removed.mesh.root);
+      removed.mesh.brakeMat?.dispose();
     }
-    while (this.vehicles.length < wanted) {
-      this.vehicles.push(this.spawnVehicle());
+    while (this.agents.length < target) {
+      this.agents.push(this.spawnAgent(this.agents.length));
     }
   }
 
-  private spawnVehicle(): TrafficVehicle {
-    const kinds: VehicleKind[] = ['bus', 'car', 'cng', 'motorcycle', 'rickshaw', 'truck', 'car', 'rickshaw', 'cng'];
-    const kind = kinds[Math.floor(this.rng() * kinds.length)];
-    const palette = TRAFFIC_PALETTE[kind];
-    const color = palette[Math.floor(this.rng() * palette.length)];
-    const maker = VEHICLE_MAKERS[kind];
-    const model = maker(color);
-    model.group.name = `traffic-${kind}`;
-    this.group.add(model.group);
+  private pickVehicleSpec(narrowLane: boolean): (typeof FLEET_DISTRIBUTION)[number] {
+    let r = this.rng();
+    for (const item of FLEET_DISTRIBUTION) {
+      if (narrowLane && (item.kind === 'bus' || item.kind === 'truck')) continue;
+      if (r <= item.weight) return item;
+      r -= item.weight;
+    }
+    return FLEET_DISTRIBUTION[0];
+  }
 
-    const brakeLight = new THREE.Mesh(
-      new THREE.BoxGeometry(kind === 'bus' ? 2.3 : 0.4, 0.14, 0.06),
-      new THREE.MeshStandardMaterial({ color: 0x5a1010, emissive: 0xb01808, emissiveIntensity: 0.4 }),
-    );
-    brakeLight.position.set(0, kind === 'bus' ? 0.85 : 0.6, -model.halfLength - 0.02);
-    model.group.add(brakeLight);
+  private pickSpawnLane(preferBusy: boolean): LaneEdge {
+    const pool = preferBusy
+      ? this.graph.lanes.filter((l) => l.jamProne || l.kind !== 'gali')
+      : this.graph.lanes;
+    const arr = pool.length > 0 ? pool : this.graph.lanes;
+    return arr[Math.floor(this.rng() * arr.length)];
+  }
 
-    const route = this.routes[Math.floor(this.rng() * this.routes.length)];
-    const cruiseBase = kind === 'bus' ? 5.2 : kind === 'truck' ? 4.8 : kind === 'rickshaw' ? 3.6 : kind === 'motorcycle' ? 8.2 : 6.4;
+  private spawnAgent(index: number): ActiveTrafficAgent {
+    // Concentrate ~65% of initial traffic on busy commercial arteries & nearby streets so jams emerge naturally!
+    const lane = this.pickSpawnLane(index % 3 !== 0);
+    const spec = this.pickVehicleSpec(lane.kind === 'gali');
+    const variant = Math.floor(this.rng() * 4);
+    const mesh = buildTrafficMesh(spec.kind, variant);
+    const s = this.rng() * Math.max(1, lane.length - 4);
+    const lateral =
+      spec.kind === 'rickshaw' || spec.kind === 'motorbike'
+        ? (this.rng() - 0.5) * 0.65
+        : (this.rng() - 0.5) * 0.22;
+
+    sampleLane(lane, s, lateral, this.tmpPt);
+    const gy = this.heightAt(this.tmpPt.x, this.tmpPt.z);
+    mesh.root.position.set(this.tmpPt.x, gy, this.tmpPt.z);
+    mesh.root.rotation.y = this.tmpPt.yaw;
+    this.group.add(mesh.root);
+
     return {
-      kind,
-      route,
-      s: this.rng() * route.length,
-      speed: cruiseBase * 0.6,
-      cruise: cruiseBase * (0.85 + this.rng() * 0.3),
-      model,
-      brakeLight,
-      wheelRadius: kind === 'bus' || kind === 'truck' ? 0.5 : 0.32,
-      length: model.halfLength * 2,
-      blocked: false,
-      honked: 0,
+      kind: spec.kind,
+      mesh,
+      lane,
+      s,
+      speed: spec.cruiseMin * 0.6,
+      cruise: spec.cruiseMin + this.rng() * (spec.cruiseMax - spec.cruiseMin),
+      wheelSpin: 0,
+      x: this.tmpPt.x,
+      z: this.tmpPt.z,
+      yaw: this.tmpPt.yaw,
+      lateralOffset: lateral,
+      targetLateral: lateral,
+      dwellTimer: 0,
+      dwellCooldown: 5 + this.rng() * 14,
+      stuckTimer: 0,
+      honkTimer: 1 + this.rng() * 5,
+      farAccum: 0,
     };
   }
 
-  setPlayer(x: number, z: number, speed: number): void {
-    this.playerX = x;
-    this.playerZ = z;
-    this.playerSpeed = speed;
+  private isSignalRedForLane(lane: LaneEdge): boolean {
+    if (!lane.toSignal || !lane.signalNodeId) return false;
+    for (let i = 0; i < SIGNALS.length; i++) {
+      const sig = SIGNALS[i];
+      if (sig.nodeId !== lane.signalNodeId) continue;
+      const t = (this.clock + sig.offset) % sig.cycle;
+      const eastWest = Math.abs(lane.ux) >= Math.abs(lane.uz);
+      // 11s green EW, 1s all-clear, 11s green NS, 1s all-clear
+      if (eastWest) return t >= 11;
+      return t < 12 || t >= 23;
+    }
+    return false;
   }
 
-  /** Container collisions for the player rickshaw. */
-  obstacles(): TrafficObstacle[] {
-    const out: TrafficObstacle[] = [];
-    for (const v of this.vehicles) {
-      if (!v.model.group.visible) continue;
-      out.push({ x: v.model.group.position.x, z: v.model.group.position.z, radius: v.model.halfLength * 0.55, kind: v.kind });
+  /**
+   * Live congestion multiplier (`1.0` = free flow, up to `4.6` = heavy jam)
+   * consumed by `findRoute` so route guidance highlights smart detours!
+   */
+  getCongestionMultiplier(segmentId: string): number {
+    return this.segmentCongestion.get(segmentId) ?? 1.0;
+  }
+
+  /** List of currently congested segment IDs (`multiplier >= 2.1`) for minimap jam markers. */
+  getJammedSegments(): string[] {
+    const out: string[] = [];
+    for (const [segId, mult] of this.segmentCongestion) {
+      if (mult >= 2.1) out.push(segId);
     }
     return out;
   }
 
-  update(dt: number): void {
-    this.cycle = (this.cycle + dt) % 26;
-    const green = this.cycle < 12;
-    const amber = this.cycle >= 12 && this.cycle < 14.5;
-    this.signal.mainGreen = green;
-    this.signal.state = green ? 0 : amber ? 1 : 2;
-    this.updateSignalVisuals();
-
-    this.hornCooldown = Math.max(0, this.hornCooldown - dt);
-
-    for (const v of this.vehicles) {
-      const sample = sampleRoute(v.route, v.s, { x: 0, z: 0, yaw: 0 });
-
-      // ---- car following: nearest vehicle on the same route ahead
-      let gap = 999;
-      for (const other of this.vehicles) {
-        if (other === v) continue;
-        if (other.route !== v.route) continue;
-        let diff = other.s - v.s;
-        if (diff < 0) diff += v.route.length;
-        if (diff > 0.1 && diff < 30) {
-          gap = Math.min(gap, diff - (other.length + v.length) * 0.5);
-        }
+  obstacles(): readonly TrafficObstacle[] {
+    let n = 0;
+    for (let i = 0; i < this.agents.length; i++) {
+      const a = this.agents[i];
+      if (!a.mesh.root.visible) continue;
+      const dx = a.x - this.playerX;
+      const dz = a.z - this.playerZ;
+      if (dx * dx + dz * dz > 26 * 26) continue;
+      if (n >= this.obstaclePool.length) {
+        this.obstaclePool.push({ x: a.x, z: a.z, radius: a.mesh.radius, kind: a.kind });
+      } else {
+        const ob = this.obstaclePool[n];
+        ob.x = a.x;
+        ob.z = a.z;
+        ob.radius = a.mesh.radius;
+        ob.kind = a.kind;
       }
-      // ---- player as a dynamic obstacle
-      const dx = this.playerX - sample.x;
-      const dz = this.playerZ - sample.z;
-      const distToPlayer = Math.hypot(dx, dz);
-      if (distToPlayer < 16) {
-        const forwardX = Math.sin(sample.yaw);
-        const forwardZ = Math.cos(sample.yaw);
-        const aheadDot = dx * forwardX + dz * forwardZ;
-        const lateral = Math.abs(dx * forwardZ - dz * forwardX);
-        // a parked rickshaw blocks more of the lane than a moving one
-        const blockingWidth = this.playerSpeed < 0.5 ? 2.9 : 2.4;
-        if (aheadDot > 0.5 && lateral < blockingWidth) {
-          gap = Math.min(gap, aheadDot - 1.4);
-        }
+      n++;
+    }
+    this.obstaclePool.length = n;
+    return this.obstaclePool;
+  }
+
+  /** Nearby cycle rickshaws & bikes subtly edge aside when the player rings the bell! */
+  reactToBell(px: number, pz: number): void {
+    for (let i = 0; i < this.agents.length; i++) {
+      const a = this.agents[i];
+      if (a.kind !== 'rickshaw' && a.kind !== 'motorbike' && a.kind !== 'easybike') continue;
+      if (Math.hypot(a.x - px, a.z - pz) < 14) {
+        a.targetLateral = clamp(a.lateralOffset + 0.55, -0.8, 0.95);
       }
-
-      // ---- junction behaviour
-      let junctionStop = false;
-      if (!this.signal.mainGreen) {
-        const nearMain = Math.abs(sample.x) < 5.5 && Math.abs(sample.z) < 13 && Math.abs(sample.z) > 4.4;
-        const nearCross = Math.abs(sample.z) < 4.4 && Math.abs(sample.x) < 12;
-        const travelsMain = Math.abs(Math.sin(sample.yaw)) < 0.5;
-        if ((travelsMain && nearMain && nearCross) || (!travelsMain && nearCross)) junctionStop = true;
-      }
-
-      // ---- desired speed (simple IDM-ish)
-      let target = v.cruise * v.route.speedFactor;
-      if (gap < 14) target = Math.min(target, Math.max(0, (gap - 2.2) * 0.9));
-      if (junctionStop && gap > 2) target = Math.min(target, 0.6);
-      if (v.kind === 'bus' && Math.abs(sample.z) > 30) target *= 0.94;
-
-      const accel = clamp(target - v.speed, -6.5, 2.4);
-      v.speed = clamp(v.speed + accel * dt, 0, v.cruise + 1.2);
-      // gentle speed wobble for life
-      v.s = (v.s + v.speed * dt) % v.route.length;
-      v.blocked = gap < 4.5;
-
-      // honk occasionally when blocked
-      v.honked = Math.max(0, v.honked - dt);
-      if (v.blocked && v.honked <= 0 && this.hornCooldown <= 0) {
-        v.honked = 4 + this.rng() * 6;
-        this.hornCooldown = 2.5;
-        this.onHorn?.(sample.x, sample.z, v.kind);
-      }
-
-      const pos = sampleRoute(v.route, v.s, { x: 0, z: 0, yaw: 0 });
-      v.model.group.position.set(pos.x, 0, pos.z);
-      v.model.group.rotation.y = pos.yaw;
-      // Wheels are baked into one mesh per vehicle (see vehicles.ts), so there
-      // is nothing to spin here; the brake light still communicates motion. 
-      const brakeMat = v.brakeLight.material as THREE.MeshStandardMaterial;
-      brakeMat.emissiveIntensity = v.speed < 0.4 ? 2.2 : accel < -1.2 ? 1.6 : 0.3;
-      const nearPlayer = Math.hypot(pos.x - this.playerX, pos.z - this.playerZ) < 90;
-      v.model.group.visible = nearPlayer;
     }
   }
 
-  private updateSignalVisuals(): void {
-    const setLamp = (lamp: THREE.Mesh, index: number, active: boolean): void => {
-      const mat = lamp.material as THREE.MeshStandardMaterial;
-      const colors = [0x2fbf5a, 0xf0b41c, 0xd93b2b];
-      mat.emissive.setHex(active ? colors[index] : 0x000000);
-      mat.emissiveIntensity = active ? 2.2 : 0;
-      mat.color.setHex(active ? colors[index] : 0x2a2a2a);
-    };
-    const state = this.signal.state;
-    for (const lamp of this.signalLamps.main) {
-      const index = this.signalLamps.main.indexOf(lamp) % 3;
-      setLamp(lamp, index, state === index);
+  update(dt: number): void {
+    this.clock += dt;
+    this.hornCooldown = Math.max(0, this.hornCooldown - dt);
+
+    // Rebuild per-lane occupancy buckets without allocating new arrays
+    for (const bucket of this.laneOccupancy.values()) bucket.length = 0;
+    for (let i = 0; i < this.agents.length; i++) {
+      const a = this.agents[i];
+      this.laneOccupancy.get(a.lane.id)?.push(a);
     }
-    for (const lamp of this.signalLamps.cross) {
-      const index = this.signalLamps.cross.indexOf(lamp) % 3;
-      setLamp(lamp, index, state === 2 ? index === 0 : false);
+
+    // Reset segment congestion accumulators
+    this.segmentCongestion.clear();
+
+    for (let i = 0; i < this.agents.length; i++) {
+      const a = this.agents[i];
+      const distSqToPlayer = (a.x - this.playerX) * (a.x - this.playerX) + (a.z - this.playerZ) * (a.z - this.playerZ);
+
+      // Recycle vehicles that wandered very far (> 235m) onto streets closer (~95..155m) to the player
+      // so Mohammadpur streets around the player always feel genuinely alive and jam-capable!
+      if (distSqToPlayer > 235 * 235) {
+        this.relocateNearPlayer(a);
+      }
+
+      const isFar = distSqToPlayer > 140 * 140;
+      a.mesh.root.visible = distSqToPlayer < 168 * 168;
+      let stepDt = dt;
+      if (isFar) {
+        a.farAccum += dt;
+        if (a.farAccum < 0.066) continue;
+        stepDt = a.farAccum;
+        a.farAccum = 0;
+      }
+
+      // 1. Bus-stop passenger dwell & market-corridor loading stops (root cause of real Dhaka jams!)
+      a.dwellCooldown = Math.max(0, a.dwellCooldown - stepDt);
+      if (a.dwellTimer > 0) {
+        a.dwellTimer = Math.max(0, a.dwellTimer - stepDt);
+      } else if (
+        a.dwellCooldown <= 0 &&
+        a.lane.jamProne &&
+        a.s > a.lane.length * 0.28 &&
+        a.s < a.lane.length * 0.72 &&
+        (a.kind === 'bus' || a.kind === 'cng' || a.kind === 'van')
+      ) {
+        // Pull slightly toward left curb to board passengers / unload market crates
+        a.dwellTimer = a.kind === 'bus' ? 5.2 + this.rng() * 3.2 : 3.0 + this.rng() * 2.5;
+        a.dwellCooldown = 22 + this.rng() * 20;
+        a.targetLateral = clamp(a.lane.halfRoadWidth * 0.22, 0.2, 0.9);
+      }
+
+      // 2. Car-following gap to vehicles ahead on the SAME lane + outgoing junction
+      let minGap = 999;
+      let blockerLateral = 0;
+      const sameLane = this.laneOccupancy.get(a.lane.id)!;
+      for (let j = 0; j < sameLane.length; j++) {
+        const other = sameLane[j];
+        if (other === a) continue;
+        const ahead = other.s - a.s;
+        if (ahead > 0.05 && ahead < 28) {
+          const latSep = Math.abs(other.lateralOffset - a.lateralOffset);
+          const minLatClear = (other.mesh.halfWidth + a.mesh.halfWidth) * 0.92;
+          if (latSep < minLatClear) {
+            const netGap = ahead - (other.mesh.halfLength + a.mesh.halfLength + 0.85);
+            if (netGap < minGap) {
+              minGap = netGap;
+              blockerLateral = other.lateralOffset;
+            }
+          }
+        }
+      }
+
+      // Also check vehicles just past the upcoming node on outgoing lanes so intersections don't overlap!
+      const distToNode = a.lane.length - a.s;
+      if (distToNode < 14 && a.lane.nextLaneIds.length > 0) {
+        for (let k = 0; k < a.lane.nextLaneIds.length; k++) {
+          const nextOcc = this.laneOccupancy.get(a.lane.nextLaneIds[k]);
+          if (!nextOcc) continue;
+          for (let j = 0; j < nextOcc.length; j++) {
+            const other = nextOcc[j];
+            if (other.s < 9) {
+              const netGap = distToNode + other.s - (other.mesh.halfLength + a.mesh.halfLength + 0.9);
+              if (netGap < minGap) minGap = netGap;
+            }
+          }
+        }
+      }
+
+      // 3. Respect player rickshaw in driving lane
+      if (distSqToPlayer < 18 * 18) {
+        const fx = Math.sin(a.yaw);
+        const fz = Math.cos(a.yaw);
+        const dx = this.playerX - a.x;
+        const dz = this.playerZ - a.z;
+        const aheadDot = dx * fx + dz * fz;
+        const latDot = Math.abs(dx * fz - dz * fx);
+        if (aheadDot > 0.4 && latDot < a.mesh.halfWidth + 1.05) {
+          minGap = Math.min(minGap, aheadDot - (a.mesh.halfLength + 1.35));
+        }
+      }
+
+      // 4. Signalised intersection red light stop line
+      const redSignal =
+        a.stuckTimer < 8.5 &&
+        distToNode > 1.8 &&
+        distToNode < 9.5 &&
+        this.isSignalRedForLane(a.lane);
+      if (redSignal) {
+        minGap = Math.min(minGap, distToNode - 2.6);
+      }
+
+      // 5. Nimble Dhaka cycle rickshaw / motorbike weaving around stopped buses/cars on wide roads!
+      if (
+        minGap < 4.5 &&
+        a.dwellTimer <= 0 &&
+        a.lane.kind === 'main' &&
+        (a.kind === 'rickshaw' || a.kind === 'motorbike')
+      ) {
+        a.targetLateral = blockerLateral >= 0 ? -0.85 : 0.75;
+      } else if (a.dwellTimer <= 0 && minGap > 10) {
+        a.targetLateral = damp(a.targetLateral, 0, 0.8, stepDt);
+      }
+      a.lateralOffset = damp(a.lateralOffset, a.targetLateral, 2.6, stepDt);
+
+      // 6. Anti-deadlock guarantee: if completely stalled > 8.5s, allow gentle creep clearance!
+      if (a.speed < 0.25 && a.dwellTimer <= 0) {
+        a.stuckTimer += stepDt;
+      } else {
+        a.stuckTimer = Math.max(0, a.stuckTimer - stepDt * 1.5);
+      }
+
+      let desiredSpeed = a.dwellTimer > 0 ? 0 : a.cruise;
+      if (a.lane.jamProne) desiredSpeed *= 0.86;
+      if (minGap < 15) {
+        desiredSpeed = Math.min(desiredSpeed, Math.max(0, minGap * 0.72));
+      }
+      if (a.stuckTimer > 8.5) {
+        // Cooperative deadlock breaker: creep forward slowly so traffic never freezes forever!
+        desiredSpeed = Math.max(desiredSpeed, 1.35);
+        if (a.stuckTimer > 13.5) a.stuckTimer = 0;
+      }
+
+      const accel = clamp(desiredSpeed - a.speed, -6.8, 2.8);
+      a.speed = clamp(a.speed + accel * stepDt, 0, a.cruise + 0.8);
+      a.s += a.speed * stepDt;
+
+      // Advance smoothly onto next connected Mohammadpur lane at intersection!
+      if (a.s >= a.lane.length) {
+        const over = a.s - a.lane.length;
+        a.lane = this.chooseNextLane(a);
+        a.s = Math.min(over, a.lane.length * 0.4);
+      }
+
+      // Accumulate live congestion telemetry on this road segment
+      if (a.speed < a.cruise * 0.42) {
+        const prev = this.segmentCongestion.get(a.lane.segmentId) ?? 1.0;
+        this.segmentCongestion.set(a.lane.segmentId, Math.min(4.8, prev + 0.68));
+      }
+
+      // Occasional authentic Dhaka traffic horns when queued near player!
+      a.honkTimer = Math.max(0, a.honkTimer - stepDt);
+      if (minGap < 3.2 && a.dwellTimer <= 0 && a.honkTimer <= 0 && this.hornCooldown <= 0 && distSqToPlayer < 48 * 48) {
+        a.honkTimer = 5 + this.rng() * 8;
+        this.hornCooldown = 2.1;
+        this.onHorn?.(a.x, a.z, a.kind);
+      }
+
+      // Update 3D pose, smooth corner yaw, ground elevation & wheel rotation
+      sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
+      a.x = this.tmpPt.x;
+      a.z = this.tmpPt.z;
+      a.yaw += angleDelta(a.yaw, this.tmpPt.yaw) * (1 - Math.exp(-9 * stepDt));
+
+      if (a.mesh.root.visible) {
+        const gy = this.heightAt(a.x, a.z);
+        a.mesh.root.position.set(a.x, gy, a.z);
+        a.mesh.root.rotation.y = a.yaw;
+        a.wheelSpin += (a.speed * stepDt) / a.mesh.wheelRadius;
+        for (let w = 0; w < a.mesh.wheels.length; w++) {
+          a.mesh.wheels[w].rotation.x = a.wheelSpin;
+        }
+        if (a.mesh.brakeMat) {
+          a.mesh.brakeMat.emissiveIntensity = a.speed < 0.45 || accel < -1.1 ? 2.1 : 0.25;
+        }
+      }
+    }
+  }
+
+  private chooseNextLane(a: ActiveTrafficAgent): LaneEdge {
+    const ids = a.lane.nextLaneIds;
+    if (ids.length === 0) return a.lane;
+    // Heavy buses & trucks avoid narrow `gali` lanes, leaving side lanes open as player jam-bypass routes!
+    if (a.kind === 'bus' || a.kind === 'truck') {
+      const wide = ids
+        .map((id) => this.graph.byId.get(id)!)
+        .filter((l) => l && l.kind !== 'gali');
+      if (wide.length > 0) return wide[Math.floor(this.rng() * wide.length)];
+    }
+    const chosenId = ids[Math.floor(this.rng() * ids.length)];
+    return this.graph.byId.get(chosenId) ?? a.lane;
+  }
+
+  private relocateNearPlayer(a: ActiveTrafficAgent): void {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const cand = this.graph.lanes[Math.floor(this.rng() * this.graph.lanes.length)];
+      if ((a.kind === 'bus' || a.kind === 'truck') && cand.kind === 'gali') continue;
+      const mx = (cand.ax + cand.bx) * 0.5;
+      const mz = (cand.az + cand.bz) * 0.5;
+      const d = Math.hypot(mx - this.playerX, mz - this.playerZ);
+      if (d > 82 && d < 162) {
+        a.lane = cand;
+        a.s = this.rng() * cand.length * 0.8;
+        sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
+        a.x = this.tmpPt.x;
+        a.z = this.tmpPt.z;
+        a.yaw = this.tmpPt.yaw;
+        a.stuckTimer = 0;
+        return;
+      }
     }
   }
 
   dispose(): void {
-    for (const v of this.vehicles) {
-      v.model.group.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
-          if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-          else o.material.dispose();
-        }
-      });
+    for (const a of this.agents) {
+      a.mesh.brakeMat?.dispose();
     }
+    this.agents.length = 0;
     this.group.clear();
   }
 }

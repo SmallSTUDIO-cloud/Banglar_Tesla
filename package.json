@@ -1,8 +1,8 @@
 {
   "name": "banglar-tesla",
   "private": true,
-  "version": "0.1.0",
-  "description": "Banglar Tesla \u2014 a 3D Dhaka cycle-rickshaw life simulator (Phase 1 vertical slice).",
+  "version": "0.2.0",
+  "description": "Banglar Tesla \u2014 a 3D Mohammadpur, Dhaka rickshaw driving simulator.",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",

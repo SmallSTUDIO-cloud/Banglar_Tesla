@@ -1,82 +1,89 @@
 /**
- * Street-level life: tea stalls, fruit carts, crate stacks, tyre piles,
- * construction barriers, the rickshaw stand and hand-painted road signs.
- * All merged into a few meshes; each prop contributes cheap AABB colliders.
+ * Authentic Mohammadpur street life & Bangladeshi street-food vendors (Section 10):
+ *   - Fuchka & Chotpoti carts (`মামা স্পেশাল ফুচকা` — glass showcase of crispy
+ *     fuchka spheres, aluminum chotpoti pot, tamarind tok jars, umbrella, vendor & customers)
+ *   - Jhalmuri sellers (`ঢাকাইয়া ঝালমুড়ি` — tall puffed-rice tin, masala spice
+ *     compartments, mustard-oil bottle, paper cones, mixing bowl, vendor & customers)
+ *   - Tong tea stalls (`চায়ের টং` — steaming kettle, hanging banana bunches,
+ *     biscuit jars, blue tarp roof & wooden adda bench)
+ *   - Fruit & green-coconut (`ডাব`) pushcarts, vegetable bazaar mats, rickshaw
+ *     tyre-repair corners, and Mohammadpur Bus Stand shelter.
+ *
+ * Every prop is strictly validated via `isClearOfRoads` so zero stalls or
+ * customers ever intrude into driving lanes or intersections.
  */
 
 import * as THREE from 'three';
-import { Bucket } from './geo';
-import { PROPS, SIGN_POOL } from './layout';
-import { SignAtlas, clothTexture, posterTexture } from './textures';
-import { FONT_FAMILY } from './textures';
-import { mulberry32, TAU } from '../core/mathx';
+import { mulberry32 } from '../core/mathx';
 import type { Collider } from './city';
+import { Bucket } from './geo';
+import { ROAD_SEGMENTS, isClearOfRoads } from './layout';
+import { SignAtlas, clothTexture } from './textures';
 
-function roadSignTexture(text: string, bg: string, fg: string): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 320;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('no 2d');
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, 256, 320);
-  ctx.strokeStyle = fg;
-  ctx.lineWidth = 10;
-  ctx.strokeRect(12, 12, 232, 296);
-  ctx.fillStyle = fg;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `700 52px ${FONT_FAMILY}`;
-  const words = text.split(' ');
-  words.forEach((w, i) => ctx.fillText(w, 128, 110 + i * 62));
-  ctx.font = `400 26px ${FONT_FAMILY}`;
-  ctx.fillText('SPEED BUMP', 128, 272);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  return tex;
+export interface VendorSpot {
+  x: number;
+  z: number;
+  kind: 'fuchka' | 'jhalmuri' | 'tea' | 'market';
 }
 
 export interface PropsResult {
   group: THREE.Group;
   colliders: Collider[];
+  vendorSpots: VendorSpot[];
 }
 
 export function buildProps(signAtlas: SignAtlas): PropsResult {
   const group = new THREE.Group();
-  group.name = 'props';
+  group.name = 'mohammadpur-props';
   const colliders: Collider[] = [];
-  const rng = mulberry32(4242);
+  const vendorSpots: VendorSpot[] = [];
+  const rng = mulberry32(90210);
 
-  const wood = new Bucket(
-    'prop-wood',
-    new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.85, metalness: 0.03 }),
-  );
-  const metal = new Bucket(
-    'prop-metal',
-    new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.5, metalness: 0.55 }),
-  );
-  const cloth = new Bucket(
-    'prop-cloth',
-    new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      vertexColors: true,
-      map: clothTexture(),
-      roughness: 0.95,
-      side: THREE.DoubleSide,
-    }),
-  );
-  const paint = new Bucket(
-    'prop-paint',
-    new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.62, metalness: 0.15 }),
-  );
-  const signBucket = new Bucket(
-    'prop-signs',
-    new THREE.MeshStandardMaterial({ color: 0xffffff, map: signAtlas.texture, roughness: 0.7, vertexColors: true }),
-  );
-  const posterMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: posterTexture(), roughness: 0.9 });
+  const solidMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.72,
+    metalness: 0.12,
+  });
+  const metalMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.32,
+    metalness: 0.76,
+  });
+  const clothMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    map: clothTexture(),
+    roughness: 0.9,
+    side: THREE.DoubleSide,
+  });
+  const glassMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.16,
+    metalness: 0.35,
+    transparent: true,
+    opacity: 0.58,
+  });
+  const signMat = new THREE.MeshStandardMaterial({
+    map: signAtlas.texture,
+    roughness: 0.65,
+  });
 
-  const addCollider = (x: number, z: number, halfX: number, halfZ: number, height: number): void => {
+  const solid = new Bucket('props.solid', solidMat);
+  const metal = new Bucket('props.metal', metalMat);
+  const cloth = new Bucket('props.cloth', clothMat);
+  const glass = new Bucket('props.glass', glassMat);
+  const signs = new Bucket('props.signs', signMat);
+
+  const placedStalls: { x: number; z: number; r: number }[] = [];
+  const canPlaceStall = (x: number, z: number, r: number): boolean => {
+    if (!isClearOfRoads(x, z, r + 0.55)) return false;
+    for (const p of placedStalls) {
+      if (Math.hypot(x - p.x, z - p.z) < r + p.r + 1.5) return false;
+    }
+    placedStalls.push({ x, z, r });
+    return true;
+  };
+
+  const addPropCollider = (x: number, z: number, halfX: number, halfZ: number, height: number): void => {
     colliders.push({
       minX: x - halfX,
       maxX: x + halfX,
@@ -88,262 +95,293 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     });
   };
 
-  // -------------------------------------------------------------- tea stall
-  const teaStall = (x: number, z: number, yaw: number): void => {
-    const s = Math.sin(yaw);
-    const c = Math.cos(yaw);
-    const at = (ox: number, oz: number) => ({ x: x + ox * c + oz * s, z: z - ox * s + oz * c });
-    // counter
-    let p = at(0, 0);
-    wood.box({ x: p.x, y: 0.46, z: p.z }, { x: 2.4, y: 0.92, z: 0.75 }, '#8a5a2b', { y: yaw });
-    wood.box({ x: p.x, y: 0.96, z: p.z }, { x: 2.5, y: 0.08, z: 0.85 }, '#a8703a', { y: yaw });
-    // bamboo posts
-    for (const [ox, oz] of [
-      [-1.3, -1.2],
-      [1.3, -1.2],
-      [-1.3, 0.6],
-      [1.3, 0.6],
-    ]) {
-      p = at(ox, oz);
-      wood.cylinder({ x: p.x, y: 1.5, z: p.z }, 0.045, 3.0, '#b58a4a');
+  // Helper to place a standing vendor or customer figure on the sidewalk (y = 0.09)
+  const addPersonFigure = (
+    px: number,
+    pz: number,
+    yaw: number,
+    shirt: string,
+    lower: string,
+    apronColor?: string,
+  ): void => {
+    const base = 0.09;
+    solid.cylinder({ x: px, y: base + 0.42, z: pz }, 0.14, 0.82, lower);
+    solid.box({ x: px, y: base + 1.02, z: pz }, { x: 0.34, y: 0.46, z: 0.21 }, shirt, { y: yaw });
+    if (apronColor) {
+      cloth.box(
+        { x: px + Math.sin(yaw) * 0.11, y: base + 0.90, z: pz + Math.cos(yaw) * 0.11 },
+        { x: 0.28, y: 0.52, z: 0.03 },
+        apronColor,
+        { y: yaw },
+      );
     }
-    // tarp roof
-    p = at(0, -0.3);
-    cloth.quad({ x: p.x, y: 2.95, z: p.z }, 3.4, 2.6, '#1f6b4f', { x: -Math.PI / 2, y: yaw });
-    cloth.quad({ x: p.x, y: 2.72, z: p.z }, 3.4, 0.5, '#1f6b4f', { y: yaw });
-    // bunting
-    for (let i = 0; i < 6; i++) {
-      const t = -1.5 + i * 0.6;
-      p = at(t, -1.25);
-      paint.box({ x: p.x, y: 2.55, z: p.z }, { x: 0.16, y: 0.24, z: 0.02 }, i % 2 ? '#d63b2f' : '#f0a500', {
-        y: yaw,
-        z: 0.5,
-      });
-    }
-    // kettle + stove + cups
-    p = at(-0.55, 0);
-    metal.cylinder({ x: p.x, y: 1.12, z: p.z }, 0.16, 0.26, '#b9bcc0');
-    metal.cylinder({ x: p.x + 0.16, y: 1.18, z: p.z }, 0.03, 0.2, '#9aa0a4', { z: -0.7 });
-    p = at(-0.95, 0);
-    metal.cylinder({ x: p.x, y: 1.05, z: p.z }, 0.12, 0.14, '#3c3c3c');
-    for (let i = 0; i < 5; i++) {
-      p = at(0.2 + i * 0.16, 0.1);
-      paint.cylinder({ x: p.x, y: 1.08, z: p.z }, 0.035, 0.08, '#f0e6d2');
-    }
-    // bench
-    p = at(1.7, 0.4);
-    wood.box({ x: p.x, y: 0.24, z: p.z }, { x: 1.6, y: 0.08, z: 0.34 }, '#8a5a2b', { y: yaw });
-    wood.box({ x: p.x, y: 0.5, z: p.z + 0.2 }, { x: 1.6, y: 0.5, z: 0.06 }, '#8a5a2b', { y: yaw });
-    // sign
-    p = at(0, -1.3);
-    const uv = signAtlas.uvFor(SIGN_POOL[0]);
-    signBucket.quad({ x: p.x, y: 2.15, z: p.z }, 1.5, 0.55, '#ffffff', { y: yaw }, uv);
-    addCollider(x, z, 1.5, 1.1, 2.9);
+    solid.cylinder({ x: px, y: base + 1.38, z: pz }, 0.10, 0.21, '#8d5e3c');
+    solid.cylinder({ x: px, y: base + 1.48, z: pz }, 0.105, 0.06, '#1c1715');
   };
 
-  // ------------------------------------------------------------- fruit cart
-  const fruitCart = (x: number, z: number, yaw: number): void => {
+  // ----------------- 1. FUCHKA & CHOTPOTI STALL (`ফুচকা ও চটপটি ভ্যান`)
+  const buildFuchkaStall = (x: number, z: number, yaw: number): void => {
     const s = Math.sin(yaw);
     const c = Math.cos(yaw);
     const at = (ox: number, oz: number) => ({ x: x + ox * c + oz * s, z: z - ox * s + oz * c });
-    let p = at(0, 0);
-    wood.box({ x: p.x, y: 0.72, z: p.z }, { x: 1.9, y: 0.16, z: 0.95 }, '#b98a4a', { y: yaw });
-    wood.box({ x: p.x, y: 0.38, z: p.z }, { x: 1.8, y: 0.5, z: 0.85 }, '#8a6531', { y: yaw });
-    for (const ox of [-0.85, 0.85]) {
-      p = at(ox, 0);
-      metal.cylinder({ x: p.x, y: 0.34, z: p.z }, 0.34, 0.09, '#2f2f2f', { z: Math.PI / 2, y: yaw });
+    const groundY = 0.09;
+
+    // 4 spoked pushcart wheels touching sidewalk cleanly
+    const wr = 0.24;
+    for (const [wx, wz] of [
+      [-0.78, -0.42],
+      [0.78, -0.42],
+      [-0.78, 0.42],
+      [0.78, 0.42],
+    ]) {
+      const wp = at(wx, wz);
+      solid.cylinder({ x: wp.x, y: groundY + wr, z: wp.z }, wr, 0.06, '#1e2024', {
+        y: yaw,
+        x: Math.PI / 2,
+      });
+      metal.cylinder({ x: wp.x, y: groundY + wr, z: wp.z }, wr * 0.55, 0.07, '#cfd6de', {
+        y: yaw,
+        x: Math.PI / 2,
+      });
     }
-    // fruit crates
-    const fruitColors = ['#e8a01c', '#d64a2a', '#2f8a3c', '#7a1f6a', '#e8d02a'];
-    for (let i = 0; i < 4; i++) {
-      p = at(-0.62 + i * 0.42, 0);
-      paint.box({ x: p.x, y: 0.9, z: p.z }, { x: 0.36, y: 0.2, z: 0.6 }, '#c8a06a', { y: yaw });
-      for (let f = 0; f < 5; f++) {
-        paint.add(
-          new THREE.SphereGeometry(0.075, 6, 5),
-          { x: p.x + (rng() - 0.5) * 0.26, y: 1.0 + rng() * 0.06, z: p.z + (rng() - 0.5) * 0.44 },
-          { x: 1, y: 1, z: 1 },
-          fruitColors[(i + f) % fruitColors.length],
-        );
+
+    // Colourful hand-painted wooden pushcart body + red/gold trim + Bangla Fuchka sign (slot 2)
+    solid.box({ x, y: groundY + 0.68, z }, { x: 1.88, y: 0.52, z: 0.98 }, '#8a1c4a', { y: yaw });
+    solid.box({ x, y: groundY + 0.96, z }, { x: 1.98, y: 0.07, z: 1.08 }, '#f4c04a', { y: yaw });
+    const frontFace = at(0, 0.505);
+    signs.quad({ x: frontFace.x, y: groundY + 0.68, z: frontFace.z }, 1.65, 0.44, '#ffffff', { y: yaw }, signAtlas.slot(2));
+
+    // Glass Fuchka showcase cabinet stacked with golden crispy fuchka mounds!
+    const cab = at(-0.42, 0.05);
+    glass.box({ x: cab.x, y: groundY + 1.28, z: cab.z }, { x: 0.86, y: 0.56, z: 0.68 }, '#dff6ff', { y: yaw });
+    metal.box({ x: cab.x, y: groundY + 1.57, z: cab.z }, { x: 0.90, y: 0.04, z: 0.72 }, '#d5dce4', { y: yaw });
+    for (const [fx, fy, fz, fr] of [
+      [-0.58, 1.14, 0.05, 0.22],
+      [-0.28, 1.16, 0.08, 0.24],
+      [-0.43, 1.30, 0.04, 0.19],
+    ]) {
+      const fp = at(fx, fz);
+      solid.cone({ x: fp.x, y: groundY + fy, z: fp.z }, fr, 0.28, '#e39b32');
+    }
+
+    // Gleaming round aluminum Chotpoti pot (`হাড়ি`) + twin Tamarind Tok (`তেঁতুল পানি`) jars + stacked plates
+    const pot = at(0.36, 0.04);
+    metal.cylinder({ x: pot.x, y: groundY + 1.15, z: pot.z }, 0.24, 0.30, '#dce3ea');
+    solid.cylinder({ x: pot.x, y: groundY + 1.30, z: pot.z }, 0.21, 0.03, '#c97a2b'); // hot yellow chotpoti!
+    for (const [jx, jz, col] of [
+      [0.72, 0.22, '#5a2614'],
+      [0.72, -0.14, '#2a7c4f'],
+    ] as const) {
+      const jp = at(jx, jz);
+      solid.cylinder({ x: jp.x, y: groundY + 1.14, z: jp.z }, 0.11, 0.28, col);
+      metal.cylinder({ x: jp.x, y: groundY + 1.29, z: jp.z }, 0.08, 0.04, '#e5383b');
+    }
+    const plates = at(0.08, 0.32);
+    metal.cylinder({ x: plates.x, y: groundY + 1.06, z: plates.z }, 0.11, 0.12, '#e2e8f0');
+
+    // Striped garden umbrella + warm glowing street-food bulb
+    const pole = at(0.15, -0.15);
+    metal.cylinder({ x: pole.x, y: groundY + 1.75, z: pole.z }, 0.03, 1.8, '#cfd6de');
+    cloth.cone({ x: pole.x, y: groundY + 2.75, z: pole.z }, 1.55, 0.58, '#d93829');
+    cloth.cone({ x: pole.x, y: groundY + 2.78, z: pole.z }, 1.12, 0.54, '#ffd166');
+    solid.cylinder({ x: x, y: groundY + 2.22, z }, 0.07, 0.12, '#ffe89c');
+
+    // Standing Fuchka Mama behind cart + 2 sidewalk customers enjoying Fuchka!
+    const vendorPos = at(0.15, -0.82);
+    addPersonFigure(vendorPos.x, vendorPos.z, yaw, '#e9c46a', '#1d4e70', '#ffffff');
+    const cust1 = at(-0.55, 0.96);
+    if (isClearOfRoads(cust1.x, cust1.z, 0.6)) {
+      addPersonFigure(cust1.x, cust1.z, yaw + Math.PI - 0.2, '#d62828', '#2b2d42');
+    }
+    const cust2 = at(0.48, 0.98);
+    if (isClearOfRoads(cust2.x, cust2.z, 0.6)) {
+      addPersonFigure(cust2.x, cust2.z, yaw + Math.PI + 0.25, '#2a9d8f', '#264653');
+    }
+
+    addPropCollider(x, z, 1.05, 0.65, 2.4);
+    vendorSpots.push({ x, z, kind: 'fuchka' });
+  };
+
+  // ----------------- 2. JHALMURI SELLER (`ঝালমুড়িওয়ালা`)
+  const buildJhalmuriStall = (x: number, z: number, yaw: number): void => {
+    const s = Math.sin(yaw);
+    const c = Math.cos(yaw);
+    const at = (ox: number, oz: number) => ({ x: x + ox * c + oz * s, z: z - ox * s + oz * c });
+    const groundY = 0.09;
+
+    // Compact wooden X-trestle stand / push-frame + Bangla Jhalmuri placard (slot 3)
+    solid.box({ x, y: groundY + 0.44, z }, { x: 1.32, y: 0.78, z: 0.76 }, '#a33b16', { y: yaw });
+    solid.box({ x, y: groundY + 0.86, z }, { x: 1.42, y: 0.07, z: 0.86 }, '#ffd166', { y: yaw });
+    const front = at(0, 0.395);
+    signs.quad({ x: front.x, y: groundY + 0.48, z: front.z }, 1.18, 0.38, '#ffffff', { y: yaw }, signAtlas.slot(3));
+
+    // Iconic tall cylindrical gleaming steel Puffed-Rice Tin (`মুড়ির টিন`)!
+    const tin = at(-0.36, 0.02);
+    metal.cylinder({ x: tin.x, y: groundY + 1.18, z: tin.z }, 0.21, 0.58, '#e2e8f0');
+    solid.cylinder({ x: tin.x, y: groundY + 1.48, z: tin.z }, 0.16, 0.04, '#f8f3dc'); // white puffed muri!
+
+    // Compartmentalized Masala Tray (chopped onion, green chilli, chanachur, coriander) + Mustard Oil bottle!
+    for (const [mx, mz, col] of [
+      [0.08, 0.14, '#e76f51'], // chanachur
+      [0.32, 0.14, '#2a9d8f'], // green chilli & dhonia
+      [0.08, -0.12, '#d8b4e2'], // chopped red onion
+      [0.32, -0.12, '#e9c46a'], // roasted boot/peas
+    ] as const) {
+      const mp = at(mx, mz);
+      metal.box({ x: mp.x, y: groundY + 0.95, z: mp.z }, { x: 0.20, y: 0.10, z: 0.20 }, '#cbd5e1', { y: yaw });
+      solid.box({ x: mp.x, y: groundY + 1.01, z: mp.z }, { x: 0.17, y: 0.03, z: 0.17 }, col, { y: yaw });
+    }
+    // Golden mustard oil (`সরিষার তেল`) bottle + steel mixing pot (`বাটি`) + paper cone (`ঠোঙা`) stack!
+    const oil = at(0.54, 0.16);
+    solid.cylinder({ x: oil.x, y: groundY + 1.04, z: oil.z }, 0.055, 0.28, '#f4a91c');
+    const bowl = at(0.50, -0.14);
+    metal.cylinder({ x: bowl.x, y: groundY + 0.99, z: bowl.z }, 0.12, 0.18, '#e2e8f0');
+    const cones = at(-0.04, 0.28);
+    solid.cone({ x: cones.x, y: groundY + 1.03, z: cones.z }, 0.08, 0.22, '#ede4cc', { x: Math.PI });
+
+    // Overhead bamboo shade + warm street lantern
+    const p1 = at(-0.62, -0.32);
+    const p2 = at(0.62, -0.32);
+    solid.cylinder({ x: p1.x, y: groundY + 1.45, z: p1.z }, 0.035, 2.2, '#9c7242');
+    solid.cylinder({ x: p2.x, y: groundY + 1.45, z: p2.z }, 0.035, 2.2, '#9c7242');
+    cloth.box({ x, y: groundY + 2.48, z }, { x: 1.75, y: 0.05, z: 1.35 }, '#1f6f54', { y: yaw, x: 0.12 });
+
+    // Jhalmuri Mama + eager customer
+    const vPos = at(0, -0.68);
+    addPersonFigure(vPos.x, vPos.z, yaw, '#f4a261', '#284b63', '#c92a2a');
+    const cPos = at(0.18, 0.84);
+    if (isClearOfRoads(cPos.x, cPos.z, 0.6)) {
+      addPersonFigure(cPos.x, cPos.z, yaw + Math.PI, '#457b9d', '#1d3557');
+    }
+
+    addPropCollider(x, z, 0.8, 0.55, 2.2);
+    vendorSpots.push({ x, z, kind: 'jhalmuri' });
+  };
+
+  // ----------------- 3. TONG TEA STALL (`চায়ের টং`) & FRUIT/VEG CARTS
+  const buildTeaTong = (x: number, z: number, yaw: number): void => {
+    const s = Math.sin(yaw);
+    const c = Math.cos(yaw);
+    const at = (ox: number, oz: number) => ({ x: x + ox * c + oz * s, z: z - ox * s + oz * c });
+    const groundY = 0.09;
+
+    solid.box({ x, y: groundY + 0.46, z }, { x: 2.1, y: 0.88, z: 0.82 }, '#7a4e28', { y: yaw });
+    solid.box({ x, y: groundY + 0.93, z }, { x: 2.22, y: 0.07, z: 0.92 }, '#9c6635', { y: yaw });
+    for (const [ox, oz] of [
+      [-1.02, -0.42],
+      [1.02, -0.42],
+      [-1.02, 0.42],
+      [1.02, 0.42],
+    ]) {
+      const p = at(ox, oz);
+      solid.cylinder({ x: p.x, y: groundY + 1.35, z: p.z }, 0.04, 2.5, '#a87d44');
+    }
+    cloth.box({ x, y: groundY + 2.58, z }, { x: 2.55, y: 0.06, z: 1.75 }, '#195d82', { y: yaw, x: 0.10 });
+    // Aluminum tea kettle + biscuit jars + hanging yellow banana bunches (`কলার ছড়া`)!
+    const kt = at(-0.48, 0.08);
+    metal.cylinder({ x: kt.x, y: groundY + 1.12, z: kt.z }, 0.18, 0.30, '#dce3ea');
+    for (let j = 0; j < 3; j++) {
+      const jp = at(0.18 + j * 0.28, 0.14);
+      glass.cylinder({ x: jp.x, y: groundY + 1.10, z: jp.z }, 0.10, 0.26, '#f6d89e');
+      solid.cylinder({ x: jp.x, y: groundY + 1.24, z: jp.z }, 0.085, 0.04, '#d62828');
+    }
+    for (const bx of [-0.82, 0.82]) {
+      const bp = at(bx, 0.42);
+      solid.cylinder({ x: bp.x, y: groundY + 2.05, z: bp.z }, 0.12, 0.36, '#f2c938');
+    }
+    // Sidewalk wooden adda bench
+    const bench = at(0, 0.92);
+    if (isClearOfRoads(bench.x, bench.z, 0.65)) {
+      solid.box({ x: bench.x, y: groundY + 0.26, z: bench.z }, { x: 1.55, y: 0.06, z: 0.34 }, '#6e4522', { y: yaw });
+      solid.box({ x: bench.x, y: groundY + 0.13, z: bench.z }, { x: 1.35, y: 0.24, z: 0.26 }, '#543419', { y: yaw });
+    }
+    const vPos = at(0, -0.68);
+    addPersonFigure(vPos.x, vPos.z, yaw, '#e76f51', '#1d4e6e');
+    addPropCollider(x, z, 1.1, 0.55, 2.5);
+    vendorSpots.push({ x, z, kind: 'tea' });
+  };
+
+  const buildFruitOrVegCart = (x: number, z: number, yaw: number, isCoconut: boolean): void => {
+    const s = Math.sin(yaw);
+    const c = Math.cos(yaw);
+    const at = (ox: number, oz: number) => ({ x: x + ox * c + oz * s, z: z - ox * s + oz * c });
+    const groundY = 0.09;
+
+    solid.box({ x, y: groundY + 0.56, z }, { x: 1.72, y: 0.22, z: 1.02 }, '#6a4626', { y: yaw });
+    for (const [wx, wz] of [
+      [-0.65, -0.45],
+      [0.65, -0.45],
+      [-0.65, 0.45],
+      [0.65, 0.45],
+    ]) {
+      const wp = at(wx, wz);
+      solid.cylinder({ x: wp.x, y: groundY + 0.25, z: wp.z }, 0.25, 0.06, '#1f2226', { y: yaw, x: Math.PI / 2 });
+    }
+    for (let r = -1; r <= 1; r++) {
+      for (let col = -2; col <= 2; col++) {
+        const fp = at(col * 0.28, r * 0.26);
+        const fruitCol = isCoconut
+          ? '#4ea832' // green Daab coconuts!
+          : (col + r) % 2 === 0
+            ? '#f59f00' // Rajshahi mangoes!
+            : '#e03131'; // apples / pomegranates!
+        solid.cylinder({ x: fp.x, y: groundY + 0.78, z: fp.z }, 0.13, 0.20, fruitCol);
       }
     }
-    // umbrella
-    p = at(0, -0.1);
-    wood.cylinder({ x: p.x, y: 1.55, z: p.z }, 0.03, 1.6, '#8a7a5a');
-    cloth.cone({ x: p.x, y: 2.4, z: p.z }, 1.15, 0.5, '#b8352a', { x: Math.PI, y: yaw });
-    addCollider(x, z, 1.15, 0.8, 2.4);
+    addPropCollider(x, z, 0.9, 0.58, 1.2);
+    vendorSpots.push({ x, z, kind: 'market' });
   };
 
-  const crateStack = (x: number, z: number, yaw: number): void => {
-    for (let i = 0; i < 5; i++) {
-      const ox = (rng() - 0.5) * 0.5;
-      const oz = (rng() - 0.5) * 0.5;
-      const y = 0.22 + Math.floor(i / 2) * 0.42;
-      wood.box({ x: x + ox, y, z: z + oz }, { x: 0.62, y: 0.4, z: 0.5 }, i % 2 ? '#a8783c' : '#8a5f2c', {
-        y: yaw + (rng() - 0.5) * 0.4,
+  // Place stalls systematically along Mohammadpur sidewalks & market hubs!
+  let stallTypeCounter = 0;
+  for (const seg of ROAD_SEGMENTS) {
+    if (seg.length < 30) continue;
+    const density = seg.jamProne ? 2 : seg.kind !== 'gali' ? 1 : rng() < 0.4 ? 1 : 0;
+    for (let i = 0; i < density; i++) {
+      const side: 1 | -1 = (i + stallTypeCounter) % 2 === 0 ? 1 : -1;
+      const along = seg.length * (density === 1 ? 0.52 : 0.32 + i * 0.36);
+      // Sit back onto the outer sidewalk / shopfront apron so road stays 100% clear!
+      const lateral = (seg.halfWidth + seg.sidewalk * 0.78 + 0.38) * side;
+      const sx = seg.ax + seg.ux * along + seg.leftX * lateral;
+      const sz = seg.az + seg.uz * along + seg.leftZ * lateral;
+      // Face inward toward the street & pedestrians!
+      const faceYaw = Math.atan2(-seg.leftX * side, -seg.leftZ * side);
+
+      if (!canPlaceStall(sx, sz, 1.35)) continue;
+      const mod = stallTypeCounter % 5;
+      stallTypeCounter++;
+      if (mod === 0) buildFuchkaStall(sx, sz, faceYaw);
+      else if (mod === 1) buildJhalmuriStall(sx, sz, faceYaw);
+      else if (mod === 2) buildTeaTong(sx, sz, faceYaw);
+      else buildFruitOrVegCart(sx, sz, faceYaw, mod === 3);
+    }
+  }
+
+  // Mohammadpur Bus Stand Passenger Waiting Shelter (`bus_stand` sidewalk pocket)
+  const standSeg = ROAD_SEGMENTS.find((s) => s.id === 'asad_1');
+  if (standSeg) {
+    const bx = standSeg.ax + standSeg.ux * 14 + standSeg.leftX * (standSeg.halfWidth + 2.3);
+    const bz = standSeg.az + standSeg.uz * 14 + standSeg.leftZ * (standSeg.halfWidth + 2.3);
+    const byaw = Math.atan2(-standSeg.leftX, -standSeg.leftZ);
+    if (canPlaceStall(bx, bz, 2.2)) {
+      metal.box({ x: bx, y: 2.55, z: bz }, { x: 4.6, y: 0.12, z: 1.8 }, '#145a44', { y: byaw });
+      metal.box({ x: bx, y: 1.35, z: bz - Math.cos(byaw) * 0.78 }, { x: 4.4, y: 2.3, z: 0.08 }, '#24343e', {
+        y: byaw,
       });
-    }
-    addCollider(x, z, 0.6, 0.55, 1.3);
-  };
-
-  const tirePile = (x: number, z: number): void => {
-    for (let i = 0; i < 4; i++) {
-      metal.add(
-        new THREE.TorusGeometry(0.34, 0.11, 5, 12),
-        { x, y: 0.12 + i * 0.21, z },
-        { x: 1, y: 1, z: 1 },
-        '#22242a',
-        { x: Math.PI / 2, z: (rng() - 0.5) * 0.2 },
-      );
-    }
-    addCollider(x, z, 0.45, 0.45, 0.9);
-  };
-
-  const barrier = (x: number, z: number, yaw: number): void => {
-    for (let i = 0; i < 3; i++) {
-      const ox = (i - 1) * 1.5;
-      const s = Math.sin(yaw);
-      const c = Math.cos(yaw);
-      const px = x + ox * c;
-      const pz = z - ox * s;
-      paint.box({ x: px, y: 0.72, z: pz }, { x: 1.35, y: 0.28, z: 0.1 }, i % 2 ? '#d63b2f' : '#f2eee2', { y: yaw });
-      paint.box({ x: px, y: 0.34, z: pz }, { x: 0.1, y: 0.68, z: 0.1 }, '#f2eee2', { y: yaw });
-    }
-    addCollider(x, z, 2.2, 0.25, 0.9);
-  };
-
-  const bins = (x: number, z: number): void => {
-    metal.cylinder({ x, y: 0.42, z }, 0.28, 0.82, '#2f6b4a');
-    metal.cylinder({ x: x + 0.5, y: 0.36, z: z + 0.2 }, 0.24, 0.7, '#3c5a7a');
-    addCollider(x + 0.2, z, 0.6, 0.4, 0.85);
-  };
-
-  const bench = (x: number, z: number, yaw: number): void => {
-    wood.box({ x, y: 0.24, z }, { x: 1.8, y: 0.08, z: 0.4 }, '#8a5a2b', { y: yaw });
-    for (const ox of [-0.75, 0.75]) {
-      const s = Math.sin(yaw);
-      const c = Math.cos(yaw);
-      wood.box({ x: x + ox * c, y: 0.12, z: z - ox * s }, { x: 0.1, y: 0.24, z: 0.36 }, '#6d4526', { y: yaw });
-    }
-    addCollider(x, z, 0.95, 0.35, 0.35);
-  };
-
-  /** Parked rickshaw at the stand (simplified but reads correctly). */
-  const parkedRickshaw = (x: number, z: number, yaw: number, tint: string): void => {
-    const s = Math.sin(yaw);
-    const c = Math.cos(yaw);
-    const at = (ox: number, oz: number) => ({ x: x + ox * c + oz * s, z: z - ox * s + oz * c });
-    let p = at(0, 0);
-    // wheels
-    for (const [ox, oz] of [
-      [0, 0.62],
-      [-0.52, -0.5],
-      [0.52, -0.5],
-    ]) {
-      p = at(ox, oz);
-      metal.add(
-        new THREE.TorusGeometry(0.34, 0.035, 5, 14),
-        { x: p.x, y: 0.34, z: p.z },
-        { x: 1, y: 1, z: 1 },
-        '#1e1e1e',
-        { y: Math.PI / 2 + yaw },
-      );
-    }
-    p = at(0, -0.1);
-    paint.box({ x: p.x, y: 0.62, z: p.z }, { x: 1.0, y: 0.35, z: 1.3 }, tint, { y: yaw });
-    p = at(0, -0.55);
-    cloth.box({ x: p.x, y: 1.35, z: p.z }, { x: 1.15, y: 0.9, z: 0.95 }, '#1b1b1b', { y: yaw });
-    p = at(0, 0.1);
-    paint.box({ x: p.x, y: 1.02, z: p.z }, { x: 0.95, y: 0.16, z: 0.55 }, '#7a2a24', { y: yaw });
-    addCollider(x, z, 0.75, 0.85, 1.9);
-  };
-
-  for (const spot of PROPS) {
-    const yaw = spot.yaw ?? 0;
-    switch (spot.kind) {
-      case 'tea':
-        teaStall(spot.x, spot.z, yaw);
-        break;
-      case 'cart':
-        fruitCart(spot.x, spot.z, yaw);
-        break;
-      case 'crates':
-        crateStack(spot.x, spot.z, yaw);
-        break;
-      case 'tires':
-        tirePile(spot.x, spot.z);
-        break;
-      case 'barrier':
-        barrier(spot.x, spot.z, yaw);
-        break;
-      case 'bins':
-        bins(spot.x, spot.z);
-        break;
-      case 'bench':
-        bench(spot.x, spot.z, yaw);
-        break;
-      case 'stand':
-        parkedRickshaw(spot.x, spot.z, yaw, '#b8322a');
-        parkedRickshaw(spot.x - 1.2, spot.z + 2.2, yaw + 0.12, '#1c5a3a');
-        parkedRickshaw(spot.x + 1.4, spot.z + 3.4, yaw - 0.1, '#1c3f7a');
-        break;
-      case 'poles':
-        break;
+      solid.box({ x: bx, y: 0.48, z: bz }, { x: 3.8, y: 0.08, z: 0.46 }, '#d99b38', { y: byaw });
+      addPropCollider(bx, bz, 2.1, 0.9, 2.6);
     }
   }
 
-  // extra parked rickshaws near the tea stall for life
-  parkedRickshaw(8.6, 16.5, 0.3, '#1c5a3a');
-
-  // hand-painted "ধীরে চলুন" boards near humps
-  const slowSign = roadSignTexture('ধীরে চলুন', '#f3ead2', '#8c2f22');
-  const slowMat = new THREE.MeshStandardMaterial({ map: slowSign, roughness: 0.8 });
-  const slowSpots = [
-    { x: -5.6, z: 27 },
-    { x: 5.6, z: -25 },
-    { x: -33, z: 3.8 },
-  ];
-  for (const s of slowSpots) {
-    const board = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.78), slowMat);
-    board.position.set(s.x, 1.5, s.z);
-    board.rotation.y = s.x > 0 ? Math.PI : 0;
-    board.castShadow = false;
-    group.add(board);
-    const post = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.04, 0.04, 1.5, 5),
-      new THREE.MeshStandardMaterial({ color: 0x6b6f70, metalness: 0.4, roughness: 0.6 }),
-    );
-    post.position.set(s.x, 0.75, s.z);
-    group.add(post);
-  }
-
-  // wall poster boards near the market
-  for (const spot of [
-    { x: -8.6, z: 22, yaw: Math.PI / 2 },
-    { x: 8.6, z: -32, yaw: -Math.PI / 2 },
-    { x: -8.7, z: -44, yaw: Math.PI / 2 },
+  for (const b of [
+    { bucket: solid, cast: true },
+    { bucket: metal, cast: false },
+    { bucket: cloth, cast: true },
+    { bucket: glass, cast: false },
+    { bucket: signs, cast: false },
   ]) {
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.3), posterMat);
-    mesh.position.set(spot.x, 1.9, spot.z);
-    mesh.rotation.y = spot.yaw;
-    group.add(mesh);
+    for (const m of b.bucket.buildChunked(3, 270, { cast: b.cast, receive: true })) group.add(m);
   }
 
-  // strings of plastic bunting across the tea lane
-  for (let i = 0; i < 14; i++) {
-    const t = i / 13;
-    const x = -4.5 + t * 9;
-    const y = 5.4 - Math.sin(t * Math.PI) * 1.1;
-    paint.box({ x, y, z: 14 }, { x: 0.2, y: 0.28, z: 0.02 }, i % 3 === 0 ? '#f0a500' : i % 3 === 1 ? '#d63b2f' : '#2f8a6a', {
-      z: 0.15,
-    });
-  }
-
-  for (const bucket of [wood, metal, cloth, paint, signBucket]) {
-    const mesh = bucket.build({ cast: true, receive: true });
-    if (mesh) group.add(mesh);
-  }
-
-  void TAU;
-  return { group, colliders };
+  return { group, colliders, vendorSpots };
 }

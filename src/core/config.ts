@@ -1,156 +1,154 @@
 /**
- * Central tuning + quality configuration. Everything a designer would want to
- * tweak for feel or performance lives here instead of being scattered.
+ * Central tuning constants for Banglar Tesla (Mohammadpur, Dhaka edition).
+ * Keeping numbers in one module makes balancing, testing and profiling trivial.
  */
 
 export type QualityPreset = 'low' | 'balanced' | 'high';
 
-export interface QualitySettings {
-  labelKey: string;
+export const CAMERA_MODES = [
+  'chase',
+  'close',
+  'wide',
+  'low',
+  'front',
+  'cockpit',
+  'side',
+] as const;
+
+export type CameraMode = (typeof CAMERA_MODES)[number];
+
+export interface QualityConfig {
+  label: string;
   pixelRatioCap: number;
-  renderScale: number;
   shadows: boolean;
   shadowMapSize: number;
   shadowDistance: number;
-  traffic: number;
+  trafficCount: number;
+  pedestrianCount: number;
   pedestrians: number;
+  propDensity: number;
   rainParticles: number;
-  reflections: boolean;
-  bloomish: boolean;
+  particles: 'minimal' | 'moderate' | 'rich';
+  lampLights: number;
+  drawDistance: number;
   viewDistance: number;
-  particles: 'minimal' | 'moderate' | 'full';
+  antialias: boolean;
 }
 
-export const QUALITY: Record<QualityPreset, QualitySettings> = {
+export type QualitySettings = QualityConfig;
+
+export const QUALITY: Record<QualityPreset, QualityConfig> = {
   low: {
-    labelKey: 'quality.low',
-    pixelRatioCap: 1.25,
-    renderScale: 0.78,
+    label: 'Low',
+    pixelRatioCap: 1.0,
     shadows: false,
     shadowMapSize: 512,
     shadowDistance: 24,
-    traffic: 6,
-    pedestrians: 8,
-    rainParticles: 220,
-    reflections: false,
-    bloomish: false,
-    viewDistance: 120,
+    trafficCount: 18,
+    pedestrianCount: 36,
+    pedestrians: 36,
+    propDensity: 0.78,
+    rainParticles: 160,
     particles: 'minimal',
+    lampLights: 0,
+    drawDistance: 175,
+    viewDistance: 135,
+    antialias: false,
   },
   balanced: {
-    labelKey: 'quality.balanced',
-    pixelRatioCap: 2.0,
-    renderScale: 1.0,
+    label: 'Balanced',
+    pixelRatioCap: 1.35,
     shadows: true,
     shadowMapSize: 1024,
-    shadowDistance: 38,
-    traffic: 10,
-    pedestrians: 16,
-    rainParticles: 520,
-    reflections: true,
-    bloomish: false,
-    viewDistance: 170,
+    shadowDistance: 36,
+    trafficCount: 32,
+    pedestrianCount: 68,
+    pedestrians: 68,
+    propDensity: 0.92,
+    rainParticles: 340,
     particles: 'moderate',
+    lampLights: 4,
+    drawDistance: 235,
+    viewDistance: 195,
+    antialias: false,
   },
   high: {
-    labelKey: 'quality.high',
-    pixelRatioCap: 2.6,
-    renderScale: 1.0,
+    label: 'High',
+    pixelRatioCap: 1.75,
     shadows: true,
-    shadowMapSize: 2048,
-    shadowDistance: 56,
-    traffic: 16,
-    pedestrians: 26,
-    rainParticles: 900,
-    reflections: true,
-    bloomish: true,
-    viewDistance: 230,
-    particles: 'full',
+    shadowMapSize: 1536,
+    shadowDistance: 48,
+    trafficCount: 46,
+    pedestrianCount: 98,
+    pedestrians: 98,
+    propDensity: 1.0,
+    rainParticles: 560,
+    particles: 'rich',
+    lampLights: 6,
+    drawDistance: 300,
+    viewDistance: 260,
+    antialias: true,
   },
 };
 
-/** Vehicle handling tune — a light, weighty three-wheeler, not a sports car. */
+/** Base cycle-rickshaw physics parameters (modified by vehicle + upgrades). */
 export const RIDE = {
-  maxSpeed: 7.6, // m/s ≈ 27 km/h on flat ground
-  maxReverse: 1.9,
-  accel: 2.05,
-  accelFalloff: 0.62, // acceleration tapers as speed approaches max
-  brakeDecel: 5.0,
-  coastDrag: 0.62,
-  rollingDrag: 0.05,
-  wheelbase: 1.62,
-  maxSteerLow: 0.55, // radians at standstill
-  maxSteerHigh: 0.17, // radians at max speed
-  steerRate: 5.4,
-  steerReturn: 6.8,
-  reverseHold: 0.42, // seconds brake must be held at standstill before reversing
-  bodyRadius: 0.92,
-  halfLength: 1.35,
-  halfWidth: 0.82,
-  jumpEpsilon: 0.12,
-  collisionBounce: 0.34,
-  conditionLossPerHit: 2.4,
-  curbPenalty: 0.55,
-};
-
-export const CAMERA = {
-  distance: 5.9,
-  height: 2.55,
-  lookHeight: 1.15,
-  lookAhead: 3.4,
-  followRate: 6.5,
-  yawRate: 3.4,
-  fov: 58,
-  closeDistance: 4.5,
-  closeHeight: 2.1,
-  cinematicDistance: 9.5,
-  cinematicHeight: 3.6,
-};
-
-export const ECONOMY = {
-  startingBalance: 500,
-  fareBase: 28,
-  farePerMeter: 0.09,
-  farePerMinuteLate: 4,
-  onTimeBonus: 22,
-  smoothBonus: 18,
-  comfortBonus: 14,
-  perfectTip: 12,
-  conditionDropPerKm: 0.55,
-  repairCostPerPoint: 4.2,
-  recoveryFee: 45,
-  freeRecoveryInFreeRide: true,
-};
+  wheelbase: 1.48,
+  frontAxleZ: 0.8,
+  rearAxleZ: -0.68,
+  rearTrackHalf: 0.49,
+  frontWheelRadius: 0.37,
+  rearWheelRadius: 0.386,
+  maxSpeed: 6.4, // m/s (~23 km/h) for a standard pedal rickshaw
+  maxReverse: 1.85,
+  accel: 2.35, // m/s^2 peak low-speed push
+  accelFalloff: 0.62, // tapers near maxSpeed so pedalling feels human
+  coastDrag: 0.62, // natural slowdown when not pedalling
+  rollingDrag: 0.085, // quadratic-ish drag per m/s
+  brakeDecel: 4.5,
+  handbrakeDecel: 5.8,
+  maxSteerLow: 0.68, // rad (~39 deg) — tight pivot in narrow Mohammadpur lanes
+  maxSteerHigh: 0.175, // rad (~10 deg) — stable >8m radius at cruising speed
+  steerRate: 3.6, // rad/s response
+  steerReturn: 4.6,
+  lateralGrip: 7.5,
+  bodyRadius: 0.86, // collision circle around rickshaw centre
+  collisionBounce: 0.25,
+  conditionLossPerHit: 3.2, // % per m/s of impact above threshold
+  reverseHold: 0.3, // s of holding brake at standstill before reversing
+} as const;
 
 export const MISSION = {
-  acceptRadius: 6.5,
-  pickupStopSpeed: 1.1,
-  dropStopSpeed: 1.1,
-  dropRadius: 7.5,
-  maxJobsInQueue: 3,
-  moodStart: 100,
+  acceptRadius: 5.8,
+  dropRadius: 6.2,
+  pickupStopSpeed: 0.95,
+  dropStopSpeed: 1.05,
+  moodStart: 88,
   moodCollisionHit: 9,
-  moodHardBrake: 2.5,
-  moodRecklessSpeed: 4.5,
-  moodSmoothGainPerSecond: 0.55,
-};
+  moodHardBrake: 2.4,
+  moodPotholeHit: 1.8,
+  moodSmoothGainPerSecond: 0.45,
+} as const;
+
+export const ECONOMY = {
+  startingTaka: 500,
+  fareBase: 30,
+  farePerMeter: 0.22,
+  onTimeBonus: 20,
+  smoothBonusMax: 25,
+  tipMax: 30,
+  damagePenaltyPerHit: 8,
+  repairPerPoint: 2.2,
+  trafficBonusMax: 22,
+} as const;
 
 export const WORLD = {
-  /** Half-size of the playable neighbourhood in metres. */
-  halfSize: 118,
-  groundSize: 300,
-  buildingGrid: 4,
-  sidewalkHeight: 0.14,
-  roadWidthMain: 9.2,
-  roadWidthCross: 7.4,
-  laneOffset: 2.15,
-  playerSpawn: { x: -1.2, z: 47, yaw: Math.PI },
-};
+  /** Playable Mohammadpur district half-extent in metres around Town Hall / Asad Ave. */
+  halfExtent: 265,
+  groundExtent: 640,
+  /** Starting rickshaw stand at Mohammadpur Bus Stand (Asad Avenue west junction). */
+  playerSpawn: { x: -124, z: 108, yaw: 0.98 },
+} as const;
 
-export const DAY_PHASES = ['morning', 'noon', 'golden', 'blue', 'night'] as const;
-export type DayPhase = (typeof DAY_PHASES)[number];
-
-export const WEATHER_KINDS = ['clear', 'overcast', 'rain'] as const;
-export type WeatherKind = (typeof WEATHER_KINDS)[number];
-
-export const MAX_SAVE_BYTES = 48 * 1024;
+export type DayPhase = 'morning' | 'noon' | 'golden' | 'blue' | 'night';
+export type WeatherKind = 'clear' | 'overcast' | 'rain';

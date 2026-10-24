@@ -1,54 +1,61 @@
 /**
- * Player progression: taka, vehicles, upgrades, cosmetics, achievements, tapes.
- * All mutations are guarded here so the balance can never go negative and a
- * purchase can never be applied twice.
+ * Authoritative in-memory progression state + guarded economy transactions.
+ * All money changes flow through here so nothing can double-spend or go NaN.
  */
 
 import { Emitter } from './events';
 import { clamp } from './mathx';
-import { SaveStore, createDefaultProgress, type GameMode, type Progress } from './save';
-import type { StorageLike } from './settings';
 import {
-  COSMETICS,
-  TAPES,
-  UPGRADES,
-  VEHICLES,
   cosmeticById,
+  TAPES,
+  upgradeById,
   vehicleById,
+  VEHICLES,
   type CosmeticCategory,
+  type VehicleDef,
 } from '../economy/catalog';
-import { repairCost, canAfford, levelForRides } from '../economy/economy';
+import { canAfford, levelForRides, repairCost } from '../economy/economy';
+import {
+  createDefaultProgress,
+  SaveStore,
+  type GameMode,
+  type Progress,
+} from './save';
+import type { StorageLike } from './settings';
 
-export interface GameEvents {
+export type PurchaseResult =
+  | { ok: true; balance: number }
+  | {
+      ok: false;
+      reason: 'insufficient' | 'owned' | 'maxed' | 'locked' | 'coming-soon' | 'unknown' | 'busy';
+      shortage?: number;
+    };
+
+interface StateEvents {
   balance: number;
-  progress: Progress;
-  purchase: { kind: string; id: string };
+  progress: Readonly<Progress>;
   achievement: string;
   unlock: string;
+  saved: boolean;
   toast: { key: string; params?: Record<string, string | number>; tone?: 'good' | 'bad' };
-  saved: void;
-  error: string;
 }
 
-export type PurchaseResult = { ok: true } | { ok: false; reason: 'insufficient' | 'owned' | 'locked' | 'invalid' };
-
-export class GameState extends Emitter<GameEvents> {
+export class GameState extends Emitter<StateEvents> {
+  readonly store: SaveStore;
   progress: Progress;
-  readonly saveStore: SaveStore;
-  private saveTimer: number | null = null;
+  readonly recoveredFromBackup: boolean;
+  private txBusy = false;
 
-  constructor(
-    storage: StorageLike | null,
-    readonly now: () => number = Date.now,
-  ) {
+  constructor(storage: StorageLike | null, now = () => Date.now()) {
     super();
-    this.saveStore = new SaveStore(storage);
-    const loaded = this.saveStore.load(this.now());
-    this.progress = loaded.progress ?? createDefaultProgress(this.now());
-    if (loaded.recovered) {
-      this.emit('toast', { key: 'common.saved', tone: 'bad' });
-    }
+    this.store = new SaveStore(storage);
+    const loaded = this.store.load(now());
+    this.recoveredFromBackup = loaded.recovered;
+    this.progress = loaded.progress ?? createDefaultProgress(now());
+    this.now = now;
   }
+
+  private now: () => number;
 
   get balance(): number {
     return this.progress.balance;
@@ -58,172 +65,194 @@ export class GameState extends Emitter<GameEvents> {
     return this.progress.selectedVehicle;
   }
 
+  vehicle(): VehicleDef {
+    return vehicleById(this.progress.selectedVehicle);
+  }
+
   get level(): number {
     return levelForRides(this.progress.rides).level;
   }
 
-  // ------------------------------------------------------------- money ---
+  // ----------------------------------------------------------------- money
   addMoney(amount: number): void {
-    if (!Number.isFinite(amount) || amount === 0) return;
-    this.progress.balance = Math.max(0, Math.round(this.progress.balance + amount));
-    if (amount > 0) this.progress.totalEarned += Math.round(amount);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const add = Math.round(amount);
+    this.progress.balance = clamp(this.progress.balance + add, 0, 10_000_000);
+    this.progress.totalEarned += add;
     this.emit('balance', this.progress.balance);
     this.emit('progress', this.progress);
-    this.scheduleSave();
   }
 
   spend(amount: number): boolean {
-    const price = Math.round(amount);
-    if (!canAfford(this.progress.balance, price)) return false;
-    this.progress.balance -= price;
+    if (!canAfford(this.progress.balance, amount)) return false;
+    this.progress.balance -= Math.round(amount);
     this.emit('balance', this.progress.balance);
     this.emit('progress', this.progress);
-    this.scheduleSave();
     return true;
   }
 
-  // ----------------------------------------------------------- vehicles ---
+  // --------------------------------------------------------------- upgrades
+  upgradeLevel(id: string): number {
+    return this.progress.upgrades[id] ?? 0;
+  }
+
+  nextUpgradePrice(id: string): number | null {
+    const def = upgradeById(id);
+    if (!def) return null;
+    const level = this.upgradeLevel(id);
+    if (level >= def.maxLevel) return null;
+    return def.prices[level] ?? null;
+  }
+
+  buyUpgrade(id: string): PurchaseResult {
+    if (this.txBusy) return { ok: false, reason: 'busy' };
+    this.txBusy = true;
+    try {
+      const def = upgradeById(id);
+      if (!def) return { ok: false, reason: 'unknown' };
+      const level = this.upgradeLevel(id);
+      if (level >= def.maxLevel) return { ok: false, reason: 'maxed' };
+      const price = def.prices[level];
+      if (!canAfford(this.progress.balance, price)) {
+        return { ok: false, reason: 'insufficient', shortage: price - this.progress.balance };
+      }
+      this.spend(price);
+      this.progress.upgrades[id] = level + 1;
+      this.unlockAchievement('ach.firstUpgrade');
+      this.saveNow();
+      return { ok: true, balance: this.progress.balance };
+    } finally {
+      this.txBusy = false;
+    }
+  }
+
+  // --------------------------------------------------------------- vehicles
   ownsVehicle(id: string): boolean {
+    const def = VEHICLES.find((v) => v.id === id);
+    if (!def || def.comingSoon) return false;
     return this.progress.ownedVehicles.includes(id);
   }
 
+  isVehicleComingSoon(id: string): boolean {
+    return !!VEHICLES.find((v) => v.id === id)?.comingSoon;
+  }
+
   vehicleUnlocked(id: string): boolean {
-    const def = vehicleById(id);
-    return this.progress.rides >= def.ridesRequired;
+    const def = VEHICLES.find((v) => v.id === id);
+    if (!def || def.comingSoon) return false;
+    return this.progress.rides >= def.ridesRequired || this.ownsVehicle(id);
   }
 
   buyVehicle(id: string): PurchaseResult {
-    const def = VEHICLES.find((v) => v.id === id);
-    if (!def) return { ok: false, reason: 'invalid' };
-    if (this.ownsVehicle(id)) return { ok: false, reason: 'owned' };
-    if (!this.vehicleUnlocked(id)) return { ok: false, reason: 'locked' };
-    if (!canAfford(this.progress.balance, def.price)) return { ok: false, reason: 'insufficient' };
-    this.progress.balance -= def.price;
-    this.progress.ownedVehicles.push(id);
-    this.progress.selectedVehicle = id;
-    this.afterPurchase('vehicle', id);
-    return { ok: true };
+    if (this.txBusy) return { ok: false, reason: 'busy' };
+    this.txBusy = true;
+    try {
+      const def = VEHICLES.find((v) => v.id === id);
+      if (!def) return { ok: false, reason: 'unknown' };
+      if (def.comingSoon) return { ok: false, reason: 'coming-soon' };
+      if (this.ownsVehicle(id)) return { ok: false, reason: 'owned' };
+      if (!this.vehicleUnlocked(id)) return { ok: false, reason: 'locked' };
+      if (!canAfford(this.progress.balance, def.price)) {
+        return { ok: false, reason: 'insufficient', shortage: def.price - this.progress.balance };
+      }
+      this.spend(def.price);
+      this.progress.ownedVehicles.push(id);
+      this.progress.selectedVehicle = id;
+      if (id === 'electric') this.unlockAchievement('ach.electricOwner');
+      this.saveNow();
+      return { ok: true, balance: this.progress.balance };
+    } finally {
+      this.txBusy = false;
+    }
   }
 
   selectVehicle(id: string): boolean {
     if (!this.ownsVehicle(id)) return false;
     this.progress.selectedVehicle = id;
     this.emit('progress', this.progress);
-    this.scheduleSave(true);
+    this.saveNow();
     return true;
   }
 
-  // ---------------------------------------------------------- upgrades ---
-  upgradeLevel(id: string): number {
-    return this.progress.upgrades[id] ?? 0;
-  }
-
-  nextUpgradePrice(id: string): number | null {
-    const def = UPGRADES.find((u) => u.id === id);
-    if (!def) return null;
-    const level = this.upgradeLevel(id);
-    if (level >= def.maxLevel) return null;
-    return def.prices[level];
-  }
-
-  buyUpgrade(id: string): PurchaseResult {
-    const def = UPGRADES.find((u) => u.id === id);
-    if (!def) return { ok: false, reason: 'invalid' };
-    const price = this.nextUpgradePrice(id);
-    if (price === null) return { ok: false, reason: 'owned' };
-    if (!canAfford(this.progress.balance, price)) return { ok: false, reason: 'insufficient' };
-    this.progress.balance -= price;
-    this.progress.upgrades[id] = this.upgradeLevel(id) + 1;
-    this.afterPurchase('upgrade', id);
-    this.unlockAchievement('ach.firstUpgrade');
-    return { ok: true };
-  }
-
-  // --------------------------------------------------------- cosmetics ---
+  // -------------------------------------------------------------- cosmetics
   ownsCosmetic(id: string): boolean {
+    const def = cosmeticById(id);
+    if (!def) return false;
+    if (def.price === 0) return true;
     return this.progress.ownedCosmetics.includes(id);
   }
 
   buyCosmetic(id: string): PurchaseResult {
-    const def = cosmeticById(id);
-    if (!def) return { ok: false, reason: 'invalid' };
-    if (this.ownsCosmetic(id)) return { ok: false, reason: 'owned' };
-    if (!canAfford(this.progress.balance, def.price)) return { ok: false, reason: 'insufficient' };
-    this.progress.balance -= def.price;
-    this.progress.ownedCosmetics.push(id);
-    this.progress.cosmetics[def.category] = id;
-    this.afterPurchase('cosmetic', id);
-    return { ok: true };
+    if (this.txBusy) return { ok: false, reason: 'busy' };
+    this.txBusy = true;
+    try {
+      const def = cosmeticById(id);
+      if (!def) return { ok: false, reason: 'unknown' };
+      if (this.ownsCosmetic(id)) return { ok: false, reason: 'owned' };
+      if (!canAfford(this.progress.balance, def.price)) {
+        return { ok: false, reason: 'insufficient', shortage: def.price - this.progress.balance };
+      }
+      this.spend(def.price);
+      this.progress.ownedCosmetics.push(id);
+      this.progress.cosmetics[def.category] = id;
+      this.saveNow();
+      return { ok: true, balance: this.progress.balance };
+    } finally {
+      this.txBusy = false;
+    }
   }
 
-  equipCosmetic(id: string): PurchaseResult {
+  equipCosmetic(id: string, category?: CosmeticCategory): PurchaseResult {
+    if (id === '' && category) {
+      this.progress.cosmetics[category] = '';
+      this.saveNow();
+      return { ok: true, balance: this.progress.balance };
+    }
     const def = cosmeticById(id);
-    if (!def) return { ok: false, reason: 'invalid' };
+    if (!def) return { ok: false, reason: 'unknown' };
     if (!this.ownsCosmetic(id)) return { ok: false, reason: 'locked' };
-    this.progress.cosmetics[def.category as CosmeticCategory] = id;
-    this.emit('progress', this.progress);
-    this.scheduleSave(true);
-    return { ok: true };
+    this.progress.cosmetics[def.category] = id;
+    this.saveNow();
+    return { ok: true, balance: this.progress.balance };
   }
 
-  // ------------------------------------------------------------ repair ---
+  // -------------------------------------------------------------- condition
+  damageCondition(amount: number): void {
+    if (amount <= 0) return;
+    this.progress.condition = clamp(this.progress.condition - amount, 5, 100);
+    if (this.progress.condition < 35) {
+      this.emit('toast', { key: 'toast.conditionLow', tone: 'bad' });
+    }
+  }
+
   repairQuote(): number {
     return repairCost(this.progress.condition);
   }
 
   repair(): PurchaseResult {
-    const cost = this.repairQuote();
-    if (cost <= 0) return { ok: false, reason: 'owned' };
-    if (!canAfford(this.progress.balance, cost)) return { ok: false, reason: 'insufficient' };
-    this.progress.balance -= cost;
+    const price = this.repairQuote();
+    if (price === 0) return { ok: false, reason: 'maxed' };
+    if (!canAfford(this.progress.balance, price)) {
+      return { ok: false, reason: 'insufficient', shortage: price - this.progress.balance };
+    }
+    this.spend(price);
     this.progress.condition = 100;
-    this.emit('balance', this.progress.balance);
-    this.emit('progress', this.progress);
-    this.scheduleSave(true);
-    return { ok: true };
+    this.saveNow();
+    return { ok: true, balance: this.progress.balance };
   }
 
-  damageCondition(amount: number): void {
-    this.progress.condition = clamp(this.progress.condition - Math.max(0, amount), 8, 100);
-    this.emit('progress', this.progress);
-  }
-
-  // ------------------------------------------------------- achievements ---
-  hasAchievement(id: string): boolean {
-    return this.progress.achievements.includes(id);
-  }
-
-  unlockAchievement(id: string): void {
-    if (!id || this.hasAchievement(id)) return;
-    this.progress.achievements.push(id);
-    // The UI owns presentation/localisation: it listens for this event and
-    // shows a translated toast. The state layer stays text-free.
-    this.emit('achievement', id);
-    this.scheduleSave();
-  }
-
-  /** Called after any successful purchase: refresh derived UI + autosave. */
-  private afterPurchase(kind: string, id: string): void {
-    this.emit('balance', this.progress.balance);
-    this.emit('progress', this.progress);
-    this.emit('purchase', { kind, id });
-    this.scheduleSave(true);
-  }
-
-  // ------------------------------------------------------------- rides ---
-  recordRide(info: {
-    earned: number;
-    distance: number;
-    mood: number;
-    damage: number;
-    mode: GameMode;
-    wet: boolean;
-  }): void {
+  // -------------------------------------------------------------- rides
+  recordRide(opts: { earned: number; distance: number; mood: number; damage: number; mode: GameMode; wet: boolean }): void {
     this.progress.rides += 1;
-    this.progress.distanceTravelled += Math.max(0, info.distance);
-    this.progress.balance += Math.max(0, Math.round(info.earned));
-    this.progress.totalEarned += Math.max(0, Math.round(info.earned));
-    this.progress.condition = clamp(this.progress.condition - info.distance / 1000 * 0.55 - info.damage * 0.4, 8, 100);
+    this.progress.distanceTravelled += Math.max(0, opts.distance);
+    this.progress.lastMode = opts.mode;
+    this.addMoney(opts.earned);
+
+    if (this.progress.rides === 1) this.unlockAchievement('ach.firstRide');
+    if (this.progress.rides >= 10) this.unlockAchievement('ach.tenRides');
+    if (opts.damage === 0 && opts.mood >= 80) this.unlockAchievement('ach.cleanRun');
+    if (opts.wet) this.unlockAchievement('ach.rainRide');
+    if (this.progress.distanceTravelled >= 3000) this.unlockAchievement('ach.explorer');
 
     for (const tape of TAPES) {
       if (this.progress.rides >= tape.unlockRides && !this.progress.tapes.includes(tape.id)) {
@@ -231,72 +260,43 @@ export class GameState extends Emitter<GameEvents> {
         this.emit('unlock', tape.id);
       }
     }
-    if (this.progress.rides === 1) this.unlockAchievement('ach.firstRide');
-    if (this.progress.rides >= 10) this.unlockAchievement('ach.tenRides');
-    if (info.damage <= 0 && info.mood >= 85) this.unlockAchievement('ach.cleanRun');
-    if (info.wet) this.unlockAchievement('ach.rainRide');
-    if (this.progress.rides >= 4) this.unlockAchievement('ach.explorer');
+    this.saveNow();
+  }
 
-    this.emit('balance', this.progress.balance);
-    this.emit('progress', this.progress);
+  unlockAchievement(id: string): void {
+    if (this.progress.achievements.includes(id)) return;
+    this.progress.achievements.push(id);
+    this.emit('achievement', id);
+  }
+
+  markTutorialDone(): void {
+    this.progress.tutorialDone = true;
     this.saveNow();
   }
 
   setMode(mode: GameMode): void {
     this.progress.lastMode = mode;
-    this.scheduleSave(true);
   }
 
   setSpawn(x: number, z: number, yaw: number): void {
     this.progress.spawn = { x, z, yaw };
   }
 
-  markTutorialDone(): void {
-    this.progress.tutorialDone = true;
-    this.scheduleSave(true);
-  }
-
-  // -------------------------------------------------------------- save ---
-  private scheduleSave(immediate = false): void {
-    if (immediate) {
-      this.saveNow();
-      return;
-    }
-    if (this.saveTimer !== null) return;
-    this.saveTimer = this.windowSetTimeout(() => {
-      this.saveTimer = null;
-      this.saveNow();
-    }, 1200);
-  }
-
-  private windowSetTimeout(fn: () => void, ms: number): number {
-    const g = globalThis as { setTimeout?: (cb: () => void, t: number) => number };
-    if (g.setTimeout) return g.setTimeout(fn, ms) as unknown as number;
-    fn();
-    return 0;
-  }
-
+  // ------------------------------------------------------------ persistence
   saveNow(): void {
-    this.progress.updatedAt = this.now();
-    const ok = this.saveStore.save(this.progress, this.now());
-    if (ok) this.emit('saved', undefined);
+    const ok = this.store.save(this.progress, this.now());
+    if (ok) this.emit('saved', true);
+  }
+
+  autosave(): void {
+    if (this.store.autosave(this.progress, this.now())) this.emit('saved', true);
   }
 
   resetProgress(): void {
-    this.saveStore.clear();
+    this.store.clear();
     this.progress = createDefaultProgress(this.now());
+    this.store.save(this.progress, this.now());
     this.emit('balance', this.progress.balance);
     this.emit('progress', this.progress);
-    this.saveNow();
-  }
-
-  /** Convenience: cosmetics currently equipped plus their data. */
-  equippedCosmetic(category: CosmeticCategory) {
-    const id = this.progress.cosmetics[category] ?? '';
-    return cosmeticById(id) ?? COSMETICS[0];
-  }
-
-  vehicle() {
-    return vehicleById(this.progress.selectedVehicle);
   }
 }

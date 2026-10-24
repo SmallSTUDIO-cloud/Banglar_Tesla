@@ -1,42 +1,173 @@
 /**
- * Third-person chase camera: frame-rate independent follow, look-ahead,
- * spring-arm collision avoidance against the city colliders, and an additive
- * trauma-based shake (never applied to the simulated vehicle).
+ * Need for Speed: Most Wanted (2005)-inspired 7-mode camera rig:
+ *   1. chase   — Classic chase
+ *   2. close   — Close action chase
+ *   3. wide    — Wide intersection / traffic-jam chase
+ *   4. low     — Low street-level cinematic chase
+ *   5. front   — Front-facing (ahead looking back at puller & rickshaw)
+ *   6. cockpit — Near-driver / over-handlebar rider POV
+ *   7. side    — Side cinematic tracking shot (wall-aware)
+ *
+ * Zero per-frame allocations, wrap-safe angle interpolation, dynamic speed FOV,
+ * bounded impact trauma, and swept AABB + vehicle anti-clipping.
  */
 
 import * as THREE from 'three';
-import { CAMERA } from '../core/config';
-import { clamp, clamp01, damp, shortAngle } from '../core/mathx';
+import { CAMERA_MODES, type CameraMode } from '../core/config';
+import { angleDelta, clamp, clamp01, damp } from '../core/mathx';
+import type { BoxCollider } from './rickshawController';
 
-interface BoxLike {
-  minX: number;
-  maxX: number;
-  minZ: number;
-  maxZ: number;
+export interface CameraDynamicObstacle {
+  x: number;
+  z: number;
+  radius: number;
+}
+
+interface ModePreset {
+  /** Signed distance behind vehicle (+behind, -in front). */
+  backDist: number;
+  /** Lateral offset from vehicle centreline (+left, -right). */
+  sideOffset: number;
   height: number;
+  /** Signed forward offset of look-at target (+ahead, -behind). */
+  lookAhead: number;
+  lookHeight: number;
+  baseFov: number;
+  speedFovBoost: number;
+  speedPullback: number;
+  posDamp: number;
+  yawDamp: number;
+}
+
+const MODE_PRESETS: Record<CameraMode, ModePreset> = {
+  chase: {
+    backDist: 5.75,
+    sideOffset: 0,
+    height: 2.08,
+    lookAhead: 2.85,
+    lookHeight: 1.08,
+    baseFov: 58,
+    speedFovBoost: 6.5,
+    speedPullback: 0.95,
+    posDamp: 7.8,
+    yawDamp: 6.2,
+  },
+  close: {
+    backDist: 4.1,
+    sideOffset: 0,
+    height: 1.68,
+    lookAhead: 2.6,
+    lookHeight: 1.14,
+    baseFov: 62,
+    speedFovBoost: 7.0,
+    speedPullback: 0.65,
+    posDamp: 9.2,
+    yawDamp: 7.4,
+  },
+  wide: {
+    backDist: 8.1,
+    sideOffset: 0,
+    height: 3.05,
+    lookAhead: 3.7,
+    lookHeight: 1.2,
+    baseFov: 64,
+    speedFovBoost: 5.0,
+    speedPullback: 1.15,
+    posDamp: 6.8,
+    yawDamp: 5.6,
+  },
+  low: {
+    backDist: 4.9,
+    sideOffset: 0.28,
+    height: 1.06,
+    lookAhead: 3.25,
+    lookHeight: 1.22,
+    baseFov: 66,
+    speedFovBoost: 8.0,
+    speedPullback: 0.75,
+    posDamp: 8.5,
+    yawDamp: 6.8,
+  },
+  front: {
+    backDist: -4.55,
+    sideOffset: 0.22,
+    height: 1.56,
+    lookAhead: -0.25,
+    lookHeight: 1.16,
+    baseFov: 54,
+    speedFovBoost: 3.5,
+    speedPullback: -0.45,
+    posDamp: 8.8,
+    yawDamp: 7.6,
+  },
+  cockpit: {
+    backDist: -0.28,
+    sideOffset: 0,
+    height: 1.66,
+    lookAhead: 9.0,
+    lookHeight: 1.26,
+    baseFov: 69,
+    speedFovBoost: 5.5,
+    speedPullback: 0,
+    posDamp: 22.0,
+    yawDamp: 16.0,
+  },
+  side: {
+    backDist: 1.15,
+    sideOffset: 3.65,
+    height: 1.46,
+    lookAhead: 0.85,
+    lookHeight: 1.08,
+    baseFov: 53,
+    speedFovBoost: 4.0,
+    speedPullback: 0.35,
+    posDamp: 7.6,
+    yawDamp: 6.4,
+  },
+};
+
+export function nextCameraMode(current: CameraMode): CameraMode {
+  const idx = CAMERA_MODES.indexOf(current);
+  return CAMERA_MODES[(idx + 1) % CAMERA_MODES.length];
 }
 
 export class ChaseCamera {
   readonly camera: THREE.PerspectiveCamera;
+  private currentPos = new THREE.Vector3(0, 3, -6);
+  private currentLook = new THREE.Vector3(0, 1.1, 0);
+  private currentQuat = new THREE.Quaternion();
+  private targetQuat = new THREE.Quaternion();
+  private lookMat = new THREE.Matrix4();
+  private upVec = new THREE.Vector3(0, 1, 0);
+  private desiredPos = new THREE.Vector3();
+  private desiredLook = new THREE.Vector3();
+  private anchorPos = new THREE.Vector3();
+
   private yaw = 0;
+  private lookOffset = 0;
+  private fov = 58;
+  private appliedFov = 58;
   private trauma = 0;
-  private currentDistance = CAMERA.distance;
-  private mode: 'chase' | 'close' = 'chase';
   private shakeEnabled = true;
-  private smooth = 1;
-  private focus = new THREE.Vector3();
-  private shakeTime = 0;
   private reduceMotion = false;
+  private mode: CameraMode = 'chase';
+  private prevYaw = 0;
+  private sideSign: 1 | -1 = 1;
+  private sideSwitchCooldown = 0;
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.camera = camera;
-    this.camera.fov = CAMERA.fov;
-    this.camera.near = 0.15;
-    this.camera.far = 400;
-    this.camera.updateProjectionMatrix();
   }
 
-  setMode(mode: 'chase' | 'close'): void {
+  getMode(): CameraMode {
+    return this.mode;
+  }
+
+  isCockpit(): boolean {
+    return this.mode === 'cockpit';
+  }
+
+  setMode(mode: CameraMode): void {
     this.mode = mode;
   }
 
@@ -48,160 +179,218 @@ export class ChaseCamera {
     this.reduceMotion = reduce;
   }
 
+  /** Kick the trauma accumulator (0..1) on collision or curb hop. */
   addTrauma(amount: number): void {
-    if (!this.shakeEnabled) return;
-    this.trauma = clamp01(this.trauma + amount * (this.reduceMotion ? 0.35 : 1));
+    if (!this.shakeEnabled || this.reduceMotion) return;
+    this.trauma = clamp01(this.trauma + amount * 0.85);
   }
 
-  /** Snap instantly (used on spawn / recovery) to avoid a whip across the map. */
-  snapTo(x: number, z: number, yaw: number): void {
+  /** Snap immediately after a respawn or mode start (no swoop from old origin). */
+  snapTo(x: number, z: number, yaw: number, y = 0): void {
     this.yaw = yaw;
-    this.focus.set(x, 1.2, z);
-    this.currentDistance = this.mode === 'close' ? CAMERA.closeDistance : CAMERA.distance;
-    this.updateCamera(0, x, z, yaw, 0, [], true);
+    this.prevYaw = yaw;
+    const p = MODE_PRESETS[this.mode];
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const lx = fz;
+    const lz = -fx;
+    this.currentPos.set(
+      x - fx * p.backDist + lx * p.sideOffset,
+      y + p.height,
+      z - fz * p.backDist + lz * p.sideOffset,
+    );
+    this.currentLook.set(x + fx * p.lookAhead, y + p.lookHeight, z + fz * p.lookAhead);
+    this.fov = p.baseFov;
+    this.appliedFov = p.baseFov;
+    this.camera.position.copy(this.currentPos);
+    this.camera.up.set(0, 1, 0);
+    this.camera.lookAt(this.currentLook);
+    this.currentQuat.copy(this.camera.quaternion);
+    this.camera.fov = this.fov;
+    this.camera.updateProjectionMatrix();
   }
 
   update(
     dt: number,
-    x: number,
-    z: number,
+    targetX: number,
+    targetZ: number,
     yaw: number,
     speed: number,
-    colliders: BoxLike[],
-    force = false,
+    colliders: BoxCollider[],
+    reversing = false,
     groundY = 0,
+    dynamicObstacles?: readonly CameraDynamicObstacle[],
   ): void {
-    this.updateCamera(dt, x, z, yaw, speed, colliders, force, groundY);
-  }
+    const preset = MODE_PRESETS[this.mode];
+    const speedNorm = clamp01(Math.abs(speed) / 8.5);
+    this.sideSwitchCooldown = Math.max(0, this.sideSwitchCooldown - dt);
 
-  private updateCamera(
-    dt: number,
-    x: number,
-    z: number,
-    yaw: number,
-    speed: number,
-    colliders: BoxLike[],
-    force: boolean,
-    groundY = 0,
-  ): void {
-    const damping = this.reduceMotion ? 0.35 : 1;
-    if (force) {
-      this.yaw = yaw;
-    } else {
-      // follow the heading, but slower while reversing so the view stays stable
-      const followRate = (speed < -0.2 ? 1.4 : CAMERA.yawRate) * damping;
-      this.yaw = this.yaw + shortAngle(this.yaw, yaw) * (1 - Math.exp(-followRate * dt));
-    }
+    // Follow reverse direction subtly in classic chase modes without flipping violently
+    const useReverseHeading =
+      reversing && speed < -0.45 && (this.mode === 'chase' || this.mode === 'close' || this.mode === 'wide');
+    const targetYaw = useReverseHeading ? yaw + Math.PI : yaw;
+    const yawDiff = angleDelta(this.yaw, targetYaw);
+    const yawK = 1 - Math.exp(-preset.yawDamp * (0.45 + 0.55 * speedNorm) * dt);
+    this.yaw += yawDiff * yawK;
 
-    const baseDist = this.mode === 'close' ? CAMERA.closeDistance : CAMERA.distance;
-    const baseHeight = this.mode === 'close' ? CAMERA.closeHeight : CAMERA.height;
-    const lookAhead = clamp(speed * 0.5, -1.2, CAMERA.lookAhead);
-    const aheadX = x + Math.sin(this.yaw) * lookAhead;
-    const aheadZ = z + Math.cos(this.yaw) * lookAhead;
-    const t = force ? 1 : 1 - Math.exp(-CAMERA.followRate * damping * dt);
-    this.focus.lerp(new THREE.Vector3(aheadX, 1.15 + groundY, aheadZ), t);
+    // Wrap-safe yaw rate for subtle look-into-turn apex framing
+    const stepYawDelta = angleDelta(this.prevYaw, yaw);
+    this.prevYaw = yaw;
+    const turnPeek = this.reduceMotion || this.mode === 'cockpit' || this.mode === 'front' ? 0 : clamp((stepYawDelta / Math.max(dt, 0.004)) * 0.28, -0.85, 0.85);
+    this.lookOffset = damp(this.lookOffset, turnPeek, 5.5, dt);
 
-    const desiredDist = baseDist + clamp(Math.abs(speed) * 0.06, 0, 0.9);
-    this.currentDistance = damp(this.currentDistance, desiredDist, 4, dt);
+    const fx = Math.sin(this.yaw);
+    const fz = Math.cos(this.yaw);
+    // Vehicle left vector in Three.js (+Y up): (fz, -fx)
+    const lx = fz;
+    const lz = -fx;
 
-    const backX = -Math.sin(this.yaw);
-    const backZ = -Math.cos(this.yaw);
-    const pivot = new THREE.Vector3(this.focus.x + backX * 0.2, this.focus.y + baseHeight * 0.55, this.focus.z + backZ * 0.2);
-    const desired = new THREE.Vector3(
-      this.focus.x + backX * this.currentDistance,
-      this.focus.y + baseHeight,
-      this.focus.z + backZ * this.currentDistance,
-    );
-
-    // Spring arm: pull in when a building would block the view.
-    const hit = this.raycast(pivot, desired, colliders);
-    let dist = this.currentDistance;
-    if (hit < 1) {
-      dist = Math.max(1.4, this.currentDistance * hit - 0.35);
-    }
-    const finalPos = new THREE.Vector3(
-      this.focus.x + backX * dist,
-      this.focus.y + baseHeight * (0.65 + 0.35 * (dist / this.currentDistance)),
-      this.focus.z + backZ * dist,
-    );
-
-    // Additive trauma shake (smooth, self-decaying, camera only).
-    this.trauma = Math.max(0, this.trauma - dt * 1.35);
-    this.shakeTime += dt * 26;
-    const shake = this.trauma * this.trauma;
-    const shakeX = Math.sin(this.shakeTime * 1.7) * 0.09 * shake;
-    const shakeY = Math.sin(this.shakeTime * 2.3 + 1.1) * 0.06 * shake;
-
-    if (force) {
-      this.camera.position.copy(finalPos);
-    } else {
-      this.camera.position.lerp(finalPos, 1 - Math.exp(-14 * dt));
-    }
-    this.camera.position.x += shakeX;
-    this.camera.position.y += shakeY;
-    this.camera.lookAt(this.focus.x + shakeX * 0.5, this.focus.y + 0.4, this.focus.z);
-    this.camera.rotation.z += Math.sin(this.shakeTime * 1.1) * 0.012 * shake;
-
-    // mild speed-based FOV, never enough to feel unstable
-    const targetFov = CAMERA.fov + clamp(Math.abs(speed) * 0.42, 0, 3.2);
-    this.camera.fov = damp(this.camera.fov, targetFov, 2.5, dt);
-    this.camera.updateProjectionMatrix();
-    void this.smooth;
-  }
-
-  /** Returns 0..1 fraction of the segment that is clear. */
-  private raycast(from: THREE.Vector3, to: THREE.Vector3, colliders: BoxLike[]): number {
-    if (colliders.length === 0) return 1;
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const dz = to.z - from.z;
-    let best = 1;
-    for (const c of colliders) {
-      if (c.height < 2.2) continue;
-      const t = rayAabb(from.x, from.y, from.z, dx, dy, dz, c.minX, c.maxX, 0, c.height, c.minZ, c.maxZ);
-      if (t >= 0 && t < best) best = t;
-    }
-    return best;
-  }
-}
-
-/** Slab test; returns entry t in 0..1 or -1. */
-function rayAabb(
-  ox: number,
-  oy: number,
-  oz: number,
-  dx: number,
-  dy: number,
-  dz: number,
-  minX: number,
-  maxX: number,
-  minY: number,
-  maxY: number,
-  minZ: number,
-  maxZ: number,
-): number {
-  let tmin = 0;
-  let tmax = 1;
-  const axes: [number, number, number, number][] = [
-    [ox, dx, minX, maxX],
-    [oy, dy, minY, maxY],
-    [oz, dz, minZ, maxZ],
-  ];
-  for (const [o, d, lo, hi] of axes) {
-    if (Math.abs(d) < 1e-6) {
-      if (o < lo || o > hi) return -1;
-    } else {
-      let t1 = (lo - o) / d;
-      let t2 = (hi - o) / d;
-      if (t1 > t2) {
-        const tmp = t1;
-        t1 = t2;
-        t2 = tmp;
+    let sideOffset = preset.sideOffset;
+    if (this.mode === 'side') {
+      if (this.sideSwitchCooldown <= 0) {
+        const testL = this.pointBlocked(
+          targetX - fx * preset.backDist + lx * preset.sideOffset,
+          groundY + preset.height,
+          targetZ - fz * preset.backDist + lz * preset.sideOffset,
+          colliders,
+          0.6,
+        );
+        const testR = this.pointBlocked(
+          targetX - fx * preset.backDist - lx * preset.sideOffset,
+          groundY + preset.height,
+          targetZ - fz * preset.backDist - lz * preset.sideOffset,
+          colliders,
+          0.6,
+        );
+        if (this.sideSign === 1 && testL && !testR) {
+          this.sideSign = -1;
+          this.sideSwitchCooldown = 1.6;
+        } else if (this.sideSign === -1 && testR && !testL) {
+          this.sideSign = 1;
+          this.sideSwitchCooldown = 1.6;
+        }
       }
-      tmin = Math.max(tmin, t1);
-      tmax = Math.min(tmax, t2);
-      if (tmin > tmax) return -1;
+      sideOffset = preset.sideOffset * this.sideSign;
+    }
+
+    const backDist = preset.backDist + preset.speedPullback * speedNorm * (this.reduceMotion ? 0.35 : 1);
+    const height = preset.height + (this.mode === 'wide' || this.mode === 'chase' ? speedNorm * 0.16 : 0);
+
+    if (this.mode === 'cockpit') {
+      // Lock cockpit cleanly to vehicle body orientation so handlebars stay rock-steady
+      const vfx = Math.sin(yaw);
+      const vfz = Math.cos(yaw);
+      const vlx = vfz;
+      const vlz = -vfx;
+      this.desiredPos.set(
+        targetX - vfx * preset.backDist,
+        groundY + preset.height,
+        targetZ - vfz * preset.backDist,
+      );
+      this.desiredLook.set(
+        targetX + vfx * preset.lookAhead + vlx * this.lookOffset * 0.4,
+        groundY + preset.lookHeight,
+        targetZ + vfz * preset.lookAhead + vlz * this.lookOffset * 0.4,
+      );
+      this.currentPos.lerp(this.desiredPos, 1 - Math.exp(-preset.posDamp * dt));
+      this.currentLook.lerp(this.desiredLook, 1 - Math.exp(-preset.posDamp * dt));
+    } else {
+      this.desiredPos.set(
+        targetX - fx * backDist + lx * sideOffset,
+        groundY + height,
+        targetZ - fz * backDist + lz * sideOffset,
+      );
+      this.anchorPos.set(targetX, groundY + 1.25, targetZ);
+      this.preventClipping(this.anchorPos, this.desiredPos, colliders, dynamicObstacles);
+      this.desiredPos.y = Math.max(groundY + 0.52, this.desiredPos.y);
+
+      const posAlpha = 1 - Math.exp(-preset.posDamp * dt);
+      this.currentPos.lerp(this.desiredPos, posAlpha);
+      this.currentPos.y = Math.max(groundY + 0.5, this.currentPos.y);
+
+      this.desiredLook.set(
+        targetX + fx * preset.lookAhead + lx * this.lookOffset * 0.85,
+        groundY + preset.lookHeight,
+        targetZ + fz * preset.lookAhead + lz * this.lookOffset * 0.85,
+      );
+      this.currentLook.lerp(this.desiredLook, 1 - Math.exp(-(preset.posDamp + 2.5) * dt));
+    }
+
+    // Dynamic FOV (NFS MW speed surge, calmed when Reduce Effects is enabled)
+    const fovTarget = preset.baseFov + (this.reduceMotion ? 0 : preset.speedFovBoost * speedNorm);
+    this.fov = damp(this.fov, fovTarget, 5.2, dt);
+    if (Math.abs(this.fov - this.appliedFov) > 0.04) {
+      this.camera.fov = this.fov;
+      this.appliedFov = this.fov;
+      this.camera.updateProjectionMatrix();
+    }
+
+    // Bounded camera shake
+    this.trauma = Math.max(0, this.trauma - dt * 1.65);
+    const shake = Math.min(0.11, this.trauma * this.trauma * 0.14);
+    const now = performance.now() * 0.018;
+    const sx = shake > 0.0005 ? (Math.sin(now * 2.3) + Math.cos(now * 3.7)) * shake : 0;
+    const sy = shake > 0.0005 ? Math.sin(now * 3.1) * shake * 0.65 : 0;
+
+    this.camera.position.set(this.currentPos.x + sx, this.currentPos.y + sy, this.currentPos.z);
+    this.lookMat.lookAt(this.camera.position, this.currentLook, this.upVec);
+    this.targetQuat.setFromRotationMatrix(this.lookMat);
+    const rotAlpha = this.mode === 'cockpit' ? 1 - Math.exp(-24 * dt) : 1 - Math.exp(-14 * dt);
+    this.currentQuat.slerp(this.targetQuat, rotAlpha);
+    this.camera.quaternion.copy(this.currentQuat);
+  }
+
+  private pointBlocked(x: number, y: number, z: number, colliders: BoxCollider[], pad: number): boolean {
+    for (let i = 0; i < colliders.length; i++) {
+      const c = colliders[i];
+      if (c.height < y - 0.15) continue;
+      if (x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Sweeps from the vehicle anchor to the desired camera position and pulls the
+   * camera in smoothly before any building wall, stall, or large bus/truck.
+   */
+  private preventClipping(
+    anchor: THREE.Vector3,
+    desired: THREE.Vector3,
+    colliders: BoxCollider[],
+    dynamicObstacles?: readonly CameraDynamicObstacle[],
+  ): void {
+    const pad = 0.46;
+    const samples = 16;
+    for (let i = 1; i <= samples; i++) {
+      const t = i / samples;
+      const px = anchor.x + (desired.x - anchor.x) * t;
+      const py = anchor.y + (desired.y - anchor.y) * t;
+      const pz = anchor.z + (desired.z - anchor.z) * t;
+
+      let hit = this.pointBlocked(px, py, pz, colliders, pad);
+      if (!hit && dynamicObstacles) {
+        for (let j = 0; j < dynamicObstacles.length; j++) {
+          const ob = dynamicObstacles[j];
+          // Only pull camera out of tall/large traffic vehicles (ignore self)
+          if (ob.radius < 1.15) continue;
+          const dx = px - ob.x;
+          const dz = pz - ob.z;
+          if (dx * dx + dz * dz < (ob.radius + 0.35) * (ob.radius + 0.35) && py < 2.65) {
+            hit = true;
+            break;
+          }
+        }
+      }
+
+      if (hit) {
+        const safe = Math.max(0.24, (i - 1) / samples);
+        desired.x = anchor.x + (desired.x - anchor.x) * safe;
+        desired.y = Math.max(anchor.y + 0.25, anchor.y + (desired.y - anchor.y) * safe + 0.22);
+        desired.z = anchor.z + (desired.z - anchor.z) * safe;
+        return;
+      }
     }
   }
-  return tmin;
 }

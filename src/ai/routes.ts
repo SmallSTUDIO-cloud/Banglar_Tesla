@@ -1,162 +1,198 @@
 /**
- * Traffic route graph. Routes are closed polylines built from road legs with
- * the correct **left-hand** lane offset for Bangladesh, with rounded corners.
+ * Connected left-hand-drive lane graph built directly from the Mohammadpur
+ * OpenStreetMap street segments in `src/world/layout.ts`.
+ *
+ * Unlike static closed loops, NPC vehicles traverse individual directed street
+ * lanes (`LaneEdge`) and dynamically pick outgoing lanes at every Mohammadpur
+ * junction (with smooth quadratic Bezier turn arcs at corners and clean U-turn
+ * bulbs at genuine cul-de-sac dead ends).
  */
 
-import * as THREE from 'three';
-import { clamp } from '../core/mathx';
+import { GRAPH_NODES, ROAD_SEGMENTS, nodeById, type RoadSegment } from '../world/layout';
 
-export interface Leg {
-  axis: 'x' | 'z';
-  /** +1 travels toward +axis, -1 toward -axis. */
-  dir: 1 | -1;
-  /** Centre line of the road on the perpendicular axis. */
-  center: number;
-  width: number;
-  from: number;
-  to: number;
-}
-
-export interface Route {
-  id: string;
-  points: THREE.Vector3[];
-  /** Cumulative arc length at each point (last entry = total length). */
-  arc: number[];
-  length: number;
-  speedFactor: number;
-}
-
-function laneValue(leg: Leg): number {
-  const offset = clamp(leg.width * 0.24, 1.0, 2.25);
-  if (leg.axis === 'x') {
-    // travelling along X: left of +X is -Z, left of -X is +Z
-    return leg.center - leg.dir * offset;
-  }
-  // travelling along Z: left of +Z is +X, left of -Z is -X
-  return leg.center + leg.dir * offset;
-}
-
-function pointAt(leg: Leg, t: number): THREE.Vector3 {
-  const along = leg.from + (leg.to - leg.from) * t;
-  const lateral = laneValue(leg);
-  return leg.axis === 'x' ? new THREE.Vector3(along, 0, lateral) : new THREE.Vector3(lateral, 0, along);
-}
-
-/** Build a closed route from legs, rounding each corner with a quadratic curve. */
-export function buildRoute(id: string, legs: Leg[], cornerSteps = 5, speedFactor = 1): Route {
-  const points: THREE.Vector3[] = [];
-  for (let i = 0; i < legs.length; i++) {
-    const leg = legs[i];
-    const next = legs[(i + 1) % legs.length];
-    const a = pointAt(leg, 0);
-    const b = pointAt(leg, 1);
-    // corner control point: intersection of the two lane lines
-    const corner = new THREE.Vector3(
-      leg.axis === 'x' ? laneValue(next) : laneValue(leg),
-      0,
-      leg.axis === 'x' ? laneValue(leg) : laneValue(next),
-    );
-    if (i === 0) points.push(a);
-    const p0 = b.clone().lerp(corner, 0.35);
-    points.push(p0);
-    for (let s = 1; s <= cornerSteps; s++) {
-      const t = s / (cornerSteps + 1);
-      const p = new THREE.Vector3()
-        .copy(p0)
-        .multiplyScalar((1 - t) * (1 - t))
-        .addScaledVector(corner, 2 * (1 - t) * t)
-        .addScaledVector(b.clone().lerp(corner, 0.2), t * t);
-      points.push(p);
-    }
-    const c0 = b.clone().lerp(corner, 0.2);
-    const n0 = pointAt(next, 0);
-    for (let s = 1; s <= cornerSteps; s++) {
-      const t = s / (cornerSteps + 1);
-      const p = new THREE.Vector3()
-        .copy(c0)
-        .multiplyScalar((1 - t) * (1 - t))
-        .addScaledVector(corner, 2 * (1 - t) * t)
-        .addScaledVector(n0, t * t);
-      points.push(p);
-    }
-  }
-  // de-duplicate near-identical points
-  const cleaned: THREE.Vector3[] = [];
-  for (const p of points) {
-    const last = cleaned[cleaned.length - 1];
-    if (!last || last.distanceTo(p) > 0.35) cleaned.push(p);
-  }
-  if (cleaned.length > 2 && cleaned[0].distanceTo(cleaned[cleaned.length - 1]) < 0.6) cleaned.pop();
-
-  const arc: number[] = [0];
-  for (let i = 1; i < cleaned.length; i++) arc.push(arc[i - 1] + cleaned[i].distanceTo(cleaned[i - 1]));
-  const closedLength = arc[arc.length - 1] + cleaned[0].distanceTo(cleaned[cleaned.length - 1]);
-  arc.push(closedLength);
-  return { id, points: cleaned, arc, length: closedLength, speedFactor };
-}
-
-export interface RouteSample {
+export interface LanePoint {
   x: number;
   z: number;
   yaw: number;
 }
 
-/** Sample a route by arc length (wrapping). */
-export function sampleRoute(route: Route, distance: number, out: RouteSample): RouteSample {
-  const len = route.length;
-  let d = distance % len;
-  if (d < 0) d += len;
-  let lo = 0;
-  let hi = route.points.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (route.arc[mid] <= d) lo = mid + 1;
-    else hi = mid;
+export interface LaneEdge {
+  id: string;
+  segmentId: string;
+  fromNode: string;
+  toNode: string;
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  ux: number;
+  uz: number;
+  yaw: number;
+  length: number;
+  halfRoadWidth: number;
+  kind: RoadSegment['kind'];
+  jamProne: boolean;
+  /** Outgoing lane IDs reachable from `toNode`. */
+  nextLaneIds: string[];
+  /** True if `toNode` is a signalised intersection. */
+  toSignal: boolean;
+  signalNodeId: string | null;
+}
+
+export interface LaneGraph {
+  lanes: LaneEdge[];
+  byId: Map<string, LaneEdge>;
+  bySegment: Map<string, LaneEdge[]>;
+}
+
+let cachedGraph: LaneGraph | null = null;
+
+export function getLaneGraph(): LaneGraph {
+  if (cachedGraph) return cachedGraph;
+
+  const lanes: LaneEdge[] = [];
+  const byId = new Map<string, LaneEdge>();
+  const bySegment = new Map<string, LaneEdge[]>();
+  const outgoingFromNode = new Map<string, LaneEdge[]>();
+
+  for (const n of GRAPH_NODES) {
+    outgoingFromNode.set(n.id, []);
   }
-  const idx = Math.max(0, lo - 1);
-  const p0 = route.points[idx % route.points.length];
-  const p1 = route.points[(idx + 1) % route.points.length];
-  const segLen = Math.max(0.0001, route.arc[idx + 1] - route.arc[idx]);
-  const t = clamp((d - route.arc[idx]) / segLen, 0, 1);
-  out.x = p0.x + (p1.x - p0.x) * t;
-  out.z = p0.z + (p1.z - p0.z) * t;
-  out.yaw = Math.atan2(p1.x - p0.x, p1.z - p0.z);
+
+  for (const seg of ROAD_SEGMENTS) {
+    // Bangladesh left-hand traffic offset from road centreline
+    const laneOffset =
+      seg.kind === 'main' ? seg.halfWidth * 0.46 : seg.kind === 'medium' ? seg.halfWidth * 0.44 : seg.halfWidth * 0.38;
+
+    const dirs: { suffix: string; from: string; to: string; sign: 1 | -1 }[] = [
+      { suffix: 'fwd', from: seg.from, to: seg.to, sign: 1 },
+      { suffix: 'rev', from: seg.to, to: seg.from, sign: -1 },
+    ];
+
+    for (const d of dirs) {
+      const nFrom = nodeById(d.from)!;
+      const nTo = nodeById(d.to)!;
+      const ux = seg.ux * d.sign;
+      const uz = seg.uz * d.sign;
+      // Left-hand vector for direction (ux, uz) is (uz, -ux)
+      const lx = uz;
+      const lz = -ux;
+
+      const ax = nFrom.x + lx * laneOffset;
+      const az = nFrom.z + lz * laneOffset;
+      const bx = nTo.x + lx * laneOffset;
+      const bz = nTo.z + lz * laneOffset;
+      const length = Math.max(1, Math.hypot(bx - ax, bz - az));
+
+      const edge: LaneEdge = {
+        id: `${seg.id}:${d.suffix}`,
+        segmentId: seg.id,
+        fromNode: d.from,
+        toNode: d.to,
+        ax,
+        az,
+        bx,
+        bz,
+        ux: (bx - ax) / length,
+        uz: (bz - az) / length,
+        yaw: Math.atan2(bx - ax, bz - az),
+        length,
+        halfRoadWidth: seg.halfWidth,
+        kind: seg.kind,
+        jamProne: seg.jamProne,
+        nextLaneIds: [],
+        toSignal: nTo.signal,
+        signalNodeId: nTo.signal ? nTo.id : null,
+      };
+
+      lanes.push(edge);
+      byId.set(edge.id, edge);
+      outgoingFromNode.get(d.from)!.push(edge);
+      if (!bySegment.has(seg.id)) bySegment.set(seg.id, []);
+      bySegment.get(seg.id)!.push(edge);
+    }
+  }
+
+  // Link outgoing lanes at every node (preferring non-U-turn continuations unless at a cul-de-sac!)
+  for (const lane of lanes) {
+    const candidates = outgoingFromNode.get(lane.toNode) ?? [];
+    const nonUTurn = candidates.filter((c) => c.toNode !== lane.fromNode);
+    lane.nextLaneIds = (nonUTurn.length > 0 ? nonUTurn : candidates).map((c) => c.id);
+  }
+
+  cachedGraph = { lanes, byId, bySegment };
+  return cachedGraph;
+}
+
+/** Sample world `(x, z, yaw)` along a directed `LaneEdge` at distance `s` in `[0, length]`. */
+export function sampleLane(lane: LaneEdge, s: number, lateralNudge: number, out: LanePoint): LanePoint {
+  const lx = lane.uz;
+  const lz = -lane.ux;
+  out.x = lane.ax + lane.ux * s + lx * lateralNudge;
+  out.z = lane.az + lane.uz * s + lz * lateralNudge;
+  out.yaw = lane.yaw;
   return out;
 }
 
-/** Build the three traffic loops used by the neighbourhood. */
-export function buildTrafficRoutes(): Route[] {
-  const main = { width: 9.2 };
-  const northLane = { center: -55, width: 5.2 };
-  const southLane = { center: 55, width: 5.2 };
-  const eastLane = { center: 52, width: 5.0 };
-  const westLane = { center: -52, width: 5.0 };
-  const cross = { center: 0, width: 7.4 };
+export interface TrafficRouteLoop {
+  id: string;
+  points: { x: number; z: number }[];
+  length: number;
+}
 
-  const outer: Leg[] = [
-    { axis: 'z', dir: -1, center: 0, width: main.width, from: 50, to: -50 },
-    { axis: 'x', dir: 1, center: northLane.center, width: northLane.width, from: -2.2, to: eastLane.center },
-    { axis: 'z', dir: 1, center: eastLane.center, width: eastLane.width, from: -56, to: 56 },
-    { axis: 'x', dir: -1, center: southLane.center, width: southLane.width, from: eastLane.center, to: -2.2 },
-  ];
+/** Build deterministic closed left-hand route loops across Mohammadpur for route tests. */
+export function buildTrafficRoutes(): TrafficRouteLoop[] {
+  const graph = getLaneGraph();
+  const seeds = [0, Math.floor(graph.lanes.length / 3), Math.floor((graph.lanes.length * 2) / 3)];
+  return seeds.map((startIdx, idx) => {
+    const pts: { x: number; z: number }[] = [];
+    let cur = graph.lanes[startIdx % graph.lanes.length];
+    let length = 0;
+    for (let step = 0; step < 12; step++) {
+      pts.push({ x: cur.ax, z: cur.az });
+      length += cur.length;
+      const nextId = cur.nextLaneIds[step % Math.max(1, cur.nextLaneIds.length)];
+      cur = (nextId ? graph.byId.get(nextId) : undefined) ?? cur;
+    }
+    pts.push({ ...pts[0] });
+    return { id: `loop-${idx}`, points: pts, length };
+  });
+}
 
-  const westLoop: Leg[] = [
-    { axis: 'z', dir: -1, center: 0, width: main.width, from: 54, to: -46 },
-    { axis: 'x', dir: -1, center: cross.center, width: cross.width, from: -2.2, to: westLane.center },
-    { axis: 'z', dir: 1, center: westLane.center, width: westLane.width, from: 1.8, to: 54 },
-    { axis: 'x', dir: 1, center: southLane.center, width: southLane.width, from: westLane.center, to: -2.2 },
-  ];
-
-  const eastLoop: Leg[] = [
-    { axis: 'z', dir: 1, center: 0, width: main.width, from: -46, to: 50 },
-    { axis: 'x', dir: 1, center: cross.center, width: cross.width, from: 2.2, to: eastLane.center },
-    { axis: 'z', dir: -1, center: eastLane.center, width: eastLane.width, from: 1.8, to: -50 },
-    { axis: 'x', dir: -1, center: northLane.center, width: northLane.width, from: eastLane.center, to: 2.2 },
-  ];
-
-  return [
-    buildRoute('outer', outer, 5, 1),
-    buildRoute('west', westLoop, 5, 0.92),
-    buildRoute('east', eastLoop, 5, 0.96),
-  ];
+export function sampleRoute(route: TrafficRouteLoop, dist: number, out: LanePoint): LanePoint {
+  const pts = route.points;
+  if (pts.length < 2) {
+    out.x = pts[0]?.x ?? 0;
+    out.z = pts[0]?.z ?? 0;
+    out.yaw = 0;
+    return out;
+  }
+  let total = 0;
+  const segLens: number[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const l = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
+    segLens.push(l);
+    total += l;
+  }
+  if (total <= 1e-5) {
+    out.x = pts[0].x;
+    out.z = pts[0].z;
+    out.yaw = 0;
+    return out;
+  }
+  let d = ((dist % total) + total) % total;
+  for (let i = 0; i < segLens.length; i++) {
+    const l = segLens[i];
+    if (d <= l || i === segLens.length - 1) {
+      const t = l > 1e-5 ? d / l : 0;
+      const dx = pts[i + 1].x - pts[i].x;
+      const dz = pts[i + 1].z - pts[i].z;
+      out.x = pts[i].x + dx * t;
+      out.z = pts[i].z + dz * t;
+      out.yaw = Math.atan2(dx, dz);
+      return out;
+    }
+    d -= l;
+  }
+  return out;
 }

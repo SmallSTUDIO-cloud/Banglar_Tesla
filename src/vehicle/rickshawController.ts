@@ -2,8 +2,14 @@
  * Arcade-simulation rickshaw controller. Deliberately engine-free (no three.js)
  * so the whole driving model can be unit-tested in node.
  *
- * Feel targets: slow build-up, weighty coasting, strong low-speed steering,
- * stable high-speed behaviour, forgiving collisions, no random rollovers.
+ * Coordinate convention (Three.js right-handed world, +Y up):
+ *   - Vehicle faces local +Z -> world forward = (sin(yaw), 0, cos(yaw))
+ *   - Vehicle right side      = forward x up  = (-cos(yaw), 0, sin(yaw))
+ *   - Vehicle left side       = up x forward  = ( cos(yaw), 0, -sin(yaw))
+ *   - Input steer: -1 = LEFT, +1 = RIGHT
+ *   - Because d(forward)/d(yaw) = (cos(yaw), 0, -sin(yaw)) = LEFT,
+ *     steering RIGHT (steer > 0, speed > 0) decreases yaw (yawRate < 0),
+ *     and steering LEFT (steer < 0, speed > 0) increases yaw (yawRate > 0).
  */
 
 import { RIDE } from '../core/config';
@@ -30,7 +36,14 @@ export interface DriveTuning {
   brakeDecel: number;
   steerMaxLow: number;
   steerMaxHigh: number;
+  steerRateMultiplier?: number;
   grip: number;
+  roughSurfaceKeep?: number;
+  rollingDragScale?: number;
+  isElectric?: boolean;
+  batteryDrainMultiplier?: number;
+  regenFactor?: number;
+  suspensionSmoothing?: number;
 }
 
 export interface StepEvents {
@@ -42,6 +55,7 @@ export interface StepEvents {
   /** True when the wheels are on a raised footpath. */
   onSidewalk: boolean;
   stuck: boolean;
+  roughBump: number;
 }
 
 export type SurfaceSampler = (x: number, z: number) => 'road' | 'sidewalk' | 'offroad';
@@ -52,8 +66,10 @@ export class RickshawController {
   z = 0;
   yaw = 0;
   speed = 0;
+  /** Signed front-wheel steer angle in rad: < 0 = LEFT, > 0 = RIGHT. */
   steerAngle = 0;
   y = 0;
+  /** Local pitch for Three.js YXZ Euler (< 0 = nose up, > 0 = nose down). */
   pitch = 0;
   roll = 0;
   lateralAccel = 0;
@@ -64,6 +80,8 @@ export class RickshawController {
   reverseTimer = 0;
   stuckTimer = 0;
   stuck = false;
+  /** Battery charge 0..100 for Electric Rickshaw (100 on pedal rickshaws). */
+  battery = 100;
   private stuckWindow = 0;
   private stuckTravelled = 0;
   lastImpact = 0;
@@ -74,13 +92,23 @@ export class RickshawController {
   hardBrakes = 0;
 
   private prevSpeed = 0;
+  private prevFrontHeight = 0;
+  private stuckAnchorX = 0;
+  private stuckAnchorZ = 0;
   private tuning: DriveTuning = {
     maxSpeed: RIDE.maxSpeed,
     accel: RIDE.accel,
     brakeDecel: RIDE.brakeDecel,
     steerMaxLow: RIDE.maxSteerLow,
     steerMaxHigh: RIDE.maxSteerHigh,
+    steerRateMultiplier: 1,
     grip: 0.7,
+    roughSurfaceKeep: 0.78,
+    rollingDragScale: 1,
+    isElectric: false,
+    batteryDrainMultiplier: 1,
+    regenFactor: 0,
+    suspensionSmoothing: 0,
   };
 
   constructor(
@@ -97,23 +125,52 @@ export class RickshawController {
     this.colliders = colliders;
   }
 
+  rechargeBattery(amount = 100): void {
+    this.battery = clamp(this.battery + amount, 0, 100);
+  }
+
   reset(x: number, z: number, yaw: number): void {
     this.x = x;
     this.z = z;
-    this.yaw = yaw;
+    this.yaw = ((yaw % TAU) + TAU) % TAU;
     this.speed = 0;
     this.steerAngle = 0;
-    this.y = this.heightAt(x, z);
+    const fx = Math.sin(this.yaw);
+    const fz = Math.cos(this.yaw);
+    const front = this.heightAt(x + fx * RIDE.frontAxleZ, z + fz * RIDE.frontAxleZ);
+    const rear = this.heightAt(x + fx * RIDE.rearAxleZ, z + fz * RIDE.rearAxleZ);
+    this.frontHeight = front;
+    this.rearHeight = rear;
+    this.prevFrontHeight = front;
+    const rearWeight = -RIDE.rearAxleZ / RIDE.wheelbase;
+    this.y = rear + (front - rear) * rearWeight;
+    this.pitch = -Math.atan2(front - rear, RIDE.wheelbase);
+    this.roll = 0;
     this.hits = 0;
     this.hardBrakes = 0;
     this.distanceDriven = 0;
     this.stuck = false;
     this.stuckTimer = 0;
+    this.stuckWindow = 0;
+    this.stuckTravelled = 0;
+    this.stuckAnchorX = x;
+    this.stuckAnchorZ = z;
     this.reverseTimer = 0;
+    this.battery = 100;
   }
 
   get forward(): { x: number; z: number } {
     return { x: Math.sin(this.yaw), z: Math.cos(this.yaw) };
+  }
+
+  /** Unit vector pointing to the driver's RIGHT side in world XZ. */
+  get right(): { x: number; z: number } {
+    return { x: -Math.cos(this.yaw), z: Math.sin(this.yaw) };
+  }
+
+  /** Unit vector pointing to the driver's LEFT side in world XZ. */
+  get left(): { x: number; z: number } {
+    return { x: Math.cos(this.yaw), z: -Math.sin(this.yaw) };
   }
 
   /** One fixed physics step. `dt` should be a stable value (1/60). */
@@ -121,17 +178,25 @@ export class RickshawController {
     const t = this.tuning;
     const surface = this.surfaceAt(this.x, this.z);
     this.onSidewalk = surface === 'sidewalk';
-    const surfacePenalty = surface === 'road' ? 1 : surface === 'sidewalk' ? 0.78 : 0.62;
-    const maxSpeed = t.maxSpeed * surfacePenalty;
+    const roughKeep = t.roughSurfaceKeep ?? 0.78;
+    const surfacePenalty =
+      surface === 'road' ? 1 : surface === 'sidewalk' ? roughKeep : Math.max(0.58, roughKeep - 0.14);
+
+    // Electric rickshaw enters gentle eco-limp only if battery reaches 0;
+    // Efficiency upgrade dramatically extends charge + adds regenerative braking.
+    const batteryScale = t.isElectric ? (this.battery > 8 ? 1 : 0.68 + 0.32 * (this.battery / 8)) : 1;
+    const maxSpeed = t.maxSpeed * surfacePenalty * batteryScale;
 
     // ------------------------------------------------------------- steering
+    // steer < 0 = LEFT, steer > 0 = RIGHT (works when stationary too for fork visual).
     const speedFactor = clamp01(Math.abs(this.speed) / Math.max(0.1, t.maxSpeed));
     const steerMax = lerp(t.steerMaxLow, t.steerMaxHigh, speedFactor);
-    const rawSteer = Math.abs(input.steer) < deadzone ? 0 : input.steer;
-    const eased = Math.sign(rawSteer) * Math.pow(clamp01(Math.abs(rawSteer)), 1.25);
-    const target = eased * steerMax * clamp(steeringSensitivity, 0.4, 1.6);
-    const rate = Math.abs(target) < 0.01 ? RIDE.steerReturn : RIDE.steerRate;
-    this.steerAngle = moveTowards(this.steerAngle, target, rate * dt * steerMax * 3.4);
+    const rawSteer = Math.abs(input.steer) < deadzone ? 0 : clamp(input.steer, -1, 1);
+    const eased = Math.sign(rawSteer) * Math.pow(clamp01(Math.abs(rawSteer)), 1.2);
+    const target = clamp(eased * steerMax * clamp(steeringSensitivity, 0.4, 1.6), -steerMax * 1.15, steerMax * 1.15);
+    const rateMul = t.steerRateMultiplier ?? 1;
+    const rate = (Math.abs(target) < 0.01 ? RIDE.steerReturn : RIDE.steerRate) * rateMul;
+    this.steerAngle = moveTowards(this.steerAngle, target, rate * dt * steerMax * 3.5);
 
     // -------------------------------------------------------- longitudinal
     const throttle = clamp01(input.throttle);
@@ -140,15 +205,19 @@ export class RickshawController {
     if (brake > 0.02) {
       if (this.speed > 0.02) {
         const before = this.speed;
-        this.speed = Math.max(0, this.speed - t.brakeDecel * brake * dt);
-        if (this.speed < 0.06) this.speed = 0;
+        const decel = (input.handbrake ? Math.max(t.brakeDecel, RIDE.handbrakeDecel) : t.brakeDecel) * brake * dt;
+        this.speed = Math.max(0, this.speed - decel);
+        if (t.isElectric && (t.regenFactor ?? 0) > 0) {
+          this.battery = clamp(this.battery + (before - this.speed) * (t.regenFactor ?? 0) * 0.45, 0, 100);
+        }
+        if (this.speed < 0.05) this.speed = 0;
         if (before > 3.4 && this.speed < before - 2.4) this.hardBrakes++;
         this.reverseTimer = 0;
       } else if (throttle < 0.05) {
         // deliberate reverse: hold the brake while stopped
         this.reverseTimer += dt;
         if (this.reverseTimer > RIDE.reverseHold) {
-          this.speed = Math.max(-RIDE.maxReverse, this.speed - t.accel * 0.5 * dt);
+          this.speed = Math.max(-RIDE.maxReverse, this.speed - t.accel * 0.55 * dt);
         }
       }
     } else {
@@ -156,69 +225,99 @@ export class RickshawController {
     }
 
     if (throttle > 0.02 && this.speed >= -0.02) {
-      const falloff = 1 - clamp01(this.speed / Math.max(0.1, maxSpeed)) * RIDE.accelFalloff;
-      this.speed += t.accel * throttle * Math.max(0.06, falloff) * dt;
+      const falloffCurve = t.isElectric ? RIDE.accelFalloff * 0.72 : RIDE.accelFalloff;
+      const falloff = 1 - clamp01(this.speed / Math.max(0.1, maxSpeed)) * falloffCurve;
+      this.speed += t.accel * batteryScale * throttle * Math.max(0.08, falloff) * dt;
+      if (t.isElectric) {
+        const drain = (0.36 + 0.28 * speedFactor) * throttle * (t.batteryDrainMultiplier ?? 1) * dt;
+        this.battery = clamp(this.battery - drain, 0, 100);
+      }
     } else if (throttle > 0.02 && this.speed < -0.02) {
-      // pedalling while rolling backwards brakes gently first
-      this.speed = Math.min(0, this.speed + t.brakeDecel * 0.7 * dt);
+      // pedalling/throttling while rolling backwards brakes smoothly first
+      this.speed = Math.min(0, this.speed + t.brakeDecel * 0.75 * dt);
+    } else if (t.isElectric && Math.abs(this.speed) < 0.15) {
+      // Gentle trickle recovery when parked at stands
+      this.battery = clamp(this.battery + 0.22 * dt, 0, 100);
     }
 
-    // coasting drag
+    // coasting drag (improved by bearings + efficiency upgrades)
     if (throttle < 0.02 && brake < 0.02) {
-      const drag = (RIDE.coastDrag + RIDE.rollingDrag * Math.abs(this.speed)) * dt;
+      const dragScale = t.rollingDragScale ?? 1;
+      const drag = (RIDE.coastDrag + RIDE.rollingDrag * Math.abs(this.speed)) * dragScale * dt;
       this.speed = Math.abs(this.speed) <= drag ? 0 : this.speed - Math.sign(this.speed) * drag;
     }
     this.speed = clamp(this.speed, -RIDE.maxReverse, Math.max(maxSpeed, 0.5));
 
     // --------------------------------------------------------------- yaw
-    // Bicycle model: reversing speed flips the turn direction naturally.
-    const yawRate = (this.speed / RIDE.wheelbase) * Math.tan(this.steerAngle) * (0.72 + 0.32 * t.grip);
-    const clampedYawRate = clamp(yawRate, -2.6, 2.6);
+    // Three.js right-handed world (+Y up):
+    //   steerAngle > 0 (RIGHT) with speed > 0 -> yawRate < 0 (turns toward right = forward x up).
+    //   steerAngle < 0 (LEFT)  with speed > 0 -> yawRate > 0 (turns toward left  = up x forward).
+    //   Reversing (speed < 0) naturally flips yawRate sign so backing up swings the rear into the steered side.
+    const gripFactor = 0.72 + 0.34 * t.grip;
+    const yawRate = -(this.speed / RIDE.wheelbase) * Math.tan(this.steerAngle) * gripFactor;
+    const clampedYawRate = clamp(yawRate, -2.65, 2.65);
     this.yaw = (this.yaw + clampedYawRate * dt) % TAU;
     if (this.yaw < 0) this.yaw += TAU;
 
-    const latAccel = this.speed * clampedYawRate;
+    // Positive lateralAccel = turning right, negative = turning left.
+    const latAccel = this.speed * -clampedYawRate;
     this.lateralAccel = latAccel;
 
     // ---------------------------------------------------------- integrate
+    const prevX = this.x;
+    const prevZ = this.z;
     const fx = Math.sin(this.yaw);
     const fz = Math.cos(this.yaw);
     const stepDist = this.speed * dt;
     this.x += fx * stepDist;
     this.z += fz * stepDist;
-    this.distanceDriven += Math.abs(stepDist);
 
     // --------------------------------------------------------- collisions
     const impact = this.resolveCollisions();
+    const netMoved = Math.hypot(this.x - prevX, this.z - prevZ);
+    this.distanceDriven += netMoved;
     this.lastImpact = impact.magnitude;
     if (impact.magnitude > 0.4) this.hits++;
 
     // ------------------------------------------------------------ ground
-    const front = this.heightAt(this.x + fx * 0.8, this.z + fz * 0.8);
-    const rear = this.heightAt(this.x - fx * 0.8, this.z - fz * 0.8);
+    // Sample ground at exact front (+0.80m) and rear (-0.68m) wheel contact points.
+    const front = this.heightAt(this.x + fx * RIDE.frontAxleZ, this.z + fz * RIDE.frontAxleZ);
+    const rear = this.heightAt(this.x + fx * RIDE.rearAxleZ, this.z + fz * RIDE.rearAxleZ);
+    const roughBump = Math.abs(front - this.prevFrontHeight) * Math.abs(this.speed);
+    this.prevFrontHeight = front;
     this.frontHeight = front;
     this.rearHeight = rear;
-    const targetY = (front + rear) / 2;
-    this.y += (targetY - this.y) * clamp01(dt * 14);
-    const targetPitch = Math.atan2(front - rear, 1.6);
-    this.pitch += (targetPitch - this.pitch) * clamp01(dt * 9);
-    const targetRoll = clamp(-latAccel * 0.016, -0.075, 0.075) + (surface === 'sidewalk' ? Math.sin(this.distanceDriven * 9) * 0.004 : 0);
-    this.roll += (targetRoll - this.roll) * clamp01(dt * 8);
+
+    const rearWeight = -RIDE.rearAxleZ / RIDE.wheelbase; // 0.68 / 1.48
+    const targetY = rear + (front - rear) * rearWeight;
+    this.y += (targetY - this.y) * clamp01(dt * 22);
+
+    const suspDamp = 1 - clamp01((t.suspensionSmoothing ?? 0) * 0.35);
+    // In Three.js YXZ Euler, negative pitch lifts +Z (front wheel) up onto slopes/humps.
+    const targetPitch = -Math.atan2(front - rear, RIDE.wheelbase);
+    this.pitch += (targetPitch - this.pitch) * clamp01(dt * 14);
+
+    // Centrifugal body lean: turning right (latAccel > 0) rolls slightly outward (-Z roll)
+    const targetRoll =
+      clamp(-latAccel * 0.014 * suspDamp, -0.068, 0.068) +
+      (surface === 'sidewalk' ? Math.sin(this.distanceDriven * 9) * 0.0035 * suspDamp : 0);
+    this.roll += (targetRoll - this.roll) * clamp01(dt * 9);
 
     this.acceleration = (this.speed - this.prevSpeed) / Math.max(dt, 0.0001);
     this.prevSpeed = this.speed;
 
     // --------------------------------------------------------- stuck check
-    // Speed alone is not enough: a rickshaw can be pinned against a wall with
-    // the wheels spinning. Track how far we actually travelled instead.
     this.stuckWindow += dt;
-    this.stuckTravelled += Math.abs(stepDist);
+    this.stuckTravelled += netMoved;
     if (this.stuckWindow >= 0.5) {
-      const movedPerSecond = this.stuckTravelled / this.stuckWindow;
+      const netWindowDist = Math.hypot(this.x - this.stuckAnchorX, this.z - this.stuckAnchorZ);
+      const movedPerSecond = netWindowDist / this.stuckWindow;
       if (throttle > 0.4 && movedPerSecond < 0.35) this.stuckTimer += this.stuckWindow;
       else this.stuckTimer = Math.max(0, this.stuckTimer - this.stuckWindow * 1.6);
       this.stuckWindow = 0;
       this.stuckTravelled = 0;
+      this.stuckAnchorX = this.x;
+      this.stuckAnchorZ = this.z;
     }
     this.stuck = this.stuckTimer > 2.2;
 
@@ -226,9 +325,10 @@ export class RickshawController {
       impact: impact.magnitude,
       impactX: impact.nx,
       impactZ: impact.nz,
-      distance: Math.abs(stepDist),
+      distance: netMoved,
       onSidewalk: this.onSidewalk,
       stuck: this.stuck,
+      roughBump,
     };
   }
 
@@ -248,7 +348,6 @@ export class RickshawController {
         let dist = Math.hypot(dx, dz);
         if (dist >= radius) continue;
         if (dist < 0.0001) {
-          // deep inside: push out along the shallowest axis
           const toMinX = this.x - c.minX;
           const toMaxX = c.maxX - this.x;
           const toMinZ = this.z - c.minZ;

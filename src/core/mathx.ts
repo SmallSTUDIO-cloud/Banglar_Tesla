@@ -43,6 +43,8 @@ export function shortAngle(from: number, to: number): number {
   return d;
 }
 
+export const angleDelta = shortAngle;
+
 export function moveTowards(current: number, target: number, maxDelta: number): number {
   const d = target - current;
   if (Math.abs(d) <= maxDelta) return target;

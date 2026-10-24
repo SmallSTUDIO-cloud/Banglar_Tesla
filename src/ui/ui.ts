@@ -6,7 +6,7 @@
 
 import { t, getLocale, setLocale, STRING_KEYS, type Locale } from '../core/i18n';
 import { formatDistance, formatTaka, clamp, clamp01 } from '../core/mathx';
-import { QUALITY, type QualityPreset } from '../core/config';
+import { QUALITY, type CameraMode, type QualityPreset } from '../core/config';
 import type { Settings, SettingsStore } from '../core/settings';
 import type { GameState } from '../core/gameState';
 import type { InputManager } from '../core/input';
@@ -23,7 +23,7 @@ import {
   vehicleById,
   type CosmeticCategory,
 } from '../economy/catalog';
-import { ROADS, PLACES } from '../world/layout';
+import { ROADS, PLACES, segmentById } from '../world/layout';
 import { h, button, slider, toggle, segmented, sheet, modal, statBar, clear } from './dom';
 import { ICONS } from './icons';
 import type { MissionOffer } from '../missions/mission';
@@ -43,6 +43,12 @@ export interface HudState {
   markerX: number | null;
   markerY: number | null;
   markerLabel: string | null;
+  cameraMode?: CameraMode;
+  isElectric?: boolean;
+  battery?: number;
+  routePoints?: { x: number; z: number }[] | null;
+  jammedSegments?: string[];
+  detourActive?: boolean;
 }
 
 export interface UIBridge {
@@ -59,10 +65,11 @@ export interface UIBridge {
   openGarage(from: 'menu' | 'pause' | 'result'): void;
   closeGarage(): void;
   openShowroomFromMenu?(): void;
+  previewVehicleInShowroom?(vehicleId: string): void;
   setShowroomVisible(visible: boolean): void;
   rotateShowroom(dx: number): void;
   setTrack(track: 'cassette' | 'radio' | 'brishti'): void;
-  setCameraMode(mode: 'chase' | 'close'): void;
+  setCameraMode(mode: CameraMode): void;
   toggleCamera(): void;
   applySettings(): void;
   dailyAvailable(): boolean;
@@ -160,8 +167,7 @@ export class AppUI {
         this.closeGarage();
         return true;
       case 'store':
-        this.show('menu');
-        this.bridge.setShowroomVisible(false);
+        this.closeStore();
         return true;
       case 'credits':
         this.show('menu');
@@ -277,14 +283,14 @@ export class AppUI {
     });
 
     const secondary = h('div', { class: 'menu-secondary' },
-      button(t('common.garage'), { variant: 'ghost', onClick: () => this.openGarage('menu') }),
-      button(t('common.store'), { variant: 'ghost', onClick: () => this.openStore() }),
-      button(t('common.settings'), { variant: 'ghost', onClick: () => this.openSettings(() => this.show('menu')) }),
-      button(t('common.credits'), { variant: 'ghost', onClick: () => this.openCredits() }),
+      button(t('common.garage'), { variant: 'ghost', attrs: { 'data-action': 'open-garage' }, onClick: () => this.openGarage('menu') }),
+      button(t('common.store'), { variant: 'ghost', attrs: { 'data-action': 'open-store' }, onClick: () => this.openStore() }),
+      button(t('common.settings'), { variant: 'ghost', attrs: { 'data-action': 'open-settings' }, onClick: () => this.openSettings(() => this.show('menu')) }),
+      button(t('common.credits'), { variant: 'ghost', attrs: { 'data-action': 'open-credits' }, onClick: () => this.openCredits() }),
     );
 
     const meta = h('div', { class: 'menu-meta' },
-      h('span', { text: `v0.1.0` }),
+      h('span', { text: `v0.2.0` }),
       h('span', { text: '·' }),
       h('span', { text: t('menu.district') }),
       h('span', { text: '·' }),
@@ -343,8 +349,19 @@ export class AppUI {
     const objective = h('div', { class: 'objective' }, objectiveLabel, objectiveTitle, objectiveSub, obMeter);
 
     const wallet = h('div', { class: 'wallet' }, h('span', { class: 'menu-money-icon', html: ICONS.coin }), h('span', { text: formatTaka(this.state.balance) }));
-    const pauseBtn = h('button', { class: 'icon-btn', attrs: { type: 'button', 'aria-label': 'pause' }, html: ICONS.pause, on: { click: () => this.bridge.pauseGame() } });
-    const camBtn = h('button', { class: 'icon-btn', attrs: { type: 'button', 'aria-label': 'camera' }, html: ICONS.camera, on: { click: () => this.bridge.toggleCamera() } });
+    const batteryPill = h('div', { class: 'battery-pill hidden', attrs: { id: 'hud-battery' } }, h('span', { text: '⚡ 100%' }));
+    const pauseBtn = h('button', {
+      class: 'icon-btn',
+      attrs: { type: 'button', 'aria-label': 'pause', 'data-action': 'pause' },
+      html: ICONS.pause,
+      on: { click: () => this.bridge.pauseGame() },
+    });
+    const camChip = h('span', { class: 'cam-mode-chip', text: t(`cam.short.${this.settingsStore.get().cameraMode}`) });
+    const camBtn = h('button', {
+      class: 'icon-btn cam-btn',
+      attrs: { id: 'hud-cam', type: 'button', 'aria-label': 'camera', 'data-action': 'camera' },
+      on: { click: () => this.bridge.toggleCamera() },
+    }, h('span', { html: ICONS.camera }), camChip);
     const mini = h('div', { class: 'minimap' });
     this.miniCanvas = h('canvas', { attrs: { width: 208, height: 208 } });
     mini.append(this.miniCanvas);
@@ -354,11 +371,15 @@ export class AppUI {
 
     const top = h('div', { class: 'hud-top' },
       objective,
-      h('div', { class: 'hud-topright' }, h('div', { class: 'row' }, pauseBtn, camBtn), wallet, mini, moodRow),
+      h('div', { class: 'hud-topright' }, h('div', { class: 'row' }, pauseBtn, camBtn), wallet, batteryPill, mini, moodRow),
     );
 
     const dialogue = h('div', { class: 'hud-dialogue' });
     this.dialogueEl = dialogue;
+    const pedCallout = h('div', { class: 'ped-callout' });
+    this.pedCalloutEl = pedCallout;
+    this.hudCamChip = camChip;
+    this.hudBattery = batteryPill;
 
     const hint = h('div', { class: 'hud-hint' });
 
@@ -454,7 +475,7 @@ export class AppUI {
     right.id = 'drive-right';
     const bottom = h('div', { class: 'hud-bottom' }, left, right);
 
-    el.append(top, dialogue, hint, bottom, wheel.el);
+    el.append(top, dialogue, pedCallout, hint, bottom, wheel.el);
     this.hud = this.register('hud', el);
     this.hudHint = hint;
     this.hudSpeedo = speedo;
@@ -485,6 +506,10 @@ export class AppUI {
   private hudPedal!: HTMLElement;
   private hudBrake!: HTMLElement;
   private hudLeft!: HTMLElement;
+  private hudCamChip!: HTMLElement;
+  private hudBattery!: HTMLElement;
+  private pedCalloutEl!: HTMLElement;
+  private pedCalloutTimer = 0;
 
   private buildWheel(): { el: HTMLElement } {
     const knob = h('div', {
@@ -561,10 +586,31 @@ export class AppUI {
     this.hudWheel.style.right = settings.handedness === 'right' ? 'auto' : 'calc(var(--safe-r) + 1.1rem)';
   }
 
+  updateCameraBadge(mode: CameraMode): void {
+    if (this.hudCamChip) {
+      this.hudCamChip.textContent = t(`cam.short.${mode}`);
+    }
+  }
+
+  /** Show a non-spammy Bengali speech callout above a startled pedestrian. */
+  showPedestrianCallout(screenX: number, screenY: number, textKey: string): void {
+    if (this.current !== 'hud') return;
+    const x = clamp(screenX, 90, window.innerWidth - 90);
+    const y = clamp(screenY, 72, window.innerHeight - 140);
+    this.pedCalloutEl.textContent = t(textKey);
+    this.pedCalloutEl.style.left = `${Math.round(x)}px`;
+    this.pedCalloutEl.style.top = `${Math.round(y)}px`;
+    this.pedCalloutEl.classList.add('show');
+    if (this.pedCalloutTimer) window.clearTimeout(this.pedCalloutTimer);
+    this.pedCalloutTimer = window.setTimeout(() => {
+      this.pedCalloutEl.classList.remove('show');
+    }, 2200);
+  }
+
   /** Called every frame while driving. */
   updateHud(state: HudState): void {
     if (this.current !== 'hud') return;
-    this.hudSpeedo.firstElementChild!.textContent = String(Math.round(state.speed * 3.6));
+    this.hudSpeedo.firstElementChild!.textContent = String(Math.round(Math.abs(state.speed) * 3.6));
     this.hudWallet.lastElementChild!.textContent = formatTaka(state.money);
     this.hudObjectiveLabel.textContent = state.objectiveLabel;
     this.hudObjectiveTitle.textContent = state.objectiveTitle;
@@ -574,6 +620,18 @@ export class AppUI {
     if (moodRow) moodRow.style.display = state.passengerAboard ? 'flex' : 'none';
     const pct = clamp01(1 - state.distance / 600);
     this.hudObMeter.style.width = `${Math.round(pct * 100)}%`;
+
+    if (state.cameraMode) {
+      this.updateCameraBadge(state.cameraMode);
+    }
+    if (state.isElectric) {
+      const bat = Math.round(state.battery ?? 100);
+      this.hudBattery.classList.remove('hidden');
+      this.hudBattery.classList.toggle('low', bat < 22);
+      this.hudBattery.firstElementChild!.textContent = `⚡ ${bat}%`;
+    } else {
+      this.hudBattery.classList.add('hidden');
+    }
 
     if (state.hint) {
       if (this.lastHintKey !== state.hint) {
@@ -622,40 +680,72 @@ export class AppUI {
     if (!ctx) return;
     const w = canvas.width;
     const hgt = canvas.height;
-    const scale = 2.6; // pixels per metre
+    const scale = 1.05; // pixels per metre across Mohammadpur district
     const cx = w / 2;
     const cy = hgt / 2;
     const px = this.minimapPlayer.x;
     const pz = this.minimapPlayer.z;
     ctx.clearRect(0, 0, w, hgt);
-    ctx.fillStyle = '#101c18';
+    ctx.fillStyle = '#0e1916';
     ctx.fillRect(0, 0, w, hgt);
-    // roads
-    ctx.strokeStyle = '#31443c';
-    for (const road of ROADS) {
-      ctx.lineWidth = Math.max(2, road.width * scale * 0.35);
+
+    // 1. Connected Mohammadpur street network
+    ctx.lineCap = 'round';
+    for (let i = 0; i < ROADS.length; i++) {
+      const seg = ROADS[i];
+      ctx.strokeStyle = seg.kind === 'main' ? '#3d584e' : seg.kind === 'medium' ? '#31463e' : '#253630';
+      ctx.lineWidth = Math.max(2, seg.width * scale * 0.42);
       ctx.beginPath();
-      if (road.axis === 'z') {
-        ctx.moveTo(cx + (road.center - px) * scale, cy + (road.from - pz) * scale);
-        ctx.lineTo(cx + (road.center - px) * scale, cy + (road.to - pz) * scale);
-      } else {
-        ctx.moveTo(cx + (road.from - px) * scale, cy + (road.center - pz) * scale);
-        ctx.lineTo(cx + (road.to - px) * scale, cy + (road.center - pz) * scale);
-      }
+      ctx.moveTo(cx + (seg.ax - px) * scale, cy + (seg.az - pz) * scale);
+      ctx.lineTo(cx + (seg.bx - px) * scale, cy + (seg.bz - pz) * scale);
       ctx.stroke();
     }
-    // places
+
+    // 2. Highlight congested / jammed Dhaka corridors in warm crimson-orange!
+    if (state.jammedSegments && state.jammedSegments.length > 0) {
+      ctx.strokeStyle = 'rgba(255, 92, 56, 0.86)';
+      for (let i = 0; i < state.jammedSegments.length; i++) {
+        const seg = segmentById(state.jammedSegments[i]);
+        if (!seg) continue;
+        ctx.lineWidth = Math.max(2.5, seg.width * scale * 0.44);
+        ctx.beginPath();
+        ctx.moveTo(cx + (seg.ax - px) * scale, cy + (seg.az - pz) * scale);
+        ctx.lineTo(cx + (seg.bx - px) * scale, cy + (seg.bz - pz) * scale);
+        ctx.stroke();
+      }
+    }
+
+    // 3. Active shortest-time / jam-avoiding Dijkstra route polyline!
+    if (state.routePoints && state.routePoints.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = state.detourActive ? '#ffd166' : '#4cd6a0';
+      ctx.lineWidth = 2.6;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath();
+      for (let i = 0; i < state.routePoints.length; i++) {
+        const rp = state.routePoints[i];
+        const rx = cx + (rp.x - px) * scale;
+        const ry = cy + (rp.z - pz) * scale;
+        if (i === 0) ctx.moveTo(rx, ry);
+        else ctx.lineTo(rx, ry);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 4. Mohammadpur landmarks
     for (const place of PLACES) {
       const x = cx + (place.x - px) * scale;
       const y = cy + (place.z - pz) * scale;
-      if (x < -10 || y < -10 || x > w + 10 || y > hgt + 10) continue;
-      ctx.fillStyle = 'rgba(232,178,90,0.35)';
+      if (x < -8 || y < -8 || x > w + 8 || y > hgt + 8) continue;
+      ctx.fillStyle = 'rgba(232,178,90,0.45)';
       ctx.beginPath();
-      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+      ctx.arc(x, y, 2.3, 0, Math.PI * 2);
       ctx.fill();
     }
-    // active marker
-    if (state.markerX !== null && this.minimapMarker) {
+
+    // 5. Active pickup / drop-off marker
+    if (this.minimapMarker) {
       const mx = cx + (this.minimapMarker.x - px) * scale;
       const my = cy + (this.minimapMarker.z - pz) * scale;
       const clampedX = clamp(mx, 8, w - 8);
@@ -664,19 +754,12 @@ export class AppUI {
       ctx.beginPath();
       ctx.arc(clampedX, clampedY, 5, 0, Math.PI * 2);
       ctx.fill();
-      if (clampedX !== mx || clampedY !== my) {
-        ctx.strokeStyle = ctx.fillStyle;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(clampedX, clampedY);
-        ctx.stroke();
-      }
     }
-    // player arrow
+
+    // 6. Player directional arrow
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.rotate(-this.minimapPlayer.yaw + Math.PI);
+    ctx.rotate(Math.PI - this.minimapPlayer.yaw);
     ctx.fillStyle = '#f7f0e3';
     ctx.beginPath();
     ctx.moveTo(0, -7);
@@ -833,6 +916,16 @@ export class AppUI {
     void offer;
   }
 
+  private refreshShopView(): void {
+    if (this.current === 'store') {
+      this.buildStore();
+      this.show('store');
+    } else {
+      this.buildGarage();
+      this.show('garage');
+    }
+  }
+
   // --------------------------------------------------------------- garage
   openGarage(from: 'menu' | 'pause' | 'result'): void {
     this.garageFrom = from;
@@ -844,6 +937,7 @@ export class AppUI {
   private buildGarage(): void {
     if (this.garageEl) {
       this.garageEl.remove();
+      this.screens.delete('garage');
       this.garageEl = null;
     }
     const vehicle = this.state.vehicle();
@@ -851,7 +945,7 @@ export class AppUI {
     const condition = this.state.progress.condition;
     const repair = this.state.repairQuote();
     const { wrap, body } = sheet(t('garage.title'), {
-      subtitle: t('garage.subtitle'),
+      subtitle: `${t('garage.subtitle')} · ${formatTaka(this.state.balance)}`,
       onClose: () => this.closeGarage(),
     });
 
@@ -863,11 +957,13 @@ export class AppUI {
         ),
         h('div', { class: 'pill gold', text: `${t('garage.condition')} ${Math.round(condition)}%` }),
       ),
-      h('div', { class: 'col', style: 'gap:.25rem' },
+      h('div', { class: 'col', style: 'gap:.22rem' },
         statBar(t('garage.stat.speed'), stats.speed),
+        statBar(t('garage.stat.accel'), stats.accel),
         statBar(t('garage.stat.handling'), stats.handling),
-        statBar(t('garage.stat.comfort'), stats.comfort),
         statBar(t('garage.stat.braking'), stats.braking),
+        statBar(t('garage.stat.comfort'), stats.comfort),
+        vehicle.kind === 'electric' ? statBar(t('garage.stat.efficiency'), stats.efficiency) : null,
       ),
       repair > 0
         ? button(t('garage.repairCost', { n: formatTaka(repair) }), {
@@ -897,7 +993,7 @@ export class AppUI {
         ] as [typeof this.garageTab, string][]).map(([id, label]) =>
           h('button', {
             class: this.garageTab === id ? 'on' : '',
-            attrs: { type: 'button' },
+            attrs: { type: 'button', 'data-tab': id },
             text: label,
             on: {
               click: () => {
@@ -916,7 +1012,10 @@ export class AppUI {
       body.append(this.cassetteBox());
     }
     if (this.garageTab === 'paint' || this.garageTab === 'accessories') {
-      const categories: CosmeticCategory[] = this.garageTab === 'paint' ? ['paint', 'art'] : ['tassel', 'bell', 'flowers', 'mirror'];
+      const categories: CosmeticCategory[] =
+        this.garageTab === 'paint'
+          ? ['paint', 'art']
+          : ['tassel', 'bell', 'flowers', 'mirror'];
       for (const category of categories) {
         for (const item of cosmeticsByCategory(category)) {
           grid.append(this.cosmeticCard(item.id));
@@ -933,7 +1032,6 @@ export class AppUI {
     this.garageEl = h('div', { class: 'screen' }, wrap);
     this.register('garage', this.garageEl);
     this.garageEl.classList.remove('hidden');
-    this.screens.set('garage', this.garageEl);
   }
 
   private cosmeticCard(id: string): HTMLElement {
@@ -944,7 +1042,7 @@ export class AppUI {
     const affordable = this.state.balance >= def.price;
     const card = h('button', {
       class: `item-card${owned ? ' owned' : ''}${equipped ? ' selected' : ''}`,
-      attrs: { type: 'button' },
+      attrs: { type: 'button', 'data-cosmetic-id': id },
       on: {
         click: () => {
           if (this.busy) return;
@@ -954,8 +1052,8 @@ export class AppUI {
             if (res.ok) {
               this.bridge.audio.uiConfirm();
               this.toast(t('store.equipDone'), 'good');
-              this.buildGarage();
-              this.show('garage');
+              this.bridge.applySettings();
+              this.refreshShopView();
             }
           } else if (affordable) {
             this.confirmPurchase(t(def.nameKey), formatTaka(def.price), () => {
@@ -963,12 +1061,12 @@ export class AppUI {
               if (res.ok) {
                 this.bridge.audio.coin();
                 this.toast(t('store.buyDone'), 'good');
+                this.bridge.applySettings();
               } else {
                 this.bridge.audio.uiError();
                 this.toast(t('common.insufficient'), 'bad');
               }
-              this.buildGarage();
-              this.show('garage');
+              this.refreshShopView();
             });
           } else {
             this.bridge.audio.uiError();
@@ -995,11 +1093,11 @@ export class AppUI {
     const maxed = level >= up.maxLevel;
     return h('button', {
       class: `item-card${maxed ? ' owned' : ''}`,
-      attrs: { type: 'button' },
+      attrs: { type: 'button', 'data-upgrade-id': id },
       on: {
         click: () => {
-          if (maxed) return;
-          if (price === null) return;
+          if (this.busy) return;
+          if (maxed || price === null) return;
           if (this.state.balance < price) {
             this.bridge.audio.uiError();
             this.toast(t('store.notEnough', { n: formatTaka(price - this.state.balance) }), 'bad');
@@ -1014,8 +1112,7 @@ export class AppUI {
             } else {
               this.bridge.audio.uiError();
             }
-            this.buildGarage();
-            this.show('garage');
+            this.refreshShopView();
           });
         },
       },
@@ -1035,23 +1132,51 @@ export class AppUI {
 
   private vehicleCard(id: string): HTMLElement {
     const v = vehicleById(id);
-    const owned = this.state.ownsVehicle(id);
-    const selected = this.state.selectedVehicleId === id;
-    const unlocked = this.state.vehicleUnlocked(id);
+    const isComingSoon = !!v.comingSoon;
+    const owned = !isComingSoon && this.state.ownsVehicle(id);
+    const selected = !isComingSoon && this.state.selectedVehicleId === id;
+    const unlocked = !isComingSoon && this.state.vehicleUnlocked(id);
     const price = v.price;
+    const vStats = vehicleStats(v, this.state.progress.upgrades);
+
+    const miniBars = h('div', { class: 'veh-mini-stats' },
+      h('div', { class: 'veh-mini-row' },
+        h('span', { text: t('garage.stat.speed') }),
+        h('span', { class: 'veh-mini-track' }, h('i', { style: `width:${Math.round(vStats.speed * 100)}%` })),
+      ),
+      h('div', { class: 'veh-mini-row' },
+        h('span', { text: t('garage.stat.accel') }),
+        h('span', { class: 'veh-mini-track' }, h('i', { style: `width:${Math.round(vStats.accel * 100)}%` })),
+      ),
+      h('div', { class: 'veh-mini-row' },
+        h('span', { text: t('garage.stat.handling') }),
+        h('span', { class: 'veh-mini-track' }, h('i', { style: `width:${Math.round(vStats.handling * 100)}%` })),
+      ),
+    );
+
     return h('button', {
-      class: `item-card${owned ? ' owned' : ''}${selected ? ' selected' : ''}`,
-      attrs: { type: 'button' },
+      class: `item-card${owned ? ' owned' : ''}${selected ? ' selected' : ''}${isComingSoon ? ' coming-soon' : ''}`,
+      attrs: {
+        type: 'button',
+        'data-vehicle-id': id,
+        ...(isComingSoon ? { 'aria-disabled': 'true' } : {}),
+      },
       on: {
         click: () => {
+          if (this.busy) return;
+          if (isComingSoon) {
+            this.bridge.previewVehicleInShowroom?.(id);
+            this.bridge.audio.uiTap();
+            this.toast(t('store.comingSoonSub'));
+            return;
+          }
           if (owned) {
             if (selected) return;
             this.state.selectVehicle(id);
             this.bridge.audio.uiConfirm();
             this.toast(t('garage.selected'), 'good');
             this.bridge.applySettings();
-            this.buildGarage();
-            this.show('garage');
+            this.refreshShopView();
           } else if (!unlocked) {
             this.bridge.audio.uiError();
             this.toast(t('common.locked'), 'bad');
@@ -1065,8 +1190,7 @@ export class AppUI {
               } else {
                 this.bridge.audio.uiError();
               }
-              this.buildGarage();
-              this.show('garage');
+              this.refreshShopView();
             });
           } else {
             this.bridge.audio.uiError();
@@ -1078,8 +1202,13 @@ export class AppUI {
       h('div', { class: 'swatch', style: `background:linear-gradient(135deg,${v.palette.body},${v.palette.panel})` }),
       h('div', { class: 'ic-name', text: t(v.nameKey) }),
       h('div', { class: 'ic-desc', text: t(v.descKey) }),
+      miniBars,
       h('div', { class: 'ic-price' },
-        owned ? h('span', { class: 'pill green', text: selected ? t('garage.selected') : t('common.owned') }) : h('span', { class: 'taka', text: unlocked ? formatTaka(price) : `🔒 ${v.ridesRequired}` }),
+        isComingSoon
+          ? h('span', { class: 'coming-soon-badge', text: t('store.comingSoon') })
+          : owned
+            ? h('span', { class: 'pill green', text: selected ? t('garage.selected') : t('common.owned') })
+            : h('span', { class: 'taka', text: unlocked ? formatTaka(price) : `🔒 ${v.ridesRequired}` }),
       ),
     );
   }
@@ -1104,12 +1233,25 @@ export class AppUI {
   }
 
   closeGarage(): void {
+    if (this.garageEl) {
+      this.garageEl.remove();
+      this.screens.delete('garage');
+      this.garageEl = null;
+    }
     this.bridge.closeGarage();
-    // Return to wherever the player came from — never dump them into gameplay
-    // they did not start (e.g. garage opened from the main menu).
     if (this.garageFrom === 'menu') this.show('menu');
     else if (this.garageFrom === 'pause') this.show('pause');
     else this.show('menu');
+  }
+
+  closeStore(): void {
+    if (this.storeEl) {
+      this.storeEl.remove();
+      this.screens.delete('store');
+      this.storeEl = null;
+    }
+    this.show('menu');
+    this.bridge.setShowroomVisible(false);
   }
 
   /** Cassette Box: the original soundtrack tapes unlocked by playing. */
@@ -1129,8 +1271,7 @@ export class AppUI {
                 const id = tape.id as 'cassette' | 'radio' | 'brishti';
                 this.currentTape = id;
                 this.bridge.setTrack(id);
-                this.buildGarage();
-                this.show('garage');
+                this.refreshShopView();
               },
             })
           : h('span', { class: 'pill', text: t('tape.locked') }),
@@ -1139,8 +1280,9 @@ export class AppUI {
     return h('div', { class: 'panel glass', style: 'padding:.6rem .75rem;display:flex;flex-direction:column;gap:.3rem' }, row);
   }
 
-  // ---------------------------------------------------------------- store
+  // ---------------------------------------------------------------- store (Dokan)
   openStore(): void {
+    this.bridge.openShowroomFromMenu?.();
     this.buildStore();
     this.show('store');
     this.bridge.setShowroomVisible(true);
@@ -1149,14 +1291,13 @@ export class AppUI {
   private buildStore(): void {
     if (this.storeEl) {
       this.storeEl.remove();
+      this.screens.delete('store');
       this.storeEl = null;
     }
+    const eqVehicle = this.state.vehicle();
     const { wrap, body } = sheet(t('store.title'), {
-      subtitle: t('store.subtitle'),
-      onClose: () => {
-        this.show('menu');
-        this.bridge.setShowroomVisible(false);
-      },
+      subtitle: `${t('store.subtitle')} · ${t(eqVehicle.nameKey)}`,
+      onClose: () => this.closeStore(),
     });
     const tabs = h('div', { class: 'tabs' });
     for (const [id, label] of [
@@ -1167,7 +1308,7 @@ export class AppUI {
     ] as [typeof this.storeTab, string][]) {
       tabs.append(h('button', {
         class: this.storeTab === id ? 'on' : '',
-        attrs: { type: 'button' },
+        attrs: { type: 'button', 'data-store-tab': id },
         text: label,
         on: {
           click: () => {
@@ -1180,8 +1321,8 @@ export class AppUI {
     }
     body.append(
       h('div', { class: 'spread' },
-        h('div', { class: 'pill gold', text: formatTaka(this.state.balance) }),
-        h('div', { class: 'tiny muted', text: t('store.subtitle') }),
+        h('div', { class: 'pill gold', attrs: { id: 'store-balance' }, text: formatTaka(this.state.balance) }),
+        h('div', { class: 'pill green', text: `${t('common.equipped')}: ${t(eqVehicle.nameKey)}` }),
       ),
       tabs,
     );
@@ -1191,11 +1332,19 @@ export class AppUI {
     } else if (this.storeTab === 'upgrades') {
       for (const up of UPGRADES) grid.append(this.upgradeCard(up.id));
     } else if (this.storeTab === 'paint') {
-      for (const c of COSMETICS.filter((x) => x.category === 'paint' || x.category === 'art')) grid.append(this.cosmeticCard(c.id));
+      for (const c of COSMETICS.filter((x) => x.category === 'paint' || x.category === 'art')) {
+        grid.append(this.cosmeticCard(c.id));
+      }
     } else {
-      for (const c of COSMETICS.filter((x) => x.category !== 'paint' && x.category !== 'art')) grid.append(this.cosmeticCard(c.id));
+      for (const c of COSMETICS.filter((x) => x.category !== 'paint' && x.category !== 'art')) {
+        grid.append(this.cosmeticCard(c.id));
+      }
     }
-    body.append(grid);
+    body.append(
+      grid,
+      h('div', { class: 'divider' }),
+      button(t('common.back'), { variant: 'ghost', wide: true, onClick: () => this.closeStore() }),
+    );
     this.storeEl = h('div', { class: 'screen' }, wrap);
     this.register('store', this.storeEl);
   }
@@ -1384,6 +1533,11 @@ export class AppUI {
   }
 
   closeSettings(): void {
+    if (this.settingsEl) {
+      this.settingsEl.remove();
+      this.screens.delete('settings');
+      this.settingsEl = null;
+    }
     const back = this.settingsReturn;
     this.settingsReturn = null;
     if (back) back();
@@ -1394,9 +1548,18 @@ export class AppUI {
   private openCredits(): void {
     if (this.creditsEl) {
       this.creditsEl.remove();
+      this.screens.delete('credits');
       this.creditsEl = null;
     }
-    const { wrap, body } = sheet(t('credits.title'), { onClose: () => this.show('menu') });
+    const close = (): void => {
+      if (this.creditsEl) {
+        this.creditsEl.remove();
+        this.screens.delete('credits');
+        this.creditsEl = null;
+      }
+      this.show('menu');
+    };
+    const { wrap, body } = sheet(t('credits.title'), { onClose: close });
     body.append(
       h('div', { class: 'credits-list' },
         h('p', { class: 'small', text: t('credits.made') }),
@@ -1411,12 +1574,14 @@ export class AppUI {
         h('h3', { text: t('credits.assets') }),
         h('p', { text: t('credits.assetsNote') }),
         h('p', { class: 'tiny muted', text: t('credits.mapNote') }),
+        h('p', { class: 'tiny', style: 'color:#8fe3c0;margin-top:.25rem', text: t('osm.credit') }),
         h('p', { class: 'small', style: 'margin-top:.5rem;color:#e8b25a', text: t('credits.thanks') }),
       ),
-      button(t('common.back'), { variant: 'ghost', wide: true, onClick: () => this.show('menu') }),
+      button(t('common.back'), { variant: 'ghost', wide: true, onClick: close }),
     );
     this.creditsEl = h('div', { class: 'screen' }, wrap);
     this.register('credits', this.creditsEl);
+    this.show('credits');
   }
 
   // -------------------------------------------------------------- tutorial

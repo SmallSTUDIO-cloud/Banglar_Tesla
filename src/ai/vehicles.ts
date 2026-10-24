@@ -1,266 +1,501 @@
 /**
- * Traffic vehicle models, built from merged primitives. Each returns a Group
- * with a `wheels` array so the caller can spin them.
+ * Authentic Dhaka traffic fleet models (Section 8) with cached merged geometry
+ * templates for low draw calls, zero GPU leaks, and exact wheel-ground contact:
+ *   - cng       : Dhaka green CNG auto-rickshaw with black security grill cage
+ *   - rickshaw  : NPC Bangladeshi passenger cycle rickshaw with puller & hood
+ *   - easybike  : Bangladeshi battery-powered Electric Rickshaw / Auto
+ *   - bus       : Mohammadpur route city bus with window bays, roof rack & door
+ *   - car       : Sculpted Dhaka sedan with cabin pillars, grille & mirrors
+ *   - truck     : Colourful Bangladeshi painted cargo truck with crown header
+ *   - van       : Urban covered market/parcel delivery pickup van
+ *   - motorbike : 150cc commuter motorcycle with helmeted rider & exhaust
  */
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Bucket, createWheel } from '../world/geo';
 
-function boxGeo(w: number, h: number, d: number, color: string, x = 0, y = 0, z = 0): THREE.BufferGeometry {
-  const g = new THREE.BoxGeometry(w, h, d);
-  g.translate(x, y, z);
-  const c = new THREE.Color(color);
-  const count = g.getAttribute('position').count;
-  const colors = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    colors[i * 3] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  return g;
-}
+export type TrafficType =
+  | 'cng'
+  | 'rickshaw'
+  | 'easybike'
+  | 'bus'
+  | 'car'
+  | 'truck'
+  | 'van'
+  | 'motorbike';
 
-function merge(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
-  const merged = mergeGeometries(parts, false);
-  for (const p of parts) p.dispose();
-  return merged ?? new THREE.BufferGeometry();
-}
-
-const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0.28 });
-const glassMat = new THREE.MeshStandardMaterial({
-  vertexColors: true,
-  roughness: 0.16,
-  metalness: 0.6,
-  color: 0xffffff,
-});
-const tireMat = new THREE.MeshStandardMaterial({ color: 0x242424, roughness: 0.95 });
-
-export interface TrafficModel {
-  group: THREE.Group;
+export interface BuiltTrafficMesh {
+  root: THREE.Group;
   wheels: THREE.Object3D[];
+  wheelRadius: number;
   halfLength: number;
   halfWidth: number;
-  height: number;
+  radius: number;
+  brakeMat: THREE.MeshStandardMaterial | null;
 }
 
-/**
- * All wheels of one vehicle are baked into a single merged mesh. Draw calls
- * matter far more than spinning traffic wheels (which are invisible at
- * gameplay distance), and this cuts 4–6 calls per vehicle, doubled again by the
- * shadow pass.
- */
-function addWheels(group: THREE.Group, positions: [number, number, number][], radius: number, width: number): THREE.Object3D[] {
-  const parts: THREE.BufferGeometry[] = [];
-  for (const [x, y, z] of positions) {
-    const g = new THREE.CylinderGeometry(radius, radius, width, 12);
-    g.rotateZ(Math.PI / 2);
-    g.translate(x, y, z);
-    parts.push(g);
+const bodyPaintMat = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  roughness: 0.44,
+  metalness: 0.28,
+  side: THREE.DoubleSide,
+});
+bodyPaintMat.userData.shared = true;
+
+const trimMetalMat = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  roughness: 0.28,
+  metalness: 0.78,
+});
+trimMetalMat.userData.shared = true;
+
+const glassMat = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  roughness: 0.14,
+  metalness: 0.65,
+});
+glassMat.userData.shared = true;
+
+const headGlowMat = new THREE.MeshStandardMaterial({
+  color: 0xfff5cf,
+  emissive: 0xffdf9a,
+  emissiveIntensity: 0.75,
+  roughness: 0.25,
+});
+headGlowMat.userData.shared = true;
+
+interface CachedBodyTemplate {
+  paintGeo: THREE.BufferGeometry | null;
+  metalGeo: THREE.BufferGeometry | null;
+  glassGeo: THREE.BufferGeometry | null;
+  headGeo: THREE.BufferGeometry | null;
+  brakeGeo: THREE.BufferGeometry | null;
+  wheelPositions: { x: number; y: number; z: number }[];
+  wheelRadius: number;
+  spokedWheels: boolean;
+  halfLength: number;
+  halfWidth: number;
+  radius: number;
+}
+
+const templateCache = new Map<string, CachedBodyTemplate>();
+
+function buildDiscWheel(outerRadius: number, width: number): THREE.Group {
+  const key = `disc:${outerRadius.toFixed(3)}:${width.toFixed(3)}`;
+  const cached = discWheelGeoCache.get(key);
+  let tireGeo: THREE.BufferGeometry;
+  let hubGeo: THREE.BufferGeometry;
+  if (cached) {
+    tireGeo = cached.tireGeo;
+    hubGeo = cached.hubGeo;
+  } else {
+    const bTire = new Bucket('disc.tire', bodyPaintMat);
+    bTire.cylinder({ x: 0, y: 0, z: 0 }, outerRadius, width, '#1a1c1f', { z: Math.PI / 2 });
+    const bHub = new Bucket('disc.hub', trimMetalMat);
+    bHub.cylinder({ x: 0, y: 0, z: 0 }, outerRadius * 0.58, width + 0.012, '#cfd6de', { z: Math.PI / 2 });
+    bHub.cylinder({ x: 0, y: 0, z: 0 }, outerRadius * 0.2, width + 0.024, '#5a626a', { z: Math.PI / 2 });
+    tireGeo = bTire.build()!.geometry;
+    hubGeo = bHub.build()!.geometry;
+    tireGeo.userData.shared = true;
+    hubGeo.userData.shared = true;
+    discWheelGeoCache.set(key, { tireGeo, hubGeo });
   }
-  const merged = merge(parts);
-  const mesh = new THREE.Mesh(merged, tireMat);
-  mesh.castShadow = false;
-  group.add(mesh);
-  // Return a single pseudo-rotation target so the caller keeps working.
-  return [mesh];
+  const g = new THREE.Group();
+  const m1 = new THREE.Mesh(tireGeo, bodyPaintMat);
+  const m2 = new THREE.Mesh(hubGeo, trimMetalMat);
+  m1.castShadow = true;
+  m1.userData.shared = true;
+  m2.userData.shared = true;
+  g.add(m1, m2);
+  return g;
+}
+const discWheelGeoCache = new Map<string, { tireGeo: THREE.BufferGeometry; hubGeo: THREE.BufferGeometry }>();
+
+function getOrBuildTemplate(type: TrafficType, variant: number): CachedBodyTemplate {
+  const v = ((variant % 4) + 4) % 4;
+  const key = `${type}:${v}`;
+  const hit = templateCache.get(key);
+  if (hit) return hit;
+
+  const paint = new Bucket(`${key}.paint`, bodyPaintMat);
+  const metal = new Bucket(`${key}.metal`, trimMetalMat);
+  const glass = new Bucket(`${key}.glass`, glassMat);
+  const head = new Bucket(`${key}.head`, headGlowMat);
+  const brake = new Bucket(`${key}.brake`, headGlowMat);
+
+  let wheelRadius = 0.32;
+  let spokedWheels = false;
+  let halfLength = 1.9;
+  let halfWidth = 0.85;
+  let radius = 1.5;
+  const wheelPositions: { x: number; y: number; z: number }[] = [];
+
+  if (type === 'cng') {
+    // Dhaka Green CNG Auto-Rickshaw with black security grill doors!
+    wheelRadius = 0.25;
+    halfLength = 1.34;
+    halfWidth = 0.68;
+    radius = 1.15;
+    const green = ['#177245', '#12653c', '#1e7f4f', '#155d39'][v];
+    // Lower tub + tapered front nose + rear engine bay
+    paint.box({ x: 0, y: 0.46, z: -0.18 }, { x: 1.24, y: 0.42, z: 1.72 }, green);
+    paint.box({ x: 0, y: 0.48, z: 0.86 }, { x: 0.82, y: 0.40, z: 0.56 }, green);
+    paint.box({ x: 0, y: 0.34, z: 1.02 }, { x: 0.30, y: 0.12, z: 0.34 }, green); // front fender
+    // Yellow/black Dhaka meter band + canvas canopy top
+    paint.box({ x: 0, y: 0.69, z: -0.18 }, { x: 1.26, y: 0.06, z: 1.74 }, '#e6b832');
+    paint.box({ x: 0, y: 1.48, z: -0.10 }, { x: 1.24, y: 0.10, z: 1.84 }, '#1d221e');
+    paint.box({ x: 0, y: 1.54, z: -0.12 }, { x: 1.12, y: 0.06, z: 1.66 }, '#2a302b');
+    // Windshield frame + glass + wiper
+    metal.box({ x: 0, y: 1.08, z: 0.78 }, { x: 1.06, y: 0.68, z: 0.05 }, green, { x: -0.22 });
+    glass.box({ x: 0, y: 1.09, z: 0.80 }, { x: 0.94, y: 0.54, z: 0.03 }, '#1e3a48', { x: -0.22 });
+    metal.box({ x: 0.06, y: 1.04, z: 0.83 }, { x: 0.02, y: 0.42, z: 0.02 }, '#111111', { x: -0.22, z: 0.32 });
+    // Signature Dhaka CNG welded steel grill side doors!
+    for (const sx of [-0.61, 0.61]) {
+      metal.cylinder({ x: sx, y: 1.08, z: -0.95 }, 0.018, 0.78, '#1e2226');
+      metal.cylinder({ x: sx, y: 1.08, z: 0.55 }, 0.018, 0.78, '#1e2226');
+      for (let g = 0; g < 5; g++) {
+        metal.box({ x: sx, y: 0.78 + g * 0.14, z: -0.15 }, { x: 0.018, y: 0.016, z: 1.46 }, '#202428');
+      }
+      for (let vz = -0.75; vz <= 0.45; vz += 0.3) {
+        metal.box({ x: sx, y: 1.06, z: vz }, { x: 0.018, y: 0.62, z: 0.016 }, '#202428');
+      }
+      // Side mirrors
+      metal.box({ x: sx * 1.12, y: 1.12, z: 0.76 }, { x: 0.10, y: 0.08, z: 0.03 }, '#cfd6de');
+    }
+    // Interior passenger seat + driver + rear spare wheel
+    paint.box({ x: 0, y: 0.68, z: -0.58 }, { x: 1.08, y: 0.28, z: 0.45 }, '#542a1c');
+    paint.cylinder({ x: 0, y: 1.02, z: 0.25 }, 0.16, 0.46, '#2b4c72');
+    paint.cylinder({ x: 0, y: 0.86, z: -1.07 }, 0.22, 0.11, '#1a1c1f', { x: Math.PI / 2 });
+    // Headlight + amber indicators + tail brake lamps
+    head.cylinder({ x: 0, y: 0.64, z: 1.15 }, 0.085, 0.03, '#fff6cf', { x: Math.PI / 2 });
+    for (const sx of [-0.34, 0.34]) {
+      head.box({ x: sx, y: 0.62, z: 1.14 }, { x: 0.08, y: 0.05, z: 0.02 }, '#ffb428');
+      brake.box({ x: sx * 1.4, y: 0.62, z: -1.05 }, { x: 0.14, y: 0.08, z: 0.025 }, '#e52521');
+    }
+    wheelPositions.push(
+      { x: 0, y: wheelRadius, z: 0.96 },
+      { x: 0.56, y: wheelRadius, z: -0.68 },
+      { x: -0.56, y: wheelRadius, z: -0.68 },
+    );
+  } else if (type === 'rickshaw') {
+    // NPC Bangladeshi Passenger Cycle Rickshaw (dense lane traffic!)
+    wheelRadius = 0.375;
+    spokedWheels = true;
+    halfLength = 1.25;
+    halfWidth = 0.58;
+    radius = 1.02;
+    const hoodColors = ['#b31329', '#126499', '#1c7c54', '#9e2870'];
+    const trimColors = ['#f2b938', '#ffd166', '#4ef0b8', '#ff9f43'];
+    const hood = hoodColors[v];
+    const trim = trimColors[v];
+    // Frame, footboard, carriage, quilted seat, ornate backplate & arched hood
+    metal.cylinder({ x: 0, y: 0.38, z: -0.66 }, 0.02, 1.08, '#9aa3ad', { z: Math.PI / 2 });
+    metal.cylinder({ x: 0, y: 0.66, z: 0.38 }, 0.022, 0.92, '#145a44', { x: 0.98 });
+    metal.cylinder({ x: 0, y: 0.88, z: 0.36 }, 0.018, 0.84, '#145a44', { x: Math.PI / 2 });
+    metal.cylinder({ x: 0, y: 0.94, z: 0.78 }, 0.02, 0.42, '#cfd6de', { x: -0.14 });
+    metal.cylinder({ x: 0, y: 1.15, z: 0.73 }, 0.014, 0.42, '#dce3ea', { z: Math.PI / 2 });
+    paint.box({ x: 0, y: 0.53, z: -0.34 }, { x: 0.88, y: 0.04, z: 0.36 }, '#5e3c20');
+    paint.box({ x: 0, y: 0.65, z: -0.76 }, { x: 0.90, y: 0.22, z: 0.54 }, '#145a44');
+    paint.box({ x: 0, y: 0.78, z: -0.74 }, { x: 0.84, y: 0.11, z: 0.46 }, '#a61c2b');
+    paint.box({ x: 0, y: 1.02, z: -0.98 }, { x: 0.88, y: 0.56, z: 0.06 }, trim);
+    paint.box({ x: 0, y: 1.02, z: -1.015 }, { x: 0.78, y: 0.46, z: 0.02 }, hood);
+    for (const side of [-1, 1]) {
+      paint.box({ x: side * 0.44, y: 0.92, z: -0.74 }, { x: 0.05, y: 0.36, z: 0.52 }, hood);
+      paint.box({ x: side * 0.52, y: 0.72, z: -0.66 }, { x: 0.12, y: 0.06, z: 0.72 }, '#145a44');
+    }
+    // Arched folding hood + front valance
+    paint.box({ x: 0, y: 1.44, z: -0.96 }, { x: 0.96, y: 0.32, z: 0.06 }, hood, { x: 0.32 });
+    paint.box({ x: 0, y: 1.66, z: -0.64 }, { x: 0.96, y: 0.10, z: 0.68 }, hood);
+    paint.box({ x: 0, y: 1.71, z: -0.64 }, { x: 0.98, y: 0.025, z: 0.12 }, trim);
+    paint.box({ x: 0, y: 1.52, z: -0.26 }, { x: 0.96, y: 0.09, z: 0.03 }, trim);
+    // Puller in lungi & shirt + occasional passenger
+    paint.box({ x: 0, y: 1.22, z: 0.04 }, { x: 0.32, y: 0.40, z: 0.20 }, ['#d98236', '#2e86ab', '#6ab04c', '#eb4d4b'][v], { x: 0.25 });
+    paint.cylinder({ x: 0, y: 1.49, z: 0.12 }, 0.09, 0.18, '#8b5e3c');
+    paint.cylinder({ x: 0, y: 0.92, z: 0.02 }, 0.15, 0.36, '#1f4e70');
+    if (v % 2 === 0) {
+      paint.box({ x: 0.12, y: 1.12, z: -0.74 }, { x: 0.32, y: 0.38, z: 0.22 }, '#f0b429');
+      paint.cylinder({ x: 0.12, y: 1.38, z: -0.74 }, 0.085, 0.17, '#8b5e3c');
+    }
+    head.cylinder({ x: 0, y: 0.90, z: 0.85 }, 0.045, 0.03, '#ffe7a8', { x: Math.PI / 2 });
+    brake.box({ x: -0.32, y: 0.60, z: -1.03 }, { x: 0.06, y: 0.05, z: 0.02 }, '#e52521');
+    brake.box({ x: 0.32, y: 0.60, z: -1.03 }, { x: 0.06, y: 0.05, z: 0.02 }, '#e52521');
+    wheelPositions.push(
+      { x: 0, y: wheelRadius, z: 0.78 },
+      { x: 0.52, y: wheelRadius, z: -0.66 },
+      { x: -0.52, y: wheelRadius, z: -0.66 },
+    );
+  } else if (type === 'easybike') {
+    // Bangladeshi Battery-Powered Electric Auto / EasyBike!
+    wheelRadius = 0.28;
+    halfLength = 1.48;
+    halfWidth = 0.72;
+    radius = 1.24;
+    const bodyCol = ['#0f7a8c', '#c92a3e', '#1d5fa7', '#d97b16'][v];
+    paint.box({ x: 0, y: 0.48, z: -0.15 }, { x: 1.32, y: 0.38, z: 2.05 }, bodyCol);
+    paint.box({ x: 0, y: 0.52, z: 0.98 }, { x: 0.88, y: 0.44, z: 0.52 }, bodyCol);
+    paint.box({ x: 0, y: 1.62, z: -0.05 }, { x: 1.34, y: 0.08, z: 2.28 }, '#f4f1e6');
+    paint.box({ x: 0, y: 1.67, z: -0.05 }, { x: 1.26, y: 0.04, z: 2.18 }, bodyCol);
+    glass.box({ x: 0, y: 1.16, z: 0.94 }, { x: 1.06, y: 0.62, z: 0.04 }, '#204254', { x: -0.16 });
+    for (const sx of [-0.63, 0.63]) {
+      metal.cylinder({ x: sx, y: 1.15, z: 0.90 }, 0.018, 0.92, '#dce3ea');
+      metal.cylinder({ x: sx, y: 1.15, z: -0.12 }, 0.016, 0.92, '#dce3ea');
+      metal.cylinder({ x: sx, y: 1.15, z: -1.10 }, 0.018, 0.92, '#dce3ea');
+      metal.box({ x: sx, y: 0.86, z: -0.45 }, { x: 0.03, y: 0.24, z: 1.26 }, bodyCol);
+    }
+    // Dual facing passenger benches + under-seat battery bank
+    paint.box({ x: 0, y: 0.32, z: -0.35 }, { x: 0.96, y: 0.16, z: 0.95 }, '#1d242b');
+    paint.box({ x: 0, y: 0.72, z: -0.82 }, { x: 1.16, y: 0.18, z: 0.42 }, '#7a2323');
+    paint.box({ x: 0, y: 0.72, z: -0.12 }, { x: 1.16, y: 0.18, z: 0.38 }, '#7a2323');
+    head.cylinder({ x: 0, y: 0.74, z: 1.25 }, 0.09, 0.03, '#e8fbff', { x: Math.PI / 2 });
+    brake.box({ x: -0.46, y: 0.56, z: -1.18 }, { x: 0.16, y: 0.08, z: 0.025 }, '#e52521');
+    brake.box({ x: 0.46, y: 0.56, z: -1.18 }, { x: 0.16, y: 0.08, z: 0.025 }, '#e52521');
+    wheelPositions.push(
+      { x: 0, y: wheelRadius, z: 1.06 },
+      { x: 0.60, y: wheelRadius, z: -0.78 },
+      { x: -0.60, y: wheelRadius, z: -0.78 },
+    );
+  } else if (type === 'bus') {
+    // Mohammadpur / Dhaka Local Minibus (Projapoti / BRTC / Taranga Plus style!)
+    wheelRadius = 0.46;
+    halfLength = 3.85;
+    halfWidth = 1.22;
+    radius = 2.75;
+    const schemes = [
+      { low: '#b7282e', mid: '#f4efe0', stripe: '#1c7c54' },
+      { low: '#165a8a', mid: '#eef3f7', stripe: '#f2a922' },
+      { low: '#1e6f50', mid: '#f5f0dc', stripe: '#d93829' },
+      { low: '#8a2b52', mid: '#f6efe4', stripe: '#229ebc' },
+    ];
+    const sc = schemes[v];
+    // Lower skirt, upper window belt, curved roof cap + AC unit
+    paint.box({ x: 0, y: 0.92, z: 0 }, { x: 2.38, y: 0.96, z: 7.42 }, sc.low);
+    paint.box({ x: 0, y: 1.38, z: 0 }, { x: 2.41, y: 0.14, z: 7.46 }, sc.stripe);
+    paint.box({ x: 0, y: 2.08, z: 0 }, { x: 2.36, y: 1.26, z: 7.36 }, sc.mid);
+    paint.box({ x: 0, y: 2.78, z: 0 }, { x: 2.22, y: 0.18, z: 7.12 }, sc.low);
+    paint.box({ x: 0, y: 2.94, z: 0.4 }, { x: 1.56, y: 0.20, z: 2.6 }, '#cfd6de'); // rooftop AC pod
+    metal.box({ x: 0, y: 0.46, z: 3.74 }, { x: 2.40, y: 0.24, z: 0.14 }, '#282d33'); // steel front bumper
+    metal.box({ x: 0, y: 0.46, z: -3.74 }, { x: 2.40, y: 0.24, z: 0.14 }, '#282d33');
+    // Panoramic front windshield + destination board + rear glass
+    glass.box({ x: 0, y: 2.02, z: 3.69 }, { x: 2.14, y: 0.96, z: 0.05 }, '#193240');
+    paint.box({ x: 0, y: 2.62, z: 3.70 }, { x: 1.68, y: 0.22, z: 0.05 }, '#102419');
+    head.box({ x: 0, y: 2.62, z: 3.73 }, { x: 1.48, y: 0.12, z: 0.02 }, '#ffd65a'); // illuminated route sign
+    glass.box({ x: 0, y: 2.06, z: -3.69 }, { x: 1.98, y: 0.78, z: 0.05 }, '#193240');
+    // 6 framed side passenger windows + left-side Dhaka boarding door recess
+    for (let wz = -2.8; wz <= 2.6; wz += 1.05) {
+      glass.box({ x: -1.19, y: 2.06, z: wz }, { x: 0.04, y: 0.74, z: 0.84 }, '#1a3544');
+      if (wz < 1.6) {
+        glass.box({ x: 1.19, y: 2.06, z: wz }, { x: 0.04, y: 0.74, z: 0.84 }, '#1a3544');
+      }
+    }
+    glass.box({ x: 1.16, y: 1.48, z: 2.35 }, { x: 0.08, y: 1.75, z: 0.86 }, '#111920'); // boarding doorway
+    // Grille + twin headlamps + long bus mirrors + tail lamps
+    metal.box({ x: 0, y: 0.92, z: 3.73 }, { x: 1.36, y: 0.42, z: 0.04 }, '#22282e');
+    for (const sx of [-1, 1]) {
+      head.box({ x: sx * 0.88, y: 0.88, z: 3.73 }, { x: 0.34, y: 0.20, z: 0.04 }, '#fff3c4');
+      brake.box({ x: sx * 0.92, y: 1.02, z: -3.73 }, { x: 0.28, y: 0.34, z: 0.04 }, '#e52521');
+      metal.box({ x: sx * 1.28, y: 2.18, z: 3.78 }, { x: 0.14, y: 0.30, z: 0.06 }, '#1e2226');
+    }
+    wheelPositions.push(
+      { x: 1.06, y: wheelRadius, z: 2.35 },
+      { x: -1.06, y: wheelRadius, z: 2.35 },
+      { x: 1.06, y: wheelRadius, z: -2.25 },
+      { x: -1.06, y: wheelRadius, z: -2.25 },
+    );
+  } else if (type === 'truck') {
+    // Bangladeshi Painted Cargo Truck (Tata / Bedford style with ornate crown!)
+    wheelRadius = 0.45;
+    halfLength = 3.25;
+    halfWidth = 1.15;
+    radius = 2.4;
+    const cabCol = ['#d97724', '#1d6fa5', '#2a8c55', '#b83232'][v];
+    const bedCol = ['#1f5f4b', '#8c2d3c', '#2c4c7e', '#6d4c2f'][v];
+    // Chassis rails
+    metal.box({ x: 0, y: 0.56, z: 0 }, { x: 1.86, y: 0.20, z: 6.1 }, '#262b30');
+    // Driver cab + ornate Taj crown luton header above cab!
+    paint.box({ x: 0, y: 1.38, z: 1.98 }, { x: 2.14, y: 1.48, z: 1.86 }, cabCol);
+    paint.box({ x: 0, y: 2.36, z: 1.88 }, { x: 2.18, y: 0.52, z: 1.42 }, '#f2b938');
+    paint.box({ x: 0, y: 2.42, z: 2.60 }, { x: 1.86, y: 0.34, z: 0.06 }, '#b31329');
+    glass.box({ x: 0, y: 1.62, z: 2.92 }, { x: 1.86, y: 0.64, z: 0.04 }, '#1d3746');
+    metal.box({ x: 0, y: 0.94, z: 2.93 }, { x: 1.48, y: 0.46, z: 0.05 }, '#cfd6de'); // chrome grille
+    // Slatted wooden/steel high-sided Bangladeshi cargo body + tarpaulin arch
+    paint.box({ x: 0, y: 1.48, z: -1.08 }, { x: 2.22, y: 1.68, z: 4.02 }, bedCol);
+    for (let s = 0; s < 4; s++) {
+      paint.box({ x: 0, y: 0.88 + s * 0.38, z: -1.08 }, { x: 2.26, y: 0.08, z: 4.06 }, '#f2c14e');
+    }
+    paint.box({ x: 0, y: 2.44, z: -1.08 }, { x: 2.08, y: 0.28, z: 3.92 }, '#355c7d');
+    for (const sx of [-0.82, 0.82]) {
+      head.cylinder({ x: sx, y: 0.88, z: 2.93 }, 0.12, 0.04, '#fff2c2', { x: Math.PI / 2 });
+      brake.box({ x: sx, y: 0.78, z: -3.11 }, { x: 0.24, y: 0.14, z: 0.04 }, '#e52521');
+    }
+    wheelPositions.push(
+      { x: 0.98, y: wheelRadius, z: 1.98 },
+      { x: -0.98, y: wheelRadius, z: 1.98 },
+      { x: 0.98, y: wheelRadius, z: -1.92 },
+      { x: -0.98, y: wheelRadius, z: -1.92 },
+    );
+  } else if (type === 'van') {
+    // Dhaka Compact Pickup / Covered Parcel Delivery Van (1-ton market carrier!)
+    wheelRadius = 0.33;
+    halfLength = 2.15;
+    halfWidth = 0.92;
+    radius = 1.68;
+    const cabCol = ['#f2f4f7', '#1d6fa5', '#e8a829', '#2b8a62'][v];
+    const boxCol = ['#e9edf2', '#ffd15c', '#18624a', '#d9483b'][v];
+    paint.box({ x: 0, y: 0.62, z: 0.98 }, { x: 1.68, y: 0.62, z: 1.72 }, cabCol);
+    paint.box({ x: 0, y: 1.24, z: 0.78 }, { x: 1.60, y: 0.68, z: 1.18 }, cabCol);
+    glass.box({ x: 0, y: 1.26, z: 1.38 }, { x: 1.44, y: 0.52, z: 0.04 }, '#1d3746', { x: -0.26 });
+    // Corrugated rear delivery box
+    paint.box({ x: 0, y: 1.18, z: -0.78 }, { x: 1.76, y: 1.56, z: 2.48 }, boxCol);
+    metal.box({ x: 0, y: 1.18, z: -2.03 }, { x: 1.62, y: 1.42, z: 0.03 }, '#cfd6de');
+    for (const sx of [-0.62, 0.62]) {
+      head.box({ x: sx, y: 0.66, z: 1.85 }, { x: 0.24, y: 0.14, z: 0.04 }, '#fff3c4');
+      brake.box({ x: sx, y: 0.62, z: -2.04 }, { x: 0.22, y: 0.12, z: 0.04 }, '#e52521');
+    }
+    wheelPositions.push(
+      { x: 0.78, y: wheelRadius, z: 1.18 },
+      { x: -0.78, y: wheelRadius, z: 1.18 },
+      { x: 0.78, y: wheelRadius, z: -1.18 },
+      { x: -0.78, y: wheelRadius, z: -1.18 },
+    );
+  } else if (type === 'motorbike') {
+    // 150cc Dhaka Commuter Motorcycle + Helmeted Rider
+    wheelRadius = 0.29;
+    spokedWheels = true;
+    halfLength = 1.02;
+    halfWidth = 0.38;
+    radius = 0.76;
+    const tankCol = ['#d62828', '#1d3557', '#2a9d8f', '#f77f00'][v];
+    metal.box({ x: 0, y: 0.48, z: 0 }, { x: 0.14, y: 0.26, z: 0.86 }, '#2a2f35'); // engine block
+    metal.cylinder({ x: 0.11, y: 0.34, z: -0.32 }, 0.038, 0.92, '#cfd6de', { x: Math.PI / 2 - 0.08 }); // chrome exhaust
+    paint.box({ x: 0, y: 0.74, z: 0.18 }, { x: 0.28, y: 0.22, z: 0.48 }, tankCol, { x: -0.12 }); // fuel tank
+    paint.box({ x: 0, y: 0.70, z: -0.34 }, { x: 0.24, y: 0.12, z: 0.62 }, '#1e2024'); // stepped seat
+    metal.cylinder({ x: 0, y: 0.62, z: 0.56 }, 0.024, 0.66, '#dce3ea', { x: -0.34 }); // front forks
+    metal.cylinder({ x: 0, y: 0.95, z: 0.44 }, 0.015, 0.58, '#dce3ea', { z: Math.PI / 2 }); // handlebars
+    // Rider + full-face helmet
+    paint.box({ x: 0, y: 1.08, z: -0.10 }, { x: 0.36, y: 0.46, z: 0.24 }, ['#264653', '#457b9d', '#6d597a', '#354f52'][v], { x: 0.32 });
+    paint.cylinder({ x: 0, y: 1.40, z: 0.02 }, 0.12, 0.22, tankCol);
+    glass.box({ x: 0, y: 1.40, z: 0.12 }, { x: 0.18, y: 0.09, z: 0.04 }, '#142430');
+    head.cylinder({ x: 0, y: 0.80, z: 0.64 }, 0.075, 0.04, '#fff6d1', { x: Math.PI / 2 });
+    brake.box({ x: 0, y: 0.72, z: -0.72 }, { x: 0.10, y: 0.06, z: 0.03 }, '#e52521');
+    wheelPositions.push(
+      { x: 0, y: wheelRadius, z: 0.66 },
+      { x: 0, y: wheelRadius, z: -0.64 },
+    );
+  } else {
+    // Dhaka Private Sedan (Toyota Premio / Corolla Allion street staple!)
+    wheelRadius = 0.32;
+    halfLength = 2.08;
+    halfWidth = 0.88;
+    radius = 1.62;
+    const carCol = ['#e8ecef', '#1f2933', '#7f1d1d', '#1e4e79'][v];
+    // Lower body + bumpers + sculpted hood & trunk + greenhouse cabin
+    paint.box({ x: 0, y: 0.54, z: 0 }, { x: 1.72, y: 0.48, z: 4.02 }, carCol);
+    paint.box({ x: 0, y: 0.38, z: 1.98 }, { x: 1.74, y: 0.24, z: 0.22 }, carCol);
+    paint.box({ x: 0, y: 0.38, z: -1.98 }, { x: 1.74, y: 0.24, z: 0.22 }, carCol);
+    paint.box({ x: 0, y: 1.06, z: -0.14 }, { x: 1.48, y: 0.56, z: 2.02 }, carCol);
+    // Sloped front & rear windshields + side glass + chrome grille + mirrors
+    glass.box({ x: 0, y: 1.04, z: 0.92 }, { x: 1.38, y: 0.52, z: 0.05 }, '#1c3544', { x: -0.62 });
+    glass.box({ x: 0, y: 1.04, z: -1.18 }, { x: 1.34, y: 0.48, z: 0.05 }, '#1c3544', { x: 0.58 });
+    glass.box({ x: 0, y: 1.06, z: -0.14 }, { x: 1.50, y: 0.42, z: 1.58 }, '#1c3544');
+    metal.box({ x: 0, y: 0.54, z: 2.02 }, { x: 0.88, y: 0.20, z: 0.04 }, '#cfd6de');
+    for (const sx of [-1, 1]) {
+      paint.box({ x: sx * 0.90, y: 0.92, z: 0.62 }, { x: 0.14, y: 0.09, z: 0.12 }, carCol);
+      head.box({ x: sx * 0.62, y: 0.60, z: 2.02 }, { x: 0.30, y: 0.14, z: 0.04 }, '#fff6d6');
+      brake.box({ x: sx * 0.62, y: 0.64, z: -2.02 }, { x: 0.34, y: 0.14, z: 0.04 }, '#e52521');
+    }
+    wheelPositions.push(
+      { x: 0.78, y: wheelRadius, z: 1.24 },
+      { x: -0.78, y: wheelRadius, z: 1.24 },
+      { x: 0.78, y: wheelRadius, z: -1.24 },
+      { x: -0.78, y: wheelRadius, z: -1.24 },
+    );
+  }
+
+  const pMesh = paint.build();
+  const mMesh = metal.build();
+  const gMesh = glass.build();
+  const hMesh = head.build();
+  const bMesh = brake.build();
+  for (const m of [pMesh, mMesh, gMesh, hMesh, bMesh]) {
+    if (m) m.geometry.userData.shared = true;
+  }
+
+  const built: CachedBodyTemplate = {
+    paintGeo: pMesh ? pMesh.geometry : null,
+    metalGeo: mMesh ? mMesh.geometry : null,
+    glassGeo: gMesh ? gMesh.geometry : null,
+    headGeo: hMesh ? hMesh.geometry : null,
+    brakeGeo: bMesh ? bMesh.geometry : null,
+    wheelPositions,
+    wheelRadius,
+    spokedWheels,
+    halfLength,
+    halfWidth,
+    radius,
+  };
+  templateCache.set(key, built);
+  return built;
 }
 
-/** Big painted bus with fictional operator livery. */
-export function makeBus(bodyColor = '#c0392b', accent = '#f0d070'): TrafficModel {
-  const group = new THREE.Group();
-  const parts: THREE.BufferGeometry[] = [
-    boxGeo(2.45, 1.55, 8.8, bodyColor, 0, 1.15, 0),
-    boxGeo(2.42, 1.15, 8.6, '#ded6c4', 0, 2.42, 0),
-    boxGeo(2.5, 0.14, 8.9, accent, 0, 3.05, 0),
-    boxGeo(2.3, 0.6, 8.2, bodyColor, 0, 3.35, 0),
-    boxGeo(2.52, 0.18, 8.9, '#2c2c2c', 0, 0.5, 0),
-    // bumpers
-    boxGeo(2.5, 0.3, 0.3, '#3a3a3a', 0, 0.6, 4.45),
-    boxGeo(2.5, 0.3, 0.3, '#3a3a3a', 0, 0.6, -4.45),
-    // roof rack
-    boxGeo(2.0, 0.1, 3.2, '#6b5a44', 0, 3.75, -0.6),
-  ];
-  const glass: THREE.BufferGeometry[] = [
-    boxGeo(2.3, 0.72, 7.6, '#16232c', 0, 2.42, 0.2),
-    boxGeo(2.20, 0.9, 0.12, '#16232c', 0, 2.35, 4.34),
-    boxGeo(2.2, 0.9, 0.12, '#16232c', 0, 2.35, -4.34),
-  ];
-  const body = new THREE.Mesh(merge(parts), bodyMat);
-  body.castShadow = true;
-  const windows = new THREE.Mesh(merge(glass), glassMat);
-  group.add(body, windows);
-  const wheels = addWheels(
-    group,
-    [
-      [-1.2, 0.52, 2.9],
-      [1.2, 0.52, 2.9],
-      [-1.2, 0.52, -2.6],
-      [1.2, 0.52, -2.6],
-    ],
-    0.52,
-    0.34,
-  );
-  return { group, wheels, halfLength: 4.5, halfWidth: 1.3, height: 3.8 };
+export function buildTrafficMesh(type: TrafficType, variant = 0): BuiltTrafficMesh {
+  const tpl = getOrBuildTemplate(type, variant);
+  const root = new THREE.Group();
+  root.rotation.order = 'YXZ';
+
+  if (tpl.paintGeo) {
+    const m = new THREE.Mesh(tpl.paintGeo, bodyPaintMat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.userData.shared = true;
+    root.add(m);
+  }
+  if (tpl.metalGeo) {
+    const m = new THREE.Mesh(tpl.metalGeo, trimMetalMat);
+    m.castShadow = false;
+    m.userData.shared = true;
+    root.add(m);
+  }
+  if (tpl.glassGeo) {
+    const m = new THREE.Mesh(tpl.glassGeo, glassMat);
+    m.userData.shared = true;
+    root.add(m);
+  }
+  if (tpl.headGeo) {
+    const m = new THREE.Mesh(tpl.headGeo, headGlowMat);
+    m.userData.shared = true;
+    root.add(m);
+  }
+
+  let brakeMat: THREE.MeshStandardMaterial | null = null;
+  if (tpl.brakeGeo) {
+    brakeMat = new THREE.MeshStandardMaterial({
+      color: 0xc81e1e,
+      emissive: 0xff2218,
+      emissiveIntensity: 0.25,
+      roughness: 0.35,
+    });
+    const bm = new THREE.Mesh(tpl.brakeGeo, brakeMat);
+    bm.userData.shared = true;
+    root.add(bm);
+  }
+
+  const wheels: THREE.Object3D[] = [];
+  for (const wp of tpl.wheelPositions) {
+    const w = tpl.spokedWheels
+      ? createWheel(tpl.wheelRadius, '#1a1c1f', '#d4dbe2', 14)
+      : buildDiscWheel(tpl.wheelRadius, tpl.wheelRadius > 0.4 ? 0.26 : 0.19);
+    w.position.set(wp.x, wp.y, wp.z);
+    root.add(w);
+    wheels.push(w);
+  }
+
+  return {
+    root,
+    wheels,
+    wheelRadius: tpl.wheelRadius,
+    halfLength: tpl.halfLength,
+    halfWidth: tpl.halfWidth,
+    radius: tpl.radius,
+    brakeMat,
+  };
 }
-
-export function makeCar(color = '#d9d4c6'): TrafficModel {
-  const group = new THREE.Group();
-  const parts = [
-    boxGeo(1.78, 0.62, 4.2, color, 0, 0.62, 0),
-    boxGeo(1.6, 0.52, 2.1, color, 0, 1.16, -0.15),
-    boxGeo(1.82, 0.14, 4.24, '#2b2b2b', 0, 0.34, 0),
-    boxGeo(1.7, 0.12, 0.22, '#c9c9c9', 0, 0.72, 2.12),
-    boxGeo(1.7, 0.12, 0.22, '#c9c9c9', 0, 0.72, -2.12),
-  ];
-  const glass = [boxGeo(1.5, 0.44, 1.9, '#1b2b33', 0, 1.16, -0.15)];
-  const body = new THREE.Mesh(merge(parts), bodyMat);
-  body.castShadow = true;
-  group.add(body, new THREE.Mesh(merge(glass), glassMat));
-  const wheels = addWheels(
-    group,
-    [
-      [-0.84, 0.32, 1.35],
-      [0.84, 0.32, 1.35],
-      [-0.84, 0.32, -1.35],
-      [0.84, 0.32, -1.35],
-    ],
-    0.32,
-    0.2,
-  );
-  return { group, wheels, halfLength: 2.2, halfWidth: 0.95, height: 1.6 };
-}
-
-/** CNG auto-rickshaw — visually distinct from the pedal rickshaw. */
-export function makeCNG(): TrafficModel {
-  const group = new THREE.Group();
-  const parts = [
-    boxGeo(1.3, 0.85, 2.2, '#1f7a4f', 0, 0.72, -0.1),
-    boxGeo(1.25, 0.8, 0.9, '#1f7a4f', 0, 0.7, 1.15),
-    boxGeo(1.34, 0.1, 2.4, '#c9c9c9', 0, 0.32, 0),
-    boxGeo(1.24, 0.42, 1.35, '#2b8f5f', 0, 1.5, -0.55),
-    boxGeo(1.28, 0.1, 1.4, '#d8d2c4', 0, 1.72, -0.55),
-    boxGeo(0.5, 0.28, 0.06, '#f0d070', 0, 1.35, 1.62),
-  ];
-  const glass = [
-    boxGeo(1.12, 0.5, 0.9, '#1a2a32', 0, 1.14, 1.0),
-    boxGeo(1.12, 0.42, 0.06, '#1a2a32', 0, 1.2, 1.58),
-  ];
-  const body = new THREE.Mesh(merge(parts), bodyMat);
-  body.castShadow = true;
-  group.add(body, new THREE.Mesh(merge(glass), glassMat));
-  const wheels = addWheels(
-    group,
-    [
-      [0, 0.3, 1.35],
-      [-0.62, 0.3, -0.75],
-      [0.62, 0.3, -0.75],
-    ],
-    0.3,
-    0.16,
-  );
-  return { group, wheels, halfLength: 1.5, halfWidth: 0.7, height: 1.9 };
-}
-
-export function makeMotorcycle(): TrafficModel {
-  const group = new THREE.Group();
-  const parts = [
-    boxGeo(0.22, 0.3, 1.3, '#1b3a7a', 0, 0.62, 0),
-    boxGeo(0.42, 0.12, 0.6, '#2a2a2a', 0, 0.86, -0.15),
-    boxGeo(0.3, 0.1, 0.5, '#3a3a3a', 0, 1.0, -0.35),
-    boxGeo(0.55, 0.5, 0.25, '#c95a3a', 0, 1.15, 0.0),
-    boxGeo(0.24, 0.24, 0.24, '#8a5a3c', 0, 1.55, 0.0),
-    boxGeo(0.5, 0.08, 0.12, '#2a2a2a', 0, 1.28, 0.15),
-  ];
-  const body = new THREE.Mesh(merge(parts), bodyMat);
-  body.castShadow = true;
-  group.add(body);
-  const wheels = addWheels(
-    group,
-    [
-      [0, 0.3, 0.68],
-      [0, 0.3, -0.66],
-    ],
-    0.3,
-    0.1,
-  );
-  return { group, wheels, halfLength: 0.9, halfWidth: 0.3, height: 1.7 };
-}
-
-/** Another pedal rickshaw (simplified) for traffic variety. */
-export function makeRickshaw(color = '#b8322a'): TrafficModel {
-  const group = new THREE.Group();
-  const parts = [
-    boxGeo(1.0, 0.5, 1.35, color, 0, 0.62, -0.25),
-    boxGeo(1.06, 0.16, 0.7, '#7a1f18', 0, 0.9, -0.62),
-    boxGeo(0.95, 0.12, 0.5, '#2a2a2a', 0, 0.42, -0.25),
-    boxGeo(0.06, 0.75, 0.06, '#2f2f2f', 0, 0.75, 0.5),
-    boxGeo(0.5, 0.06, 0.08, '#c9c9c9', 0, 1.12, 0.5),
-    boxGeo(1.1, 0.55, 0.9, '#332a24', 0, 1.42, -0.75),
-    boxGeo(1.14, 0.78, 0.06, '#d8a24a', 0, 0.86, -1.02),
-    boxGeo(1.0, 0.75, 0.08, '#e8b25a', 0, 0.9, -1.0),
-    boxGeo(0.5, 0.55, 0.42, '#d8d0c0', 0, 1.12, 0.1),
-    boxGeo(0.24, 0.24, 0.24, '#8a5a3c', 0, 1.5, 0.12),
-  ];
-  const body = new THREE.Mesh(merge(parts), bodyMat);
-  body.castShadow = true;
-  group.add(body);
-  const wheels = addWheels(
-    group,
-    [
-      [0, 0.34, 0.62],
-      [-0.53, 0.34, -0.45],
-      [0.53, 0.34, -0.45],
-    ],
-    0.34,
-    0.08,
-  );
-  return { group, wheels, halfLength: 1.25, halfWidth: 0.6, height: 1.75 };
-}
-
-export function makeTruck(color = '#3f5a7a'): TrafficModel {
-  const group = new THREE.Group();
-  const parts = [
-    boxGeo(2.1, 1.5, 2.2, color, 0, 1.25, 2.0),
-    boxGeo(2.2, 2.1, 4.2, '#d6c49a', 0, 1.6, -1.3),
-    boxGeo(2.24, 0.5, 4.24, '#8a6a3a', 0, 2.5, -1.3),
-    boxGeo(2.24, 0.14, 6.4, '#4a4a4a', 0, 0.42, 0),
-    boxGeo(2.2, 0.2, 0.3, '#2a2a2a', 0, 0.55, 3.2),
-  ];
-  const glass = [boxGeo(1.95, 0.6, 0.1, '#1a2a32', 0, 1.75, 3.08)];
-  const body = new THREE.Mesh(merge(parts), bodyMat);
-  body.castShadow = true;
-  group.add(body, new THREE.Mesh(merge(glass), glassMat));
-  const wheels = addWheels(
-    group,
-    [
-      [-0.95, 0.45, 2.2],
-      [0.95, 0.45, 2.2],
-      [-0.95, 0.45, -1.6],
-      [0.95, 0.45, -1.6],
-    ],
-    0.45,
-    0.3,
-  );
-  return { group, wheels, halfLength: 3.2, halfWidth: 1.15, height: 2.8 };
-}
-
-export const VEHICLE_MAKERS = {
-  bus: makeBus,
-  car: makeCar,
-  cng: makeCNG,
-  motorcycle: makeMotorcycle,
-  rickshaw: makeRickshaw,
-  truck: makeTruck,
-} as const;
-
-export type VehicleKind = keyof typeof VEHICLE_MAKERS;
-
-export const TRAFFIC_PALETTE: Record<VehicleKind, string[]> = {
-  bus: ['#c0392b', '#1f6b4f', '#2b4c7e', '#8a3a2a'],
-  car: ['#d9d4c6', '#2b2b2b', '#b8c4cc', '#7a2a2a', '#365a7a', '#e0d8a8'],
-  cng: ['#1f7a4f'],
-  motorcycle: ['#1b3a7a', '#7a1f18', '#2a2a2a'],
-  rickshaw: ['#b8322a', '#1c5a3a', '#1c3f7a', '#7a1f5a'],
-  truck: ['#3f5a7a', '#6b4a2a', '#4a6b3a'],
-};

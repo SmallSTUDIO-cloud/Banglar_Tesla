@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { CAMERA_MODES } from '../../src/core/config';
+import { COSMETICS, UPGRADES, VEHICLES } from '../../src/economy/catalog';
 import { STRINGS, translate, t, setLocale, getLocale, hasString } from '../../src/core/i18n';
 
 const PLACEHOLDER = /\{[a-zA-Z0-9_]+\}/g;
@@ -66,6 +68,27 @@ describe('localisation', () => {
       expect(entry.bn.includes('\uFFFD'), key).toBe(false);
       expect(entry.bn.includes('\\u'), key).toBe(false);
       expect(entry.bn.includes('????'), key).toBe(false);
+    }
+  });
+
+  it('defines all camera modes, vehicles, upgrades, cosmetics, Dokan, and OSM keys', () => {
+    for (const mode of CAMERA_MODES) {
+      expect(hasString(`cam.mode.${mode}`), `cam.mode.${mode}`).toBe(true);
+      expect(hasString(`cam.short.${mode}`), `cam.short.${mode}`).toBe(true);
+    }
+    for (const v of VEHICLES) {
+      expect(hasString(v.nameKey), v.nameKey).toBe(true);
+      expect(hasString(v.descKey), v.descKey).toBe(true);
+    }
+    for (const u of UPGRADES) {
+      expect(hasString(u.nameKey), u.nameKey).toBe(true);
+      expect(hasString(u.descKey), u.descKey).toBe(true);
+    }
+    for (const c of COSMETICS) {
+      expect(hasString(c.nameKey), c.nameKey).toBe(true);
+    }
+    for (const k of ['cam.switched', 'garage.stat.accel', 'store.comingSoon', 'store.comingSoonSub', 'osm.credit']) {
+      expect(hasString(k), k).toBe(true);
     }
   });
 });

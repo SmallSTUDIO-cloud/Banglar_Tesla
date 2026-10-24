@@ -6,13 +6,18 @@ on:
       - arena/7873a750-banglar-tesla
       - main
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish APK to GitHub Release v0.2.0-android-test'
+        required: false
+        default: 'true'
 
 permissions:
   contents: write
 
 jobs:
   build-apk:
-    name: Build Debug Android APK
+    name: Build Debug Android APK (v0.2.0-android-test)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -61,8 +66,8 @@ jobs:
             --java "$WORK_DIR/gen" \
             --min-sdk-version 24 \
             --target-sdk-version 34 \
-            --version-code 1 \
-            --version-name 0.1.0-android-test \
+            --version-code 2 \
+            --version-name 0.2.0-android-test \
             -0 .ttf -0 .png -0 .jpg -0 .webp -0 .mp3 -0 .ogg -0 .wav \
             --auto-add-overlay \
             "$WORK_DIR/res.zip"
@@ -83,7 +88,7 @@ jobs:
             -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-          OUT_APK="artifacts/banglar-tesla-v0.1.0-android-test-debug.apk"
+          OUT_APK="artifacts/banglar-tesla-v0.2.0-android-test-debug.apk"
           "$BUILD_TOOLS/apksigner" sign \
             --ks "$KEYSTORE" \
             --ks-key-alias androiddebugkey \
@@ -102,47 +107,51 @@ jobs:
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: banglar-tesla-android-apk
-          path: artifacts/banglar-tesla-v0.1.0-android-test-debug.apk
+          name: banglar-tesla-v0.2.0-android-apk
+          path: artifacts/banglar-tesla-v0.2.0-android-test-debug.apk
           if-no-files-found: error
 
-      - name: Publish APK to GitHub Release v0.1.0-android-test
+      - name: Publish APK to GitHub Release v0.2.0-android-test
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.2.0]')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v0.1.0-android-test"
-          APK="artifacts/banglar-tesla-v0.1.0-android-test-debug.apk"
+          TAG="v0.2.0-android-test"
+          APK="artifacts/banglar-tesla-v0.2.0-android-test-debug.apk"
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
+          SIZE="$(stat -c%s "$APK")"
           NOTES=$(cat <<EOF
-          ## Banglar Tesla — বাংলার টেসলা (Android Test Build \`v0.1.0-android-test\`)
+          ## Banglar Tesla — বাংলার টেসলা (Android Test Build \`v0.2.0-android-test\`)
 
-          Installable debug-signed Android \`.apk\` packaging the full 3D Dhaka cycle-rickshaw game (**Passenger Duty**, **Free Ride**, **Daily Challenge**, \`৳\` economy, rickshaw garage/store/upgrades/paint/art, Bangla & English UI, procedural synth audio, and local save persistence) for offline Android phone testing.
+          Major upgrade of **Banglar Tesla** packaging the full offline 3D **Mohammadpur, Dhaka** rickshaw driving simulator into an installable Android \`.apk\`.
+
+          ### What's New in \`v0.2.0-android-test\`
+          - **Fixed Reversed Steering:** Corrected full \`input → steering → yaw → fork → camera\` pipeline so LEFT turns LEFT and RIGHT turns RIGHT across touch, analog wheel, keyboard, and gamepad in all camera angles.
+          - **NFS: Most Wanted-Inspired 7-Mode Camera System:** Smooth HUD camera cycling across Classic Chase, Close Chase, Wide Chase, Low Cinematic Chase, Front-Facing, Rider Cockpit, and Side Cinematic views with building/bus anti-clipping.
+          - **Authentic Mohammadpur Street Network (OpenStreetMap ODbL):** Connected street graph featuring Mohammadpur Bus Stand, Asad Avenue, Town Hall Market, Sher Shah Suri Road, Tajmahal Road, Nurjahan Road, Salimullah Road, Ring Road, Iqbal Road, Humayun Road, Babar Road, Zakir Hossain Road, and residential shortcuts.
+          - **Rebuilt Cycle Rickshaw, Purchasable Electric Rickshaw & Upgraded Fleet:** Exact wheel-ground alignment (zero sinking/floating), detailed pedal rickshaw rig, drivable **Banglar Bidyut Electric Rickshaw**, **Rickshaw Roadster — Coming Soon** preview, and upgraded CNGs, Dhaka buses, cars, motorcycles, delivery vans, trucks, and NPC rickshaws.
+          - **Street Life, Food Stalls, Crowds & Traffic Jams:** Fuchka & Jhalmuri carts, tea/fruit/vegetable stalls, flush WASA manholes & drains, dense crowds with proximity avoidance & Bengali speech reactions, and dynamic Dhaka traffic jams with minimap route guidance & detours.
+          - **Dokan Store & Measurable Vehicle Upgrades:** Full Dokan store flow + real gameplay effects for Drivetrain/Motor, Brakes, Tires, Handling, Durability/Suspension, and Electric Efficiency.
+          - **Memory & Performance Optimization:** Shared/instanced geometry, sector frustum culling, compact textures, lazy studio showroom, and pooled simulation.
 
           ### APK Details
-          - **File:** \`banglar-tesla-v0.1.0-android-test-debug.apk\`
+          - **File:** \`banglar-tesla-v0.2.0-android-test-debug.apk\` (\`$SIZE\` bytes)
           - **App Name:** \`Banglar Tesla\`
           - **Application ID:** \`com.shostalab.banglartesla\`
-          - **Version:** \`0.1.0-android-test\` (\`versionCode: 1\`)
+          - **Version:** \`0.2.0-android-test\` (\`versionCode: 2\`)
           - **Android Compatibility:** Android 7.0+ (\`minSdkVersion 24\`, \`targetSdkVersion 34\`)
-          - **Orientation:** Landscape (\`sensorLandscape\`, immersive fullscreen)
           - **Permissions Requested:** None (runs 100% offline from bundled APK assets)
           - **Signing:** Android debug signature (\`APK Signature Scheme v1 + v2 + v3\`)
           - **SHA-256:** \`$SHA\`
-
-          ### Phone Installation Steps
-          1. Tap **\`banglar-tesla-v0.1.0-android-test-debug.apk\`** under **Assets** below to download it on your Android phone.
-          2. Open the downloaded \`.apk\` from your browser downloads or **Files** app.
-          3. Enable **Install unknown apps / Allow from this source** if prompted, then tap **Install**.
-          4. If Play Protect warns about an unrecognized developer (normal for debug test builds), tap **More details** → **Install anyway**.
-          5. Open **Banglar Tesla** and hold your phone horizontally (landscape).
+          - **Map Attribution:** Street connectivity & landmarks derived from OpenStreetMap contributors (ODbL 1.0); buildings and street props procedurally generated.
           EOF
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --clobber
-            gh release edit "$TAG" --title "Banglar Tesla — Android Test Build" --notes "$NOTES"
+            gh release edit "$TAG" --title "Banglar Tesla v0.2.0 — Mohammadpur Update (Android APK)" --notes "$NOTES"
           else
             gh release create "$TAG" "$APK" \
               --target "${{ github.sha }}" \
-              --title "Banglar Tesla — Android Test Build" \
+              --title "Banglar Tesla v0.2.0 — Mohammadpur Update (Android APK)" \
               --notes "$NOTES"
           fi

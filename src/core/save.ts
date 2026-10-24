@@ -7,7 +7,7 @@
 
 import type { DayPhase, WeatherKind } from './config';
 import { clamp } from './mathx';
-import { DEFAULT_COSMETICS, cosmeticById, VEHICLES, TAPES } from '../economy/catalog';
+import { DEFAULT_COSMETICS, cosmeticById, UPGRADES, VEHICLES, TAPES } from '../economy/catalog';
 import type { CosmeticCategory } from '../economy/catalog';
 import type { StorageLike } from './settings';
 
@@ -45,7 +45,7 @@ export function createDefaultProgress(now = Date.now()): Progress {
   return {
     version: SAVE_VERSION,
     balance: 500,
-    ownedVehicles: VEHICLES.filter((v) => v.ownedByDefault).map((v) => v.id),
+    ownedVehicles: VEHICLES.filter((v) => v.ownedByDefault && !v.comingSoon).map((v) => v.id),
     selectedVehicle: 'classic',
     upgrades: {},
     ownedCosmetics: ['bell.classic'],
@@ -83,7 +83,7 @@ function strArray(v: unknown): string[] {
 /** Migrate older save shapes forward. Each step is a pure function. */
 export function migrateProgress(raw: unknown): unknown {
   if (!isRecord(raw)) return raw;
-  let data = { ...raw };
+  const data = { ...raw };
   const version = num(data.version, 1, 0, 99);
 
   if (version < 1) {
@@ -114,7 +114,12 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
   if (!isRecord(raw)) return def;
   const data = raw as Record<string, unknown>;
 
-  const ownedVehicles = strArray(data.ownedVehicles).filter((id) => VEHICLES.some((v) => v.id === id));
+  // Never allow comingSoon vehicles (e.g. 'roadster') into ownedVehicles
+  const validPurchasableIds = new Set(VEHICLES.filter((v) => !v.comingSoon).map((v) => v.id));
+  const ownedVehicles: string[] = [];
+  for (const id of strArray(data.ownedVehicles)) {
+    if (validPurchasableIds.has(id) && !ownedVehicles.includes(id)) ownedVehicles.push(id);
+  }
   if (!ownedVehicles.includes('classic')) ownedVehicles.unshift('classic');
 
   const selected = typeof data.selectedVehicle === 'string' ? data.selectedVehicle : def.selectedVehicle;
@@ -123,7 +128,9 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
   const upgrades: Record<string, number> = {};
   if (isRecord(data.upgrades)) {
     for (const [key, value] of Object.entries(data.upgrades)) {
-      const level = num(value, 0, 0, 3);
+      const defUp = UPGRADES.find((u) => u.id === key);
+      const cap = defUp ? defUp.maxLevel : 3;
+      const level = num(value, 0, 0, cap);
       if (level > 0) upgrades[key] = Math.floor(level);
     }
   }
@@ -139,7 +146,7 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
   }
 
   const ownedCosmetics = strArray(data.ownedCosmetics).filter((id) => !!cosmeticById(id));
-  for (const id of data === undefined ? [] : Object.values(cosmetics)) {
+  for (const id of Object.values(cosmetics)) {
     if (id && !ownedCosmetics.includes(id)) ownedCosmetics.push(id);
   }
 

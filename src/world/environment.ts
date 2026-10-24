@@ -380,6 +380,10 @@ export class EnvironmentSystem {
   }
 
   /** Per-frame update: rain follows the player, lamp intensities interpolate. */
+  private tmpSunDir = new THREE.Vector3();
+  private nearestLampIdx = new Int32Array(8);
+  private nearestLampDist = new Float32Array(8);
+
   update(dt: number, focus: THREE.Vector3): void {
     const previousWet = this.wetness;
     this.wetness = damp(this.wetness, this.targetWetness, 0.8, dt);
@@ -387,27 +391,48 @@ export class EnvironmentSystem {
     const cfg = PHASES[this.phase];
     const lampTarget = cfg.lamps * (this.weather === 'rain' && this.phase !== 'night' ? 0.5 : 1);
 
-    if (this.lampPositions.length > 0) {
-      // choose the nearest lamps each frame (cheap: 6 candidates)
-      const sorted = this.lampPositions
-        .map((p, i) => ({ p, i, d: p.distanceToSquared(focus) }))
-        .sort((a, b) => a.d - b.d)
-        .slice(0, this.lamps.length);
-      this.lamps.forEach((light, idx) => {
-        const entry = sorted[idx];
-        if (!entry) return;
-        light.position.copy(entry.p);
-        light.intensity = lampTarget > 0.02 ? 58 * lampTarget : 0;
-        const sprite = this.glowSprites[idx];
-        if (sprite) {
-          sprite.position.copy(entry.p);
-          sprite.material.opacity = lampTarget * 0.75;
-          sprite.visible = lampTarget > 0.03;
+    if (this.lampPositions.length > 0 && this.lamps.length > 0) {
+      if (lampTarget <= 0.02) {
+        for (let i = 0; i < this.lamps.length; i++) {
+          this.lamps[i].intensity = 0;
+          if (this.glowSprites[i]) this.glowSprites[i].visible = false;
         }
-      });
-      for (let i = sorted.length; i < this.glowSprites.length; i++) {
-        this.glowSprites[i].visible = false;
-        this.lamps[i].intensity = 0;
+      } else {
+        const k = Math.min(this.lamps.length, 8);
+        for (let j = 0; j < k; j++) {
+          this.nearestLampIdx[j] = -1;
+          this.nearestLampDist[j] = Infinity;
+        }
+        for (let i = 0; i < this.lampPositions.length; i++) {
+          const d = this.lampPositions[i].distanceToSquared(focus);
+          if (d >= this.nearestLampDist[k - 1]) continue;
+          let ins = k - 1;
+          while (ins > 0 && d < this.nearestLampDist[ins - 1]) {
+            this.nearestLampDist[ins] = this.nearestLampDist[ins - 1];
+            this.nearestLampIdx[ins] = this.nearestLampIdx[ins - 1];
+            ins--;
+          }
+          this.nearestLampDist[ins] = d;
+          this.nearestLampIdx[ins] = i;
+        }
+        for (let idx = 0; idx < this.lamps.length; idx++) {
+          const pIdx = idx < k ? this.nearestLampIdx[idx] : -1;
+          const light = this.lamps[idx];
+          const sprite = this.glowSprites[idx];
+          if (pIdx < 0) {
+            light.intensity = 0;
+            if (sprite) sprite.visible = false;
+            continue;
+          }
+          const pos = this.lampPositions[pIdx];
+          light.position.copy(pos);
+          light.intensity = 58 * lampTarget;
+          if (sprite) {
+            sprite.position.copy(pos);
+            sprite.material.opacity = lampTarget * 0.75;
+            sprite.visible = lampTarget > 0.03;
+          }
+        }
       }
     }
 
@@ -419,8 +444,8 @@ export class EnvironmentSystem {
     this.sun.target.position.set(focus.x, 0, focus.z);
     const el = THREE.MathUtils.degToRad(cfg.elevation);
     const az = THREE.MathUtils.degToRad(cfg.azimuth);
-    const dir = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.max(0.05, Math.sin(el)), Math.cos(el) * Math.cos(az));
-    this.sun.position.set(focus.x, 0, focus.z).addScaledVector(dir.normalize(), 55);
+    this.tmpSunDir.set(Math.cos(el) * Math.sin(az), Math.max(0.05, Math.sin(el)), Math.cos(el) * Math.cos(az)).normalize();
+    this.sun.position.set(focus.x, 0, focus.z).addScaledVector(this.tmpSunDir, 55);
     this.sun.target.updateMatrixWorld();
 
     if (this.rain && this.rainGeo) {

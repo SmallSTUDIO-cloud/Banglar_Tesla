@@ -1,756 +1,628 @@
 /**
- * Procedural texture generation. Every texture in the game is drawn here at
- * runtime — there are no downloaded image assets, so nothing is unlicensed.
+ * Procedural texture generator — crisp, richly detailed Bangladeshi surfaces,
+ * signs and rickshaw art with minimal GPU/WebView memory overhead.
  *
- * Textures are cached (a single canvas per material family) and shared between
- * meshes to keep GPU memory and draw calls low on phones.
+ * Key RAM optimization:
+ * Instead of retaining dozens of live `<canvas>` + 2D Skia backing stores via
+ * `CanvasTexture`, static procedural textures are rasterised on a single shared
+ * scratch `<canvas>` and uploaded as compact `THREE.DataTexture` buffers, after
+ * which the scratch canvas is shrunk to 1x1. `SignAtlas` uses a crisp 1024x1024
+ * sheet (packing 64 Bengali shop signs at 128x128 / 256x128 slots) rather than
+ * 2048x2048, saving ~36 MB of combined RGBA + mipmap + Skia memory.
  */
 
 import * as THREE from 'three';
-import { fbm2, mulberry32, TAU, clamp01 } from '../core/mathx';
-import type { SignDef } from './layout';
-
-export const FONT_FAMILY = '"Hind Siliguri", "Noto Sans Bengali", sans-serif';
-
-function canvas2d(w: number, h = w): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('2D canvas unavailable');
-  return { canvas, ctx };
-}
-
-function toTexture(canvas: HTMLCanvasElement, srgb = true): THREE.CanvasTexture {
-  const tex = new THREE.CanvasTexture(canvas);
-  if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  txRegistry.push(tex);
-  return tex;
-}
-
-/** Track every texture so quality changes can re-apply anisotropy/filters. */
-export const txRegistry: THREE.Texture[] = [];
+import { mulberry32 } from '../core/mathx';
 
 const cache = new Map<string, THREE.Texture>();
+let maxAnisotropy = 4;
+let sharedScratchCanvas: HTMLCanvasElement | null = null;
 
-function cached(key: string, make: () => THREE.Texture): THREE.Texture {
+export function setTextureQuality(anisotropy: number): void {
+  maxAnisotropy = anisotropy;
+  for (const tex of cache.values()) {
+    tex.anisotropy = maxAnisotropy;
+  }
+}
+
+function getScratchContext(width: number, height: number): CanvasRenderingContext2D {
+  if (!sharedScratchCanvas) {
+    sharedScratchCanvas = document.createElement('canvas');
+  }
+  sharedScratchCanvas.width = width;
+  sharedScratchCanvas.height = height;
+  const ctx = sharedScratchCanvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.clearRect(0, 0, width, height);
+  return ctx;
+}
+
+export function releaseScratchCanvas(): void {
+  if (sharedScratchCanvas) {
+    sharedScratchCanvas.width = 1;
+    sharedScratchCanvas.height = 1;
+  }
+}
+
+function makeTexture(
+  key: string,
+  width: number,
+  height: number,
+  draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
+  opts: { repeat?: [number, number]; srgb?: boolean; mipmaps?: boolean } = {},
+): THREE.Texture {
   const hit = cache.get(key);
   if (hit) return hit;
-  const tex = make();
+
+  const ctx = getScratchContext(width, height);
+  draw(ctx, width, height);
+  const imageData = ctx.getImageData(0, 0, width, height);
+  releaseScratchCanvas();
+
+  const bytes = new Uint8Array(imageData.data.buffer);
+  const tex = new THREE.DataTexture(bytes, width, height, THREE.RGBAFormat);
+  tex.flipY = true;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  if (opts.repeat) tex.repeat.set(opts.repeat[0], opts.repeat[1]);
+  tex.colorSpace = opts.srgb === false ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+  const useMips = opts.mipmaps !== false;
+  tex.generateMipmaps = useMips;
+  tex.minFilter = useMips ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = maxAnisotropy;
+  tex.needsUpdate = true;
   cache.set(key, tex);
   return tex;
 }
 
-function speckle(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  count: number,
-  colors: string[],
-  rng: () => number,
-  rMin = 0.5,
-  rMax = 2.2,
-): void {
-  for (let i = 0; i < count; i++) {
-    ctx.fillStyle = colors[Math.floor(rng() * colors.length)];
-    const r = rMin + rng() * (rMax - rMin);
-    ctx.beginPath();
-    ctx.arc(rng() * w, rng() * h, r, 0, TAU);
-    ctx.fill();
-  }
-}
+/* ----------------------------------------------------------- road + ground */
 
-/** Asphalt: dark, speckled, with patches, cracks and paint wear. */
-export function asphaltTexture(): THREE.Texture {
-  return cached('asphalt', () => {
-    const size = 512;
-    const { canvas, ctx } = canvas2d(size);
-    const rng = mulberry32(7);
-    ctx.fillStyle = '#565553';
-    ctx.fillRect(0, 0, size, size);
-
-    // large-scale tonal blotches
-    const img = ctx.getImageData(0, 0, size, size);
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const n = fbm2(x / 46, y / 46, 4);
-        const g = fbm2(x / 9 + 11, y / 9 + 3, 2);
-        const v = 74 + n * 30 + g * 20;
-        const i = (y * size + x) * 4;
-        img.data[i] = v * 1.02;
-        img.data[i + 1] = v * 1.0;
-        img.data[i + 2] = v * 0.96;
-        img.data[i + 3] = 255;
+export function asphaltTexture(): { map: THREE.Texture; rough: THREE.Texture } {
+  const map = makeTexture(
+    'asphalt.map',
+    256,
+    256,
+    (ctx, w, h) => {
+      const rng = mulberry32(101);
+      ctx.fillStyle = '#2d3136';
+      ctx.fillRect(0, 0, w, h);
+      for (let i = 0; i < 6500; i++) {
+        const x = rng() * w;
+        const y = rng() * h;
+        const v = 34 + Math.floor(rng() * 34);
+        ctx.fillStyle = `rgb(${v},${v + 1},${v + 4})`;
+        ctx.fillRect(x, y, rng() < 0.25 ? 2 : 1, 1);
       }
-    }
-    ctx.putImageData(img, 0, 0);
-
-    // patched repairs
-    for (let i = 0; i < 7; i++) {
-      const px = rng() * size;
-      const py = rng() * size;
-      const w = 40 + rng() * 120;
-      const h = 26 + rng() * 90;
-      ctx.save();
-      ctx.translate(px, py);
-      ctx.rotate(rng() * TAU);
-      ctx.fillStyle = `rgba(${58 + rng() * 18},${56 + rng() * 16},${52 + rng() * 14},0.30)`;
-      ctx.beginPath();
-      ctx.roundRect(-w / 2, -h / 2, w, h, 6 + rng() * 10);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(22,22,22,0.28)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // cracks
-    ctx.strokeStyle = 'rgba(24,24,24,0.30)';
-    for (let i = 0; i < 26; i++) {
-      let x = rng() * size;
-      let y = rng() * size;
-      ctx.lineWidth = 0.6 + rng() * 1.4;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      const steps = 3 + Math.floor(rng() * 5);
-      for (let s = 0; s < steps; s++) {
-        x += (rng() - 0.5) * 42;
-        y += (rng() - 0.5) * 42;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-
-    speckle(ctx, size, size, 2600, ['rgba(120,118,112,0.22)', 'rgba(24,24,24,0.35)', 'rgba(90,88,84,0.25)'], rng, 0.4, 1.8);
-    // pale dust film near edges
-    const grad = ctx.createLinearGradient(0, 0, size, size);
-    grad.addColorStop(0, 'rgba(160,148,124,0.06)');
-    grad.addColorStop(1, 'rgba(40,36,30,0.1)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, size, size);
-    return toTexture(canvas);
-  });
-}
-
-/** Concrete/plaster wall base; vertex colours multiply this to give variety. */
-export function plasterTexture(): THREE.Texture {
-  return cached('plaster', () => {
-    const size = 512;
-    const { canvas, ctx } = canvas2d(size);
-    ctx.fillStyle = '#d8cfbd';
-    ctx.fillRect(0, 0, size, size);
-    const img = ctx.getImageData(0, 0, size, size);
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const n = fbm2(x / 60, y / 60, 4) * 0.5 + fbm2(x / 7, y / 7, 2) * 0.5;
-        const v = 196 + n * 44;
-        const i = (y * size + x) * 4;
-        img.data[i] = v;
-        img.data[i + 1] = v * 0.985;
-        img.data[i + 2] = v * 0.955;
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-    // damp streaks running down from the top
-    const rng = mulberry32(23);
-    for (let i = 0; i < 34; i++) {
-      const x = rng() * size;
-      const w = 2 + rng() * 9;
-      const h = 40 + rng() * 260;
-      const g = ctx.createLinearGradient(x, 0, x, h);
-      g.addColorStop(0, 'rgba(84,76,64,0.20)');
-      g.addColorStop(1, 'rgba(84,76,64,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x, 0, w, h);
-    }
-    // peeled paint patches
-    for (let i = 0; i < 16; i++) {
-      const x = rng() * size;
-      const y = rng() * size;
-      ctx.fillStyle = `rgba(${168 + rng() * 20},${156 + rng() * 20},${138 + rng() * 20},0.5)`;
-      ctx.beginPath();
-      ctx.ellipse(x, y, 6 + rng() * 26, 4 + rng() * 18, rng() * TAU, 0, TAU);
-      ctx.fill();
-    }
-    return toTexture(canvas);
-  });
-}
-
-/** Exposed brick (used on lower floors / boundary walls). */
-export function brickTexture(): THREE.Texture {
-  return cached('brick', () => {
-    const size = 512;
-    const { canvas, ctx } = canvas2d(size);
-    ctx.fillStyle = '#c4b7a4';
-    ctx.fillRect(0, 0, size, size);
-    const rng = mulberry32(101);
-    const bh = 26;
-    const bw = 62;
-    for (let row = 0; row < size / bh + 1; row++) {
-      const offset = row % 2 === 0 ? 0 : bw / 2;
-      for (let col = -1; col < size / bw + 1; col++) {
-        const x = col * bw + offset;
-        const y = row * bh;
-        const shade = 118 + rng() * 46;
-        ctx.fillStyle = `rgb(${shade + 24},${shade * 0.62},${shade * 0.5})`;
-        ctx.beginPath();
-        ctx.roundRect(x + 2, y + 2, bw - 4, bh - 4, 2.5);
-        ctx.fill();
-      }
-    }
-    speckle(ctx, size, size, 900, ['rgba(255,236,214,0.10)', 'rgba(40,22,16,0.18)'], rng, 0.5, 1.8);
-    return toTexture(canvas);
-  });
-}
-
-/** Corrugated metal shutter for closed shops. */
-export function shutterTexture(): THREE.Texture {
-  return cached('shutter', () => {
-    const size = 256;
-    const { canvas, ctx } = canvas2d(size);
-    ctx.fillStyle = '#7d8388';
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 8) {
-      const g = ctx.createLinearGradient(0, y, 0, y + 8);
-      g.addColorStop(0, 'rgba(255,255,255,0.18)');
-      g.addColorStop(0.5, 'rgba(60,66,70,0.18)');
-      g.addColorStop(1, 'rgba(20,24,26,0.25)');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, y, size, 8);
-    }
-    const rng = mulberry32(5);
-    for (let i = 0; i < 14; i++) {
-      ctx.fillStyle = `rgba(${120 + rng() * 40},${70 + rng() * 30},${30 + rng() * 20},${0.1 + rng() * 0.2})`;
-      ctx.beginPath();
-      ctx.ellipse(rng() * size, rng() * size, 6 + rng() * 24, 3 + rng() * 12, rng() * TAU, 0, TAU);
-      ctx.fill();
-    }
-    return toTexture(canvas);
-  });
-}
-
-/** Canvas / canopy cloth with a subtle woven texture. */
-export function clothTexture(): THREE.Texture {
-  return cached('cloth', () => {
-    const size = 256;
-    const { canvas, ctx } = canvas2d(size);
-    ctx.fillStyle = '#f2efe6';
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 3) {
-      ctx.fillStyle = y % 6 === 0 ? 'rgba(0,0,0,0.045)' : 'rgba(255,255,255,0.05)';
-      ctx.fillRect(0, y, size, 1.5);
-    }
-    for (let x = 0; x < size; x += 4) {
-      ctx.fillStyle = 'rgba(0,0,0,0.03)';
-      ctx.fillRect(x, 0, 1, size);
-    }
-    return toTexture(canvas);
-  });
-}
-
-/** Striped tarpaulin for shop awnings. */
-export function awningTexture(colorA = '#1f6b4f', colorB = '#f0e6cf'): THREE.Texture {
-  return cached(`awning:${colorA}:${colorB}`, () => {
-    const size = 128;
-    const { canvas, ctx } = canvas2d(size);
-    ctx.fillStyle = colorB;
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = colorA;
-    for (let x = 0; x < size; x += 32) ctx.fillRect(x, 0, 16, size);
-    const rng = mulberry32(9);
-    speckle(ctx, size, size, 120, ['rgba(0,0,0,0.07)', 'rgba(255,255,255,0.06)'], rng, 0.5, 1.6);
-    return toTexture(canvas);
-  });
-}
-
-/** Sidewalk paving slabs. */
-export function pavementTexture(): THREE.Texture {
-  return cached('pavement', () => {
-    const size = 512;
-    const { canvas, ctx } = canvas2d(size);
-    const rng = mulberry32(33);
-    ctx.fillStyle = '#8b877e';
-    ctx.fillRect(0, 0, size, size);
-    const tile = 64;
-    for (let y = 0; y < size; y += tile) {
-      for (let x = 0; x < size; x += tile) {
-        const v = 128 + rng() * 36;
-        ctx.fillStyle = `rgb(${v},${v * 0.99},${v * 0.94})`;
-        ctx.fillRect(x + 2, y + 2, tile - 4, tile - 4);
-        ctx.fillStyle = 'rgba(0,0,0,0.08)';
-        ctx.fillRect(x + 2, y + tile - 5, tile - 4, 3);
-      }
-    }
-    speckle(ctx, size, size, 1400, ['rgba(30,28,24,0.14)', 'rgba(220,214,200,0.12)'], rng, 0.4, 1.5);
-    return toTexture(canvas);
-  });
-}
-
-/** Dirty water / river surface. */
-export function waterTexture(): THREE.Texture {
-  return cached('water', () => {
-    const size = 512;
-    const { canvas, ctx } = canvas2d(size);
-    const img = ctx.createImageData(size, size);
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const n = fbm2(x / 38, y / 38, 5);
-        const i = (y * size + x) * 4;
-        img.data[i] = 46 + n * 40;
-        img.data[i + 1] = 72 + n * 46;
-        img.data[i + 2] = 64 + n * 40;
-        img.data[i + 3] = 255;
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-    return toTexture(canvas);
-  });
-}
-
-/** Sign atlas: 16 hand-painted shop boards baked into one 2048² texture. */
-export class SignAtlas {
-  readonly texture: THREE.CanvasTexture;
-  private ctx: CanvasRenderingContext2D;
-  private canvas: HTMLCanvasElement;
-  private index = 0;
-  private readonly cols = 4;
-  private readonly rows = 4;
-  private readonly size = 2048;
-  private rects = new Map<string, { u0: number; v0: number; u1: number; v1: number }>();
-
-  constructor() {
-    const made = canvas2d(this.size);
-    this.canvas = made.canvas;
-    this.ctx = made.ctx;
-    this.ctx.fillStyle = '#2b2b2b';
-    this.ctx.fillRect(0, 0, this.size, this.size);
-    this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = 8;
-    this.texture.wrapS = THREE.ClampToEdgeWrapping;
-    this.texture.wrapT = THREE.ClampToEdgeWrapping;
-  }
-
-  uvFor(def: SignDef): { u0: number; v0: number; u1: number; v1: number } {
-    const key = def.bn;
-    const existing = this.rects.get(key);
-    if (existing) return existing;
-    const col = this.index % this.cols;
-    const row = Math.floor(this.index / this.cols) % this.rows;
-    this.index++;
-    this.drawSign(col, row, def);
-    const cellW = this.size / this.cols;
-    const cellH = this.size / this.rows;
-    const rect = {
-      u0: (col * cellW + 6) / this.size,
-      u1: ((col + 1) * cellW - 6) / this.size,
-      v0: 1 - ((row + 1) * cellH - 6) / this.size,
-      v1: 1 - (row * cellH + 6) / this.size,
-    };
-    this.rects.set(key, rect);
-    this.texture.needsUpdate = true;
-    return rect;
-  }
-
-  private drawSign(col: number, row: number, def: SignDef): void {
-    const cellW = this.size / this.cols;
-    const cellH = this.size / this.rows;
-    const x = col * cellW;
-    const y = row * cellH;
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.translate(x, y);
-    // board background with a painted border
-    ctx.fillStyle = def.bg;
-    ctx.fillRect(0, 0, cellW, cellH);
-    const rng = mulberry32(def.bn.length * 31 + x + y);
-    // subtle brush texture
-    for (let i = 0; i < 90; i++) {
-      ctx.fillStyle = `rgba(255,255,255,${0.012 + rng() * 0.02})`;
-      ctx.fillRect(rng() * cellW, rng() * cellH, 20 + rng() * 90, 1 + rng() * 3);
-    }
-    ctx.strokeStyle = def.fg;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 6;
-    ctx.strokeRect(16, 16, cellW - 32, cellH - 32);
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = def.bg === '#e8d7a8' ? '#8a3a22' : '#f0c04a';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(26, 26, cellW - 52, cellH - 52);
-
-    // text
-    ctx.fillStyle = def.fg;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const baseSize = def.bn.length > 16 ? 52 : def.bn.length > 11 ? 64 : 76;
-    ctx.font = `700 ${baseSize}px ${FONT_FAMILY}`;
-    const maxWidth = cellW - 90;
-    let size = baseSize;
-    while (ctx.measureText(def.bn).width > maxWidth && size > 26) {
-      size -= 3;
-      ctx.font = `700 ${size}px ${FONT_FAMILY}`;
-    }
-    ctx.fillText(def.bn, cellW / 2, cellH * (def.sub ? 0.44 : 0.5));
-    if (def.sub) {
-      ctx.font = `400 ${Math.max(22, size * 0.42)}px ${FONT_FAMILY}`;
-      ctx.globalAlpha = 0.86;
-      ctx.fillText(def.sub, cellW / 2, cellH * 0.7);
-      ctx.globalAlpha = 1;
-    }
-    // small painted flourish
-    ctx.globalAlpha = 0.5;
-    ctx.strokeStyle = def.fg;
-    ctx.lineWidth = 2.5;
-    for (let i = 0; i < 3; i++) {
-      ctx.beginPath();
-      ctx.arc(56 + i * (cellW - 112) / 2, cellH - 52, 6, 0, TAU);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  dispose(): void {
-    this.texture.dispose();
-  }
-}
-
-/**
- * Hand-painted rickshaw rear-panel art. Several original motifs are drawn with
- * simple canvas primitives: florals, birds, river scene, cinema-poster style.
- */
-export function rickshawArtTexture(style: string, panelColor: string, border = '#e8b25a'): THREE.Texture {
-  return cached(`art:${style}:${panelColor}:${border}`, () => {
-    const size = 512;
-    const { canvas, ctx } = canvas2d(size);
-    const rng = mulberry32(style.length * 77);
-    ctx.fillStyle = panelColor;
-    ctx.fillRect(0, 0, size, size);
-
-    // ornamental border
-    ctx.strokeStyle = border;
-    ctx.lineWidth = 14;
-    ctx.strokeRect(14, 14, size - 28, size - 28);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#f6ecd0';
-    ctx.strokeRect(30, 30, size - 60, size - 60);
-    for (let i = 0; i < 26; i++) {
-      const t = i / 26;
-      const x = 22 + t * (size - 44);
-      ctx.fillStyle = i % 2 ? border : '#f6ecd0';
-      ctx.beginPath();
-      ctx.arc(x, 22, 4.5, 0, TAU);
-      ctx.arc(x, size - 22, 4.5, 0, TAU);
-      ctx.fill();
-    }
-
-    const leaf = (cx: number, cy: number, r: number, rot: number, color: string): void => {
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(rot);
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r, r * 0.42, 0, 0, TAU);
-      ctx.fill();
-      ctx.restore();
-    };
-    const flower = (cx: number, cy: number, r: number, petals: string[], center: string): void => {
+      // Subtle patched bitumen + tyre polish bands
       for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * TAU;
-        leaf(cx + Math.cos(a) * r * 0.7, cy + Math.sin(a) * r * 0.7, r * 0.62, a, petals[i % petals.length]);
-      }
-      ctx.fillStyle = center;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r * 0.34, 0, TAU);
-      ctx.fill();
-    };
-    const vine = (x0: number, y0: number, y1: number): void => {
-      ctx.strokeStyle = '#1f7a4b';
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      for (let y = y0; y < y1; y += 6) {
-        const x = x0 + Math.sin(y / 26) * 16;
-        if (y === y0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      for (let y = y0; y < y1; y += 34) {
-        leaf(x0 + Math.sin(y / 26) * 16, y, 15, Math.sin(y / 26) * 1.2, '#2f9c63');
-      }
-    };
-
-    if (style === 'bird') {
-      // sky, sun, stylised birds
-      const sky = ctx.createLinearGradient(0, 60, 0, size - 60);
-      sky.addColorStop(0, '#7fc4e8');
-      sky.addColorStop(1, '#e8d9a8');
-      ctx.fillStyle = sky;
-      ctx.fillRect(40, 40, size - 80, size - 80);
-      ctx.fillStyle = '#f7d070';
-      ctx.beginPath();
-      ctx.arc(size * 0.72, size * 0.3, 42, 0, TAU);
-      ctx.fill();
-      ctx.fillStyle = '#20404a';
-      const bird = (bx: number, by: number, s: number): void => {
+        ctx.fillStyle = `rgba(20,22,26,${0.12 + rng() * 0.14})`;
         ctx.beginPath();
-        ctx.moveTo(bx - 26 * s, by);
-        ctx.quadraticCurveTo(bx - 10 * s, by - 18 * s, bx, by - 4 * s);
-        ctx.quadraticCurveTo(bx + 10 * s, by - 18 * s, bx + 28 * s, by);
-        ctx.quadraticCurveTo(bx + 8 * s, by - 4 * s, bx, by + 5 * s);
-        ctx.quadraticCurveTo(bx - 8 * s, by - 4 * s, bx - 26 * s, by);
+        ctx.ellipse(rng() * w, rng() * h, 14 + rng() * 34, 8 + rng() * 20, rng() * 3, 0, Math.PI * 2);
         ctx.fill();
-      };
-      bird(size * 0.34, size * 0.36, 1);
-      bird(size * 0.52, size * 0.28, 0.7);
-      bird(size * 0.44, size * 0.52, 0.55);
-      flower(size * 0.24, size * 0.74, 40, ['#d63b2f', '#f0a02a'], '#f7d070');
-      flower(size * 0.76, size * 0.72, 34, ['#d63b2f', '#f0a02a'], '#f7d070');
-      vine(60, 90, size - 90);
-      vine(size - 60, 90, size - 90);
-    } else if (style === 'river') {
-      const sky = ctx.createLinearGradient(0, 40, 0, size * 0.55);
-      sky.addColorStop(0, '#2d5f8a');
-      sky.addColorStop(1, '#a8d6e8');
-      ctx.fillStyle = sky;
-      ctx.fillRect(40, 40, size - 80, size * 0.5);
-      ctx.fillStyle = '#2b6b5a';
-      ctx.fillRect(40, size * 0.52, size - 80, size * 0.42);
-      // boat
-      ctx.fillStyle = '#5a3418';
-      ctx.beginPath();
-      ctx.moveTo(size * 0.28, size * 0.7);
-      ctx.quadraticCurveTo(size * 0.5, size * 0.82, size * 0.72, size * 0.7);
-      ctx.lineTo(size * 0.66, size * 0.66);
-      ctx.lineTo(size * 0.34, size * 0.66);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#f3e6c8';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(size * 0.5, size * 0.66);
-      ctx.lineTo(size * 0.5, size * 0.52);
-      ctx.stroke();
-      ctx.fillStyle = '#f3e6c8';
-      ctx.beginPath();
-      ctx.moveTo(size * 0.5, size * 0.52);
-      ctx.lineTo(size * 0.62, size * 0.6);
-      ctx.lineTo(size * 0.5, size * 0.62);
-      ctx.fill();
-      // waves
-      ctx.strokeStyle = 'rgba(240,248,255,0.7)';
-      ctx.lineWidth = 3;
-      for (let i = 0; i < 5; i++) {
+      }
+      ctx.strokeStyle = 'rgba(15,17,20,0.42)';
+      ctx.lineWidth = 1;
+      for (let c = 0; c < 6; c++) {
         ctx.beginPath();
-        const y = size * (0.76 + i * 0.035);
-        for (let x = 60; x < size - 60; x += 12) {
-          ctx.lineTo(x, y + Math.sin(x / 22 + i) * 4);
+        let x = rng() * w;
+        let y = rng() * h;
+        ctx.moveTo(x, y);
+        for (let s = 0; s < 7; s++) {
+          x += (rng() - 0.5) * 26;
+          y += (rng() - 0.5) * 26;
+          ctx.lineTo(x, y);
         }
         ctx.stroke();
       }
-      flower(size * 0.2, size * 0.2, 34, ['#e85a4a', '#f7d070'], '#fff0c0');
-      flower(size * 0.8, size * 0.24, 28, ['#e85a4a', '#f7d070'], '#fff0c0');
-      vine(56, 120, size - 100);
-      vine(size - 56, 120, size - 100);
-    } else if (style === 'cinema') {
-      // invented poster: hero silhouette + rays + invented title text
-      ctx.fillStyle = '#5c0f1c';
-      ctx.fillRect(40, 40, size - 80, size - 80);
-      ctx.save();
-      ctx.translate(size / 2, size * 0.56);
-      for (let i = 0; i < 24; i++) {
-        ctx.rotate(TAU / 24);
-        ctx.fillStyle = i % 2 ? 'rgba(240,192,74,0.16)' : 'rgba(240,192,74,0.05)';
+    },
+    { repeat: [1, 1] },
+  );
+
+  const rough = makeTexture(
+    'asphalt.rough',
+    128,
+    128,
+    (ctx, w, h) => {
+      const rng = mulberry32(202);
+      ctx.fillStyle = '#c4c4c4';
+      ctx.fillRect(0, 0, w, h);
+      for (let i = 0; i < 1600; i++) {
+        const g = 135 + Math.floor(rng() * 105);
+        ctx.fillStyle = `rgb(${g},${g},${g})`;
+        ctx.fillRect(rng() * w, rng() * h, 2, 2);
+      }
+      for (let i = 0; i < 7; i++) {
+        ctx.fillStyle = 'rgba(55,55,55,0.5)';
         ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(240, -32);
-        ctx.lineTo(240, 32);
+        ctx.ellipse(rng() * w, rng() * h, 8 + rng() * 20, 6 + rng() * 14, 0, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.restore();
-      ctx.fillStyle = '#1b1016';
-      // simple invented villain-free hero bust
-      ctx.beginPath();
-      ctx.arc(size * 0.5, size * 0.44, 42, 0, TAU);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(size * 0.32, size * 0.82);
-      ctx.quadraticCurveTo(size * 0.5, size * 0.5, size * 0.68, size * 0.82);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#f0c04a';
-      ctx.font = `700 46px ${FONT_FAMILY}`;
-      ctx.textAlign = 'center';
-      ctx.fillText('মহাকাল', size / 2, size * 0.9);
-      flower(size * 0.16, size * 0.16, 26, ['#f0c04a', '#e85a4a'], '#fff0c0');
-      flower(size * 0.84, size * 0.16, 26, ['#f0c04a', '#e85a4a'], '#fff0c0');
-    } else {
-      // floral (default)
-      ctx.fillStyle = '#0f6b46';
-      ctx.fillRect(40, 40, size - 80, size - 80);
-      ctx.save();
-      ctx.translate(size / 2, size / 2);
-      for (let i = 0; i < 12; i++) {
-        ctx.rotate(TAU / 12);
-        ctx.fillStyle = i % 2 ? 'rgba(247,208,112,0.14)' : 'rgba(247,208,112,0.05)';
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(200, -26);
-        ctx.lineTo(200, 26);
-        ctx.fill();
+    },
+    { srgb: false },
+  );
+
+  return { map, rough };
+}
+
+export function sidewalkTexture(): THREE.Texture {
+  return makeTexture('sidewalk', 256, 256, (ctx, w, h) => {
+    const rng = mulberry32(303);
+    ctx.fillStyle = '#8b8375';
+    ctx.fillRect(0, 0, w, h);
+    const tile = 32;
+    for (let y = 0; y < h; y += tile) {
+      for (let x = 0; x < w; x += tile) {
+        const shade = -12 + Math.floor(rng() * 24);
+        const r = 138 + shade;
+        const g = 130 + shade;
+        const b = 116 + shade;
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(x + 1, y + 1, tile - 2, tile - 2);
       }
-      ctx.restore();
-      flower(size * 0.5, size * 0.5, 78, ['#e85a4a', '#f7d070', '#f0f0e0'], '#c73a2a');
-      flower(size * 0.2, size * 0.28, 42, ['#f7d070', '#e85a4a'], '#f6ecd0');
-      flower(size * 0.8, size * 0.28, 42, ['#f7d070', '#e85a4a'], '#f6ecd0');
-      flower(size * 0.2, size * 0.76, 38, ['#7fc4e8', '#f6ecd0'], '#f7d070');
-      flower(size * 0.8, size * 0.76, 38, ['#7fc4e8', '#f6ecd0'], '#f7d070');
-      vine(58, 110, size - 110);
-      vine(size - 58, 110, size - 110);
-      ctx.fillStyle = '#f6ecd0';
-      ctx.font = `700 40px ${FONT_FAMILY}`;
-      ctx.textAlign = 'center';
-      ctx.fillText('ঢাকা', size / 2, size * 0.93);
-      void rng;
     }
-
-    // gentle grime so it does not look freshly printed
-    for (let i = 0; i < 34; i++) {
-      ctx.fillStyle = `rgba(40,26,12,${0.02 + rng() * 0.05})`;
+    ctx.strokeStyle = 'rgba(42,38,32,0.52)';
+    ctx.lineWidth = 1.4;
+    for (let i = 0; i <= w; i += tile) {
       ctx.beginPath();
-      ctx.ellipse(rng() * size, rng() * size, 8 + rng() * 40, 4 + rng() * 22, rng() * TAU, 0, TAU);
-      ctx.fill();
+      ctx.moveTo(i, 0);
+      ctx.lineTo(i, h);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, i);
+      ctx.lineTo(w, i);
+      ctx.stroke();
     }
-    return toTexture(canvas);
+    for (let i = 0; i < 900; i++) {
+      ctx.fillStyle = `rgba(38,44,32,${rng() * 0.2})`;
+      ctx.fillRect(rng() * w, rng() * h, 2, 2);
+    }
   });
 }
 
-/** A4-ish wall poster / political-free community notice. */
-export function posterTexture(): THREE.Texture {
-  return cached('poster', () => {
-    const size = 256;
-    const { canvas, ctx } = canvas2d(size);
-    ctx.fillStyle = '#f3ead2';
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#b8352a';
-    ctx.fillRect(0, 0, size, 54);
-    ctx.fillStyle = '#f7f0e3';
-    ctx.font = `700 30px ${FONT_FAMILY}`;
+/* --------------------------------------------------------------- buildings */
+
+export function plasterFacadeTexture(variant: number, tint: string): THREE.Texture {
+  return makeTexture(`facade.${variant}.${tint}`, 256, 256, (ctx, w, h) => {
+    const rng = mulberry32(700 + variant * 37);
+    ctx.fillStyle = tint;
+    ctx.fillRect(0, 0, w, h);
+
+    // Monsoon damp streaks & weathered concrete patina
+    for (let i = 0; i < 65; i++) {
+      const x = rng() * w;
+      const len = 24 + rng() * 110;
+      const g = ctx.createLinearGradient(0, 0, 0, len);
+      g.addColorStop(0, `rgba(28,32,26,${0.08 + rng() * 0.14})`);
+      g.addColorStop(1, 'rgba(28,32,26,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, rng() * (h * 0.55), 1 + rng() * 3.5, len);
+    }
+    for (let i = 0; i < 1400; i++) {
+      const a = rng() * 0.08;
+      ctx.fillStyle = rng() < 0.5 ? `rgba(255,255,255,${a})` : `rgba(18,16,14,${a})`;
+      ctx.fillRect(rng() * w, rng() * h, 2, 2);
+    }
+
+    // 4 floors × 4 window bays with security grilles + shutters + AC ledges
+    const cols = 4;
+    const rows = 4;
+    const padX = 12;
+    const padY = 12;
+    const cellW = (w - padX * 2) / cols;
+    const cellH = (h - padY * 2) / rows;
+    for (let r = 0; r < rows; r++) {
+      ctx.fillStyle = 'rgba(36,32,28,0.28)';
+      ctx.fillRect(0, padY + r * cellH - 2, w, 2.5);
+      for (let c = 0; c < cols; c++) {
+        const wx = padX + c * cellW + cellW * 0.15;
+        const wy = padY + r * cellH + cellH * 0.16;
+        const ww = cellW * 0.7;
+        const wh = cellH * 0.62;
+        ctx.fillStyle = 'rgba(28,24,20,0.48)';
+        ctx.fillRect(wx - 2, wy - 2, ww + 4, wh + 4);
+        const lit = rng() < 0.42;
+        ctx.fillStyle = lit ? '#604b2d' : '#1b262d';
+        ctx.fillRect(wx, wy, ww, wh);
+        // Bangladeshi iron window grille bars
+        ctx.strokeStyle = 'rgba(210,208,198,0.42)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(wx + 1, wy + 1, ww - 2, wh - 2);
+        for (let b = 1; b <= 3; b++) {
+          const bx = wx + (ww * b) / 4;
+          ctx.beginPath();
+          ctx.moveTo(bx, wy);
+          ctx.lineTo(bx, wy + wh);
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.moveTo(wx, wy + wh * 0.5);
+        ctx.lineTo(wx + ww, wy + wh * 0.5);
+        ctx.stroke();
+        // Sunshade chajja lintel above window
+        ctx.fillStyle = 'rgba(55,50,44,0.62)';
+        ctx.fillRect(wx - 3, wy - 4, ww + 6, 3);
+      }
+    }
+  });
+}
+
+export function brickTexture(): THREE.Texture {
+  return makeTexture('brick', 128, 128, (ctx, w, h) => {
+    const rng = mulberry32(909);
+    ctx.fillStyle = '#7e3c2c';
+    ctx.fillRect(0, 0, w, h);
+    const bh = 8;
+    const bw = 22;
+    for (let row = 0, y = 0; y < h; row++, y += bh) {
+      const off = (row % 2) * (bw / 2);
+      for (let x = -bw; x < w + bw; x += bw) {
+        const d = Math.floor((rng() - 0.5) * 28);
+        ctx.fillStyle = `rgb(${132 + d},${62 + Math.floor(d * 0.5)},${45 + Math.floor(d * 0.4)})`;
+        ctx.fillRect(x + off + 1, y + 1, bw - 2, bh - 2);
+      }
+    }
+  });
+}
+
+export function shutterTexture(): THREE.Texture {
+  return makeTexture('shutter', 128, 128, (ctx, w, h) => {
+    ctx.fillStyle = '#47545e';
+    ctx.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 5) {
+      ctx.fillStyle = y % 10 === 0 ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.24)';
+      ctx.fillRect(0, y, w, 2);
+    }
+    ctx.fillStyle = 'rgba(92,54,28,0.24)';
+    ctx.fillRect(0, h - 18, w, 18);
+  });
+}
+
+/* ----------------------------------------------------- Bangla signboards */
+
+export interface SignSlot {
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+}
+
+export interface SignSpec {
+  title: string;
+  sub?: string;
+  bg: string;
+  fg: string;
+  accent: string;
+}
+
+export const SHOP_SIGNS: SignSpec[] = [
+  { title: 'টাউন হল কাঁচা বাজার', sub: 'টাটকা মাছ ও সবজি', bg: '#125c42', fg: '#fff6dc', accent: '#f4c04a' },
+  { title: 'বিসমিল্লাহ চায়ের টং', sub: 'দুধ চা · মালাই চা · বিস্কুট', bg: '#7a1f24', fg: '#ffe9b8', accent: '#ffd25a' },
+  { title: 'মামা স্পেশাল ফুচকা', sub: 'চটপটি ও তেঁতুল পানি', bg: '#8a1c4a', fg: '#fff4d4', accent: '#ffd166' },
+  { title: 'ঢাকাইয়া ঝালমুড়ি', sub: 'সরিষার তেল ও মশলা মুড়ি', bg: '#a33b16', fg: '#fff8df', accent: '#ffda66' },
+  { title: 'আসাদ এভেনিউ ফার্মেসি', sub: 'ওষুধ ও প্রাথমিক চিকিৎসা', bg: '#15556e', fg: '#e9fbff', accent: '#5fe0b0' },
+  { title: 'মোহাম্মদপুর বিরিয়ানি ঘর', sub: 'কাচ্চি · তেহারি · বোরহানি', bg: '#8c2d19', fg: '#fff1d0', accent: '#f7b733' },
+  { title: 'নূরজাহান বই ও স্টেশনারি', sub: 'খাতা · কলম · গল্পের বই', bg: '#3e2a56', fg: '#f8ecff', accent: '#f3b562' },
+  { title: 'শেরশাহ রিকশা ওয়ার্কশপ', sub: 'টায়ার · ব্রেক · ব্যাটারি চার্জ', bg: '#20323d', fg: '#f5e8c8', accent: '#e8824a' },
+  { title: 'জনতা হার্ডওয়্যার', sub: 'রং · তার · পাইপ ফিটিংস', bg: '#1f4a2e', fg: '#f4f0dc', accent: '#e8b25a' },
+  { title: 'তাজমহল বেকারি ও সুইটস', sub: 'মিষ্টি · দই · গরম সমুচা', bg: '#9b3a26', fg: '#fff4df', accent: '#ffd27a' },
+  { title: 'সলিমুল্লাহ টেইলার্স', sub: 'পাঞ্জাবি · শার্ট · সেলাই', bg: '#1b3a6b', fg: '#eaf2ff', accent: '#f5c258' },
+  { title: 'ভাই ভাই ফল ভাণ্ডার', sub: 'আম · কলা · পেঁপে · ডাব', bg: '#2f5e24', fg: '#f6f3dc', accent: '#f4a93b' },
+  { title: 'বাবর রোড মোবাইল পয়েন্ট', sub: 'ফ্লেক্সিলোড · বিকাশ · সার্ভিসিং', bg: '#6a1b4d', fg: '#ffeaf7', accent: '#ffbe55' },
+  { title: 'ইকবাল রোড ফটো স্টুডিও', sub: 'পাসপোর্ট ছবি ও ফটোকপি', bg: '#223b54', fg: '#f0f7ff', accent: '#62d2a2' },
+  { title: 'মদিনা জেনারেল স্টোর', sub: 'চাল · ডাল · তেল · মসলা', bg: '#4f321c', fg: '#fff3d6', accent: '#f0b64c' },
+  { title: 'শিয়া মসজিদ মোড় লন্ড্রি', sub: 'ড্রাই ক্লিন ও ইস্ত্রি', bg: '#17565c', fg: '#eaffff', accent: '#ffd166' },
+];
+
+/**
+ * Compact 1024x512 signboard atlas (16 crisp 256x128 Bangla signboards).
+ * Uses only ~2 MB of RGBA memory instead of 16+ MB for 2048x2048!
+ */
+export class SignAtlas {
+  readonly texture: THREE.CanvasTexture;
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private slots: SignSlot[] = [];
+  private cols = 4;
+  private rows = 4;
+  private cellW = 256;
+  private cellH = 128;
+
+  constructor() {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = this.cols * this.cellW; // 1024
+    this.canvas.height = this.rows * this.cellH; // 512
+    this.ctx = this.canvas.getContext('2d')!;
+    this.texture = new THREE.CanvasTexture(this.canvas);
+    this.texture.colorSpace = THREE.SRGBColorSpace;
+    this.texture.anisotropy = maxAnisotropy;
+    this.redrawAll();
+  }
+
+  redrawAll(): void {
+    this.slots = [];
+    this.ctx.fillStyle = '#181818';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    for (let i = 0; i < this.cols * this.rows; i++) {
+      const spec = SHOP_SIGNS[i % SHOP_SIGNS.length];
+      this.drawCell(i, spec);
+    }
+    this.texture.needsUpdate = true;
+  }
+
+  private drawCell(index: number, spec: SignSpec): void {
+    const col = index % this.cols;
+    const row = Math.floor(index / this.cols);
+    const x = col * this.cellW;
+    const y = row * this.cellH;
+    const w = this.cellW;
+    const h = this.cellH;
+    const ctx = this.ctx;
+
+    ctx.fillStyle = spec.bg;
+    ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
+    ctx.strokeStyle = spec.accent;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(x + 7, y + 7, w - 14, h - 14);
+    ctx.strokeStyle = spec.fg;
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(x + 12, y + 12, w - 24, h - 24);
+
+    ctx.fillStyle = spec.accent;
+    for (const [cx, cy] of [
+      [x + 16, y + 16],
+      [x + w - 16, y + 16],
+      [x + 16, y + h - 16],
+      [x + w - 16, y + h - 16],
+    ]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = spec.fg;
     ctx.textAlign = 'center';
-    ctx.fillText('বিজ্ঞাপন', size / 2, 38);
-    ctx.fillStyle = '#2a2a2a';
-    ctx.font = `600 22px ${FONT_FAMILY}`;
-    ctx.fillText('রিকশা ভাড়া', size / 2, 96);
-    ctx.fillText('হবে', size / 2, 126);
-    ctx.fillStyle = '#1d5a41';
-    ctx.fillRect(28, 148, size - 56, 3);
-    ctx.font = `400 17px ${FONT_FAMILY}`;
-    ctx.fillText('সকাল ৭টা — রাত ৯টা', size / 2, 178);
-    ctx.fillText('মোবাইল: ০১৭...', size / 2, 204);
-    ctx.fillStyle = '#e8b25a';
-    ctx.beginPath();
-    ctx.arc(size / 2, 232, 14, 0, TAU);
-    ctx.fill();
-    return toTexture(canvas);
-  });
-}
-
-/** Soft radial sprite used for dust, steam, lamp glow and rain splashes. */
-export function radialSprite(inner = 'rgba(255,255,255,0.95)', outer = 'rgba(255,255,255,0)'): THREE.Texture {
-  return cached(`radial:${inner}:${outer}`, () => {
-    const size = 128;
-    const { canvas, ctx } = canvas2d(size);
-    const g = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
-    g.addColorStop(0, inner);
-    g.addColorStop(1, outer);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, size, size);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  });
-}
-
-/** Night sky with stars for the sky dome fallback (used when quality is low). */
-export function starTexture(): THREE.Texture {
-  return cached('stars', () => {
-    const size = 512;
-    const { canvas, ctx } = canvas2d(size);
-    ctx.fillStyle = '#05080f';
-    ctx.fillRect(0, 0, size, size);
-    const rng = mulberry32(88);
-    for (let i = 0; i < 320; i++) {
-      const a = 0.25 + rng() * 0.7;
-      ctx.fillStyle = `rgba(220,230,255,${a})`;
-      ctx.beginPath();
-      ctx.arc(rng() * size, rng() * size, rng() * 1.5 + 0.3, 0, TAU);
-      ctx.fill();
+    ctx.textBaseline = 'middle';
+    ctx.font = '700 24px "Hind Siliguri", "Noto Sans Bengali", sans-serif';
+    ctx.fillText(spec.title, x + w / 2, y + (spec.sub ? h * 0.43 : h * 0.52), w - 34);
+    if (spec.sub) {
+      ctx.fillStyle = spec.accent;
+      ctx.font = '600 15px "Hind Siliguri", "Noto Sans Bengali", sans-serif';
+      ctx.fillText(spec.sub, x + w / 2, y + h * 0.74, w - 34);
     }
-    return toTexture(canvas);
-  });
-}
 
-/** Road paint decal (dashed lines / zebra) — flat white with wear. */
-export function paintTexture(): THREE.Texture {
-  return cached('paint', () => {
-    const size = 128;
-    const { canvas, ctx } = canvas2d(size);
-    ctx.fillStyle = '#f2eee2';
-    ctx.fillRect(0, 0, size, size);
-    const rng = mulberry32(64);
-    for (let i = 0; i < 260; i++) {
-      ctx.fillStyle = `rgba(60,60,58,${0.05 + rng() * 0.3})`;
-      ctx.fillRect(rng() * size, rng() * size, 1 + rng() * 5, 1 + rng() * 4);
-    }
-    return toTexture(canvas);
-  });
-}
+    const ch = this.canvas.height;
+    this.slots[index] = {
+      u0: (x + 3) / this.canvas.width,
+      v0: 1 - (y + h - 3) / ch,
+      u1: (x + w - 3) / this.canvas.width,
+      v1: 1 - (y + 3) / ch,
+    };
+  }
 
-/** Vehicle liveries: bus side with fictional operator name. */
-export function busLiveryTexture(base: string, accent: string, label: string): THREE.Texture {
-  return cached(`bus:${base}:${accent}:${label}`, () => {
-    const { canvas, ctx } = canvas2d(512, 128);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, 512, 128);
-    ctx.fillStyle = accent;
-    ctx.fillRect(0, 86, 512, 22);
-    ctx.fillRect(0, 0, 512, 10);
-    for (let x = 20; x < 512; x += 84) {
-      ctx.fillStyle = 'rgba(10,20,28,0.72)';
-      ctx.beginPath();
-      ctx.roundRect(x, 26, 62, 44, 6);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      ctx.fillRect(x + 4, 30, 22, 36);
-    }
-    ctx.fillStyle = '#fff6e0';
-    ctx.font = `700 28px ${FONT_FAMILY}`;
-    ctx.textAlign = 'center';
-    ctx.fillText(label, 256, 76);
-    return toTexture(canvas);
-  });
-}
+  slot(index: number): SignSlot {
+    return this.slots[((index % this.slots.length) + this.slots.length) % this.slots.length];
+  }
 
-/** Adjust anisotropy for a new quality level. */
-export function setTextureQuality(anisotropy: number): void {
-  for (const tex of txRegistry) {
-    tex.anisotropy = anisotropy;
-    tex.needsUpdate = true;
+  get count(): number {
+    return this.slots.length;
   }
 }
 
-export function clearTextureCache(): void {
-  for (const tex of cache.values()) tex.dispose();
-  cache.clear();
+/* ------------------------------------------------------- rickshaw panel art */
+
+/**
+ * Traditional hand-painted Bangladeshi rickshaw tin backplate art!
+ * Cached safely in `cache` — callers MUST NOT dispose this shared texture.
+ */
+export function rickshawArtTexture(motif: string, primary: string, secondary: string): THREE.Texture {
+  return makeTexture(
+    `art.${motif}.${primary}.${secondary}`,
+    256,
+    192,
+    (ctx, w, h) => {
+      ctx.fillStyle = primary;
+      ctx.fillRect(0, 0, w, h);
+
+      // Ornate scalloped multi-border frame
+      ctx.strokeStyle = secondary;
+      ctx.lineWidth = 8;
+      ctx.strokeRect(6, 6, w - 12, h - 12);
+      ctx.strokeStyle = '#fff5d6';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(14, 14, w - 28, h - 28);
+
+      for (let x = 22; x < w - 18; x += 14) {
+        ctx.fillStyle = x % 28 === 8 ? '#ff4655' : '#35d49a';
+        ctx.beginPath();
+        ctx.arc(x, 10, 3.2, 0, Math.PI * 2);
+        ctx.arc(x, h - 10, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const cx = w / 2;
+      const cy = h / 2 + 4;
+      const petal = (px: number, py: number, r: number, count: number, color: string, inner: string): void => {
+        ctx.save();
+        ctx.translate(px, py);
+        for (let i = 0; i < count; i++) {
+          ctx.rotate((Math.PI * 2) / count);
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.ellipse(0, -r * 0.56, r * 0.25, r * 0.52, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = inner;
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 0.24, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      };
+
+      if (motif === 'bird') {
+        // Twin folk peacocks flanking a lotus
+        for (const dir of [-1, 1]) {
+          ctx.save();
+          ctx.translate(cx + dir * 56, cy + 4);
+          ctx.scale(dir, 1);
+          ctx.fillStyle = '#ffd65c';
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 26, 15, -0.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#1f9d8b';
+          ctx.beginPath();
+          ctx.arc(20, -14, 10, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#ff5c4d';
+          ctx.beginPath();
+          ctx.moveTo(28, -14);
+          ctx.lineTo(39, -11);
+          ctx.lineTo(28, -8);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+        petal(cx, cy - 6, 30, 10, '#ff6b6b', '#fff0a6');
+      } else if (motif === 'river') {
+        const g = ctx.createLinearGradient(0, 18, 0, h - 18);
+        g.addColorStop(0, '#ff9a52');
+        g.addColorStop(0.52, '#ffd68a');
+        g.addColorStop(0.55, '#1b6f8a');
+        g.addColorStop(1, '#0e3c52');
+        ctx.fillStyle = g;
+        ctx.fillRect(18, 18, w - 36, h - 36);
+        ctx.fillStyle = '#fff0a8';
+        ctx.beginPath();
+        ctx.arc(cx, h * 0.42, 20, 0, Math.PI * 2);
+        ctx.fill();
+        // Country nouka boat with colourful sail
+        ctx.fillStyle = '#2a160c';
+        ctx.beginPath();
+        ctx.moveTo(cx - 56, h * 0.68);
+        ctx.quadraticCurveTo(cx, h * 0.84, cx + 56, h * 0.68);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#f25c4d';
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, h * 0.68);
+        ctx.lineTo(cx - 6, h * 0.32);
+        ctx.lineTo(cx + 32, h * 0.62);
+        ctx.closePath();
+        ctx.fill();
+      } else if (motif === 'cinema' || motif === 'tiger') {
+        const rg = ctx.createRadialGradient(cx, cy, 8, cx, cy, 120);
+        rg.addColorStop(0, '#ffe47a');
+        rg.addColorStop(1, primary);
+        ctx.fillStyle = rg;
+        ctx.fillRect(18, 18, w - 36, h - 36);
+        ctx.save();
+        ctx.translate(cx, cy);
+        for (let i = 0; i < 16; i++) {
+          ctx.rotate((Math.PI * 2) / 16);
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(255,92,77,0.52)' : 'rgba(36,198,168,0.42)';
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(-10, -110);
+          ctx.lineTo(10, -110);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+        if (motif === 'tiger') {
+          // Stylized Royal Bengal Tiger emblem
+          ctx.fillStyle = '#f59c24';
+          ctx.beginPath();
+          ctx.arc(cx, cy + 2, 34, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#1b1410';
+          for (const dy of [-14, -4, 6]) {
+            ctx.fillRect(cx - 28, cy + dy, 14, 4);
+            ctx.fillRect(cx + 14, cy + dy, 14, 4);
+          }
+          ctx.fillStyle = '#fff8e7';
+          ctx.beginPath();
+          ctx.arc(cx - 11, cy - 5, 5, 0, Math.PI * 2);
+          ctx.arc(cx + 11, cy - 5, 5, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          petal(52, 50, 22, 8, '#ff5c7a', '#ffe88a');
+          petal(w - 52, 50, 22, 8, '#ff5c7a', '#ffe88a');
+        }
+      } else {
+        // Classic Shapla / Lotus & Marigold Rickshaw Art
+        petal(cx, cy + 4, 46, 12, '#ff4d5e', '#ffe066');
+        petal(54, 52, 24, 8, '#38c695', '#fff2a6');
+        petal(w - 54, 52, 24, 8, '#38c695', '#fff2a6');
+        petal(54, h - 46, 22, 8, '#ffa93a', '#fff2a6');
+        petal(w - 54, h - 46, 22, 8, '#ffa93a', '#fff2a6');
+      }
+
+      // Traditional top ribbon banner ("মা-বাবার দোয়া" / "বাংলার টেসলা")
+      ctx.fillStyle = '#10261e';
+      ctx.fillRect(cx - 74, 20, 148, 24);
+      ctx.strokeStyle = '#ffd65c';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cx - 74, 20, 148, 24);
+      ctx.fillStyle = '#fff5d6';
+      ctx.font = '700 15px "Hind Siliguri", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('বাংলার টেসলা · ঢাকা', cx, 32);
+    },
+    { repeat: [1, 1], mipmaps: false },
+  );
 }
 
-/** Utility exposed for tests / debug: pixel-level sanity of a drawing. */
-export function coverage(canvas: HTMLCanvasElement): number {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return 0;
-  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  let lit = 0;
-  for (let i = 3; i < data.length; i += 4) if (data[i] > 8) lit++;
-  return clamp01(lit / (canvas.width * canvas.height));
+export const FONT_FAMILY = '"Hind Siliguri", "Noto Sans Bengali", system-ui, sans-serif';
+
+export function radialSprite(inner = 'rgba(255,220,160,0.9)', outer = 'rgba(255,200,120,0)'): THREE.Texture {
+  return makeTexture(
+    `radial.${inner}.${outer}`,
+    64,
+    64,
+    (ctx, w, h) => {
+      const g = ctx.createRadialGradient(w / 2, h / 2, 2, w / 2, h / 2, w / 2);
+      g.addColorStop(0, inner);
+      g.addColorStop(1, outer);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    },
+    { mipmaps: false },
+  );
+}
+
+export function clothTexture(): THREE.Texture {
+  return makeTexture('cloth', 64, 64, (ctx, w, h) => {
+    ctx.fillStyle = '#d9d5cc';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    for (let y = 0; y < h; y += 4) ctx.fillRect(0, y, w, 1);
+    for (let x = 0; x < w; x += 4) ctx.fillRect(x, 0, 1, h);
+  });
+}
+
+export function posterTexture(): THREE.Texture {
+  return makeTexture('poster', 128, 128, (ctx, w, h) => {
+    ctx.fillStyle = '#efe2c0';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#b32821';
+    ctx.fillRect(8, 8, w - 16, 30);
+    ctx.fillStyle = '#fff5dc';
+    ctx.font = `700 16px ${FONT_FAMILY}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('মোহাম্মদপুর মেলা', w / 2, 28);
+    ctx.fillStyle = '#1b4d3e';
+    ctx.fillRect(14, 46, w - 28, 42);
+    ctx.fillStyle = '#ffd166';
+    ctx.font = `700 14px ${FONT_FAMILY}`;
+    ctx.fillText('টাউন হল মাঠ', w / 2, 72);
+    ctx.fillStyle = '#2d241c';
+    ctx.fillRect(18, 96, w - 36, 8);
+    ctx.fillRect(28, 110, w - 56, 6);
+  });
+}
+
+export function disposeTextureCache(): void {
+  for (const tex of cache.values()) tex.dispose();
+  cache.clear();
+  releaseScratchCanvas();
 }

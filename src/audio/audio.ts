@@ -62,7 +62,9 @@ export class AudioEngine {
   private engineFilter: BiquadFilterNode | null = null;
   private hornTimer = 0;
   private crowTimer = 6;
+  private vendorTimer = 4.5;
   private vehicleSpeed = 0;
+  private electricDrive = false;
 
   get ready(): boolean {
     return this.started;
@@ -275,18 +277,45 @@ export class AudioEngine {
     src.stop(t0 + duration + 0.02);
   }
 
-  /** The classic rickshaw bell: two bright metallic pings. */
+  /** The classic rickshaw bell: bright metallic টুং-টাং pings (plus brass & melody variants). */
   bell(variant = 'classic'): void {
     if (!this.ctx) return;
-    if (variant === 'double') {
+    if (variant === 'melody' || variant === 'bell-melody') {
+      this.metalPing(1568, 0.0, 0.18);
+      this.metalPing(1975, 0.09, 0.18);
+      this.metalPing(2349, 0.18, 0.22);
+      return;
+    }
+    if (variant === 'double' || variant === 'bell-double') {
       this.metalPing(1760, 0.0, 0.22);
       this.metalPing(1760, 0.11, 0.2);
       this.metalPing(2340, 0.22, 0.16);
       return;
     }
-    const base = variant === 'brass' ? 1480 : 1760;
+    const base = variant === 'brass' || variant === 'bell-brass' ? 1480 : 1760;
     this.metalPing(base, 0, 0.24);
-    this.metalPing(base * 1.02, 0.13, 0.2);
+    this.metalPing(base * 1.03, 0.13, 0.2);
+  }
+
+  /** Expressive vocal-formant alert cue when a pedestrian scolds a close rickshaw! */
+  pedestrianShout(): void {
+    this.tone(310, 0.13, { type: 'sawtooth', gain: 0.055, bus: 'dialogue', slideTo: 420, filter: 1450 });
+    this.tone(380, 0.16, { type: 'triangle', gain: 0.05, bus: 'dialogue', slideTo: 270, delay: 0.12, filter: 1300 });
+  }
+
+  /** Subtle Bangladeshi street-vendor spoon/muri-tin/tea-glass clink around Fuchka & Jhalmuri stalls! */
+  vendorSound(kind: 'fuchka' | 'jhalmuri' | 'tea' | 'market' = 'jhalmuri'): void {
+    if (kind === 'jhalmuri') {
+      // Rhythmic steel spoon tapping muri tin (`ঠং ঠং`)
+      this.metalPing(2650, 0, 0.06);
+      this.metalPing(2820, 0.09, 0.05);
+      this.noiseBurst(0.14, 3400, 0.025, 'ambience', 'bandpass');
+    } else if (kind === 'fuchka') {
+      this.metalPing(2120, 0, 0.07);
+      this.metalPing(2480, 0.11, 0.07);
+    } else {
+      this.teaClink();
+    }
   }
 
   private metalPing(freq: number, delay: number, duration: number): void {
@@ -359,11 +388,16 @@ export class AudioEngine {
     this.tone(220, 0.4, { type: 'sine', gain: 0.14, bus: 'ui', slideTo: 110 });
   }
 
-  /** Traffic horn, panned by distance so it never dominates. */
+  /** Traffic horn or NPC rickshaw bell, panned by distance so it never dominates. */
   trafficHorn(x: number, z: number, kind: string): void {
     if (!this.ctx) return;
+    if (kind === 'rickshaw' || kind === 'easybike') {
+      this.metalPing(kind === 'easybike' ? 1320 : 1680, 0, 0.14);
+      this.metalPing(kind === 'easybike' ? 1350 : 1720, 0.11, 0.12);
+      return;
+    }
     const ctx = this.ctx;
-    const base = kind === 'bus' || kind === 'truck' ? 190 : 320;
+    const base = kind === 'bus' || kind === 'truck' ? 190 : kind === 'motorbike' ? 410 : 320;
     const osc = ctx.createOscillator();
     osc.type = 'square';
     osc.frequency.value = base;
@@ -414,14 +448,30 @@ export class AudioEngine {
     if (this.ctx) this.musicGain.gain.setTargetAtTime(enabled ? this.trackVolume : 0, this.ctx.currentTime, 0.4);
   }
 
+  setElectricMode(electric: boolean): void {
+    this.electricDrive = electric;
+    if (this.engineOsc) {
+      this.engineOsc.type = electric ? 'sine' : 'triangle';
+    }
+  }
+
   setVehicleSpeed(speed: number, throttle: number): void {
     this.vehicleSpeed = speed;
     if (!this.ctx || !this.engineGain || !this.engineOsc || !this.engineFilter) return;
     const t = this.ctx.currentTime;
-    const target = Math.min(0.09, Math.abs(speed) * 0.012 + Math.abs(throttle) * 0.02);
-    this.engineGain.gain.setTargetAtTime(target, t, 0.25);
-    this.engineOsc.frequency.setTargetAtTime(38 + Math.abs(speed) * 6.2, t, 0.2);
-    this.engineFilter.frequency.setTargetAtTime(180 + Math.abs(speed) * 42, t, 0.25);
+    const absSpd = Math.abs(speed);
+    if (this.electricDrive) {
+      // Smooth brushless DC electric rickshaw inverter whine
+      const target = Math.min(0.085, absSpd * 0.011 + Math.abs(throttle) * 0.018);
+      this.engineGain.gain.setTargetAtTime(target, t, 0.18);
+      this.engineOsc.frequency.setTargetAtTime(115 + absSpd * 24, t, 0.16);
+      this.engineFilter.frequency.setTargetAtTime(420 + absSpd * 85, t, 0.2);
+    } else {
+      const target = Math.min(0.09, absSpd * 0.012 + Math.abs(throttle) * 0.02);
+      this.engineGain.gain.setTargetAtTime(target, t, 0.25);
+      this.engineOsc.frequency.setTargetAtTime(38 + absSpd * 6.2, t, 0.2);
+      this.engineFilter.frequency.setTargetAtTime(180 + absSpd * 42, t, 0.25);
+    }
   }
 
   /** Called every frame so music keeps its look-ahead schedule. */
@@ -432,8 +482,16 @@ export class AudioEngine {
     if (this.hornTimer <= 0) {
       this.hornTimer = 6 + Math.random() * 11;
       if (Math.random() < 0.65) {
-        this.trafficHorn(playerX + (Math.random() - 0.5) * 50, playerZ + (Math.random() - 0.5) * 50, Math.random() < 0.3 ? 'bus' : 'car');
+        const roll = Math.random();
+        const kind = roll < 0.36 ? 'rickshaw' : roll < 0.65 ? 'car' : 'bus';
+        this.trafficHorn(playerX + (Math.random() - 0.5) * 50, playerZ + (Math.random() - 0.5) * 50, kind);
       }
+    }
+    this.vendorTimer -= dt;
+    if (this.vendorTimer <= 0) {
+      this.vendorTimer = 7 + Math.random() * 11;
+      const kinds: ('fuchka' | 'jhalmuri' | 'tea')[] = ['jhalmuri', 'fuchka', 'tea'];
+      this.vendorSound(kinds[Math.floor(Math.random() * kinds.length)]);
     }
     this.crowTimer -= dt;
     if (this.crowTimer <= 0) {
