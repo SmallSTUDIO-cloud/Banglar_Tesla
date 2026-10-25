@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="bn">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0E3B2E" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="description"
+      content="Banglar Tesla — ঢাকার রাস্তায় নিজের স্টাইলে। A 3D Dhaka cycle-rickshaw driving game."
+    />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon-192.png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <title>BANGLAR TESLA — বাংলার টেসলা</title>
+    <link rel="preload" href="./fonts/HindSiliguri-Regular.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="./fonts/HindSiliguri-Bold.ttf" as="font" type="font/ttf" crossorigin />
+    <style>
+      @font-face {
+        font-family: 'Hind Siliguri';
+        src: url('./fonts/HindSiliguri-Regular.ttf') format('truetype');
+        font-weight: 400;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Hind Siliguri';
+        src: url('./fonts/HindSiliguri-SemiBold.ttf') format('truetype');
+        font-weight: 600;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Hind Siliguri';
+        src: url('./fonts/HindSiliguri-Bold.ttf') format('truetype');
+        font-weight: 700;
+        font-display: swap;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game-canvas" aria-label="3D game view"></canvas>
+
+    <!-- Boot splash: skippable logo sting -->
+    <div id="boot-splash" class="boot-splash" role="status" aria-live="polite">
+      <div class="boot-emblem">
+        <svg viewBox="0 0 200 200" width="132" height="132" aria-hidden="true">
+          <defs>
+            <linearGradient id="bootGlow" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#7FC4FF" />
+              <stop offset="100%" stop-color="#2C7BE5" />
+            </linearGradient>
+          </defs>
+          <circle cx="100" cy="100" r="74" fill="none" stroke="#E8B25A" stroke-width="2.5" opacity="0.75" />
+          <circle cx="100" cy="100" r="58" fill="none" stroke="url(#bootGlow)" stroke-width="5" />
+          <g stroke="#F6EFE2" stroke-width="2.6" opacity="0.9">
+            <line x1="100" y1="42" x2="100" y2="158" />
+            <line x1="42" y1="100" x2="158" y2="100" />
+            <line x1="59" y1="59" x2="141" y2="141" />
+            <line x1="141" y1="59" x2="59" y2="141" />
+            <line x1="100" y1="42" x2="128" y2="100" />
+            <line x1="128" y1="100" x2="100" y2="158" />
+          </g>
+          <circle cx="100" cy="100" r="12" fill="#E8B25A" />
+          <g fill="#E8644A">
+            <circle cx="100" cy="30" r="5" />
+            <circle cx="100" cy="170" r="5" />
+            <circle cx="30" cy="100" r="5" />
+            <circle cx="170" cy="100" r="5" />
+          </g>
+        </svg>
+      </div>
+      <div class="boot-title">BANGLAR TESLA</div>
+      <div class="boot-tagline">ঢাকার রাস্তায়, নিজের স্টাইলে</div>
+      <div class="boot-bar"><i></i></div>
+      <button id="boot-skip" class="boot-skip" type="button">শুরু / SKIP</button>
+    </div>
+
+    <div id="ui-root"></div>
+
+    <noscript>This game needs JavaScript. Please enable it.</noscript>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

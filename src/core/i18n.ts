@@ -1,0 +1,525 @@
+/**
+ * Localisation. Bangla is the default language, English is an option.
+ * Every player-facing string in the game comes from this table; the mission /
+ * catalogue data reference these keys instead of hard-coded copy.
+ */
+
+export type Locale = 'bn' | 'en';
+
+interface Entry {
+  bn: string;
+  en: string;
+}
+
+export const STRINGS: Record<string, Entry> = {
+  // ---------------------------------------------------------------- common
+  'common.play': { bn: 'খেলা শুরু', en: 'Play' },
+  'common.continue': { bn: 'চালিয়ে যান', en: 'Continue' },
+  'common.garage': { bn: 'গ্যারেজ', en: 'Garage' },
+  'common.store': { bn: 'দোকান', en: 'Dokan / Store' },
+  'common.settings': { bn: 'সেটিংস', en: 'Settings' },
+  'common.credits': { bn: 'ক্রেডিট', en: 'Credits' },
+  'common.back': { bn: 'ফিরে যান', en: 'Back' },
+  'common.close': { bn: 'বন্ধ করুন', en: 'Close' },
+  'common.cancel': { bn: 'বাতিল', en: 'Cancel' },
+  'common.confirm': { bn: 'নিশ্চিত করুন', en: 'Confirm' },
+  'common.ok': { bn: 'ঠিক আছে', en: 'OK' },
+  'common.buy': { bn: 'কিনুন', en: 'Buy' },
+  'common.equip': { bn: 'লাগান', en: 'Equip' },
+  'common.equipped': { bn: 'লাগানো হয়েছে', en: 'Equipped' },
+  'common.owned': { bn: 'আপনার রিকশা', en: 'Owned' },
+  'common.repair': { bn: 'মেরামত', en: 'Repair' },
+  'common.apply': { bn: 'প্রয়োগ করুন', en: 'Apply' },
+  'common.max': { bn: 'সর্বোচ্চ', en: 'Max' },
+  'common.comingSoon': { bn: 'শীঘ্রই আসছে', en: 'COMING SOON' },
+  'common.unavailable': { bn: 'এখন কেনা যাবে না', en: 'Unavailable' },
+  'common.loading': { bn: 'মোহাম্মদপুর তৈরি হচ্ছে…', en: 'Building Mohammadpur…' },
+  'common.saved': { bn: 'সেভ হয়েছে', en: 'Saved' },
+  'common.needMore': { bn: 'আরও {n} দরকার', en: 'Need {n} more' },
+  'common.insufficient': { bn: 'পর্যাপ্ত টাকা নেই', en: 'Not enough taka' },
+  'common.free': { bn: 'বিনামূল্যে', en: 'Free' },
+  'common.level': { bn: 'লেবেল {n}', en: 'Level {n}' },
+  'common.version': { bn: 'সংস্করণ', en: 'Version' },
+  'common.total': { bn: 'মোট', en: 'Total' },
+  'common.none': { bn: 'নেই', en: 'None' },
+  'common.locked': { bn: 'লক করা', en: 'Locked' },
+  'common.best': { bn: 'সেরা', en: 'Best' },
+  'common.time': { bn: 'সময়', en: 'Time' },
+  'common.distance': { bn: 'দূরত্ব', en: 'Distance' },
+
+  // ------------------------------------------------------------------ boot
+  'boot.skip': { bn: 'শুরু / SKIP', en: 'SKIP' },
+  'boot.tip': { bn: 'টিপ: বাঁ হাত দিয়ে স্টিয়ারিং, ডান হাতে প্যাডেল', en: 'Tip: steer with your left thumb, pedal with your right' },
+
+  // ------------------------------------------------------------------ menu
+  'menu.tagline': { bn: 'ঢাকার রাস্তায়, নিজের স্টাইলে', en: "On Dhaka's roads, in your own style" },
+  'menu.modeTitle': { bn: 'কী করতে চান?', en: 'What are you up to?' },
+  'menu.passengerDuty': { bn: 'যাত্রী ডিউটি', en: 'Passenger Duty' },
+  'menu.passengerDutyDesc': { bn: 'যাত্রী ও বাজারের মাল পৌঁছে দিন', en: 'Carry passengers & market goods' },
+  'menu.freeRide': { bn: 'ফ্রি রাইড', en: 'Free Ride' },
+  'menu.freeRideDesc': { bn: 'মোহাম্মদপুর ঘুরে দেখুন', en: 'Explore Mohammadpur freely' },
+  'menu.daily': { bn: 'আজকের চ্যালেঞ্জ', en: 'Challenge of the Day' },
+  'menu.dailyDesc': { bn: 'আজকের বিশেষ যাত্রা ও বোনাস ভাড়া', en: 'Special daily route with bonus fare' },
+  'menu.district': { bn: 'মোহাম্মদপুর, ঢাকা', en: 'Mohammadpur, Dhaka' },
+  'menu.districtNote': { bn: 'টাউন হল ও আসাদ এভেনিউ এলাকা', en: 'Town Hall & Asad Avenue quarter' },
+  'menu.balance': { bn: 'ব্যালেন্স', en: 'Balance' },
+  'menu.ridesDone': { bn: '{n} যাত্রা সম্পন্ন', en: '{n} rides completed' },
+  'menu.tutorial': { bn: 'টিউটোরিয়াল', en: 'Tutorial' },
+  'menu.levelLabel': { bn: '{title}', en: '{title}' },
+  'menu.newGame': { bn: 'নতুন খেলা', en: 'New game' },
+  'menu.resetWarn': { bn: 'সব অগ্রগতি মুছে যাবে। নিশ্চিত?', en: 'All progress will be erased. Are you sure?' },
+  'menu.installed': { bn: 'অ্যাপ হিসেবে ইনস্টল', en: 'Install app' },
+  'menu.offlineReady': { bn: 'অফলাইনে চলে', en: 'Works offline' },
+
+  // -------------------------------------------------------------------- HUD
+  'hud.pickup': { bn: 'যাত্রী তুলুন', en: 'Pick up passenger' },
+  'hud.drop': { bn: 'যাত্রী নামান', en: 'Drop off passenger' },
+  'hud.free': { bn: 'ফ্রি রাইড', en: 'Free ride' },
+  'hud.none': { bn: 'কোনো কাজ নেই', en: 'No active job' },
+  'hud.fare': { bn: 'ভাড়া', en: 'Fare' },
+  'hud.mood': { bn: 'মন', en: 'Mood' },
+  'hud.speed': { bn: 'গতি', en: 'Speed' },
+  'hud.battery': { bn: 'চার্জ', en: 'Charge' },
+  'hud.horn': { bn: 'বেল', en: 'BELL' },
+  'hud.pedal': { bn: 'প্যাডেল', en: 'PEDAL' },
+  'hud.throttle': { bn: 'মোটর', en: 'DRIVE' },
+  'hud.brake': { bn: 'ব্রেক', en: 'BRAKE' },
+  'hud.left': { bn: 'বাঁ', en: 'L' },
+  'hud.right': { bn: 'ডা', en: 'R' },
+  'hud.camera': { bn: 'ক্যামেরা', en: 'CAM' },
+  'hud.hintPickup': { bn: 'থেমে যাত্রী তুলুন', en: 'Stop to pick up' },
+  'hud.hintDrop': { bn: 'থেমে যাত্রী নামান', en: 'Stop to drop off' },
+  'hud.hintArrived': { bn: 'পৌঁছে গেছেন!', en: 'You have arrived!' },
+  'hud.jamAhead': { bn: 'সামনে তীব্র জ্যাম — পাশের গলি নিন!', en: 'Heavy jam ahead — try a side lane!' },
+  'hud.detour': { bn: 'বিকল্প রাস্তা খোলা আছে', en: 'Alternate route available' },
+  'hud.timeLeft': { bn: 'বাকি {n}', en: '{n} left' },
+  'hud.late': { bn: 'দেরি হচ্ছে', en: 'Running late' },
+  'hud.onTime': { bn: 'সময়ের মধ্যে', en: 'On time' },
+  'hud.jobNext': { bn: 'নতুন যাত্রী খুঁজুন', en: 'Find the next fare' },
+  'hud.jobAtStand': { bn: 'রিকশা স্ট্যান্ডে যান', en: 'Go to the rickshaw stand' },
+  'hud.passengerAboard': { bn: 'যাত্রী উঠেছেন', en: 'Passenger on board' },
+  'hud.stuck': { bn: 'আটকে গেছেন?', en: 'Stuck?' },
+  'hud.recover': { bn: 'পুনরুদ্ধার', en: 'Recover' },
+
+  // ---------------------------------------------------------------- cameras
+  'cam.label': { bn: 'ক্যামেরা: {mode}', en: 'Camera: {mode}' },
+  'cam.switched': { bn: 'ক্যামেরা: {mode}', en: 'Camera: {mode}' },
+  'cam.chase': { bn: 'ক্লাসিক চেজ', en: 'Classic Chase' },
+  'cam.close': { bn: 'ক্লোজ চেজ', en: 'Close Chase' },
+  'cam.wide': { bn: 'ওয়াইড চেজ', en: 'Wide Chase' },
+  'cam.low': { bn: 'লো সিনেম্যাটিক', en: 'Low Cinematic' },
+  'cam.front': { bn: 'সামনের ভিউ', en: 'Front View' },
+  'cam.cockpit': { bn: 'চালকের ভিউ', en: 'Rider View' },
+  'cam.side': { bn: 'সাইড সিনেম্যাটিক', en: 'Side Cinematic' },
+  'cam.mode.chase': { bn: 'ক্লাসিক চেজ', en: 'Classic Chase' },
+  'cam.mode.close': { bn: 'ক্লোজ চেজ', en: 'Close Chase' },
+  'cam.mode.wide': { bn: 'ওয়াইড চেজ', en: 'Wide Chase' },
+  'cam.mode.low': { bn: 'লো সিনেম্যাটিক', en: 'Low Cinematic' },
+  'cam.mode.front': { bn: 'সামনের ভিউ', en: 'Front View' },
+  'cam.mode.cockpit': { bn: 'চালকের ভিউ', en: 'Rider View' },
+  'cam.mode.side': { bn: 'সাইড সিনেম্যাটিক', en: 'Side Cinematic' },
+  'cam.short.chase': { bn: 'চেজ', en: 'CHASE' },
+  'cam.short.close': { bn: 'ক্লোজ', en: 'CLOSE' },
+  'cam.short.wide': { bn: 'ওয়াইড', en: 'WIDE' },
+  'cam.short.low': { bn: 'লো', en: 'LOW' },
+  'cam.short.front': { bn: 'ফ্রন্ট', en: 'FRONT' },
+  'cam.short.cockpit': { bn: 'ড্রাইভার', en: 'DRIVER' },
+  'cam.short.side': { bn: 'সাইড', en: 'SIDE' },
+  'garage.stat.accel': { bn: 'ত্বরণ', en: 'Acceleration' },
+  'store.comingSoon': { bn: 'শীঘ্রই আসছে · COMING SOON', en: 'COMING SOON' },
+  'store.comingSoonSub': {
+    bn: 'রিকশা রোডস্টার — শীঘ্রই আসছে (এখন কেনা যাবে না)',
+    en: 'Rickshaw Roadster — COMING SOON (unavailable for purchase)',
+  },
+  'osm.credit': {
+    bn: 'রাস্তার মানচিত্রের তথ্য © OpenStreetMap অবদানকারীগণ (ODbL 1.0); ভবন ও পরিবেশ পদ্ধতিগতভাবে নির্মিত।',
+    en: 'Street network data © OpenStreetMap contributors (ODbL 1.0); buildings & props procedurally approximated.',
+  },
+
+  // ------------------------------------------------------------------ pause
+  'pause.title': { bn: 'বিরতি', en: 'Paused' },
+  'pause.resume': { bn: 'চালিয়ে যান', en: 'Resume' },
+  'pause.restart': { bn: 'যাত্রা আবার শুরু', en: 'Restart ride' },
+  'pause.recover': { bn: 'রিকশা পুনরুদ্ধার', en: 'Recover rickshaw' },
+  'pause.settings': { bn: 'সেটিংস', en: 'Settings' },
+  'pause.quit': { bn: 'মেনুতে ফিরুন', en: 'Return to menu' },
+  'pause.quitWarn': {
+    bn: 'মিশন বাতিল হবে এবং এই যাত্রার আয় হারাবেন।',
+    en: 'This cancels the job and you will lose this ride’s earnings.',
+  },
+  'pause.recoverFee': { bn: 'খরচ হবে {n}', en: 'Costs {n}' },
+  'pause.autoSaved': { bn: 'অগ্রগতি সেভ করা হয়েছে', en: 'Progress saved' },
+
+  // --------------------------------------------------------------- settings
+  'settings.title': { bn: 'সেটিংস', en: 'Settings' },
+  'settings.graphics': { bn: 'গ্রাফিক্স', en: 'Graphics' },
+  'settings.quality': { bn: 'কোয়ালিটি', en: 'Quality' },
+  'quality.low': { bn: 'কম / ব্যাটারি সেভার', en: 'Low / Battery saver' },
+  'quality.balanced': { bn: 'মধ্যম', en: 'Balanced' },
+  'quality.high': { bn: 'বেশি', en: 'High' },
+  'settings.renderScale': { bn: 'রেন্ডার স্কেল', en: 'Render scale' },
+  'settings.shadows': { bn: 'ছায়া', en: 'Shadows' },
+  'settings.qualityNote': {
+    bn: 'ট্রাফিক, ভিড়, বৃষ্টি ও ছায়া এখনই বদলে যাবে।',
+    en: 'Traffic, crowds, rain and shadows change immediately.',
+  },
+  'settings.audio': { bn: 'শব্দ', en: 'Audio' },
+  'settings.music': { bn: 'মিউজিক', en: 'Music' },
+  'settings.ambience': { bn: 'শহরের শব্দ', en: 'Ambience' },
+  'settings.traffic': { bn: 'ট্রাফিক', en: 'Traffic' },
+  'settings.ui': { bn: 'ইন্টারফেস', en: 'UI' },
+  'settings.dialogue': { bn: 'সংলাপ', en: 'Dialogue' },
+  'settings.vehicle': { bn: 'রিকশা', en: 'Vehicle' },
+  'settings.mute': { bn: 'সব নীরব', en: 'Mute all' },
+  'settings.radioMode': { bn: 'শুনতে চাই', en: 'Listen to' },
+  'settings.radio.both': { bn: 'মিউজিক ও শহর', en: 'Music + city' },
+  'settings.radio.music': { bn: 'শুধু মিউজিক', en: 'Music only' },
+  'settings.radio.street': { bn: 'শুধু শহর', en: 'City only' },
+  'settings.controls': { bn: 'নিয়ন্ত্রণ', en: 'Controls' },
+  'settings.steering': { bn: 'স্টিয়ারিং', en: 'Steering' },
+  'settings.steering.buttons': { bn: 'বাঁ/ডান বাটন', en: 'Left / right buttons' },
+  'settings.steering.wheel': { bn: 'আনালগ চাকা', en: 'Analog wheel' },
+  'settings.handedness': { bn: 'কোন হাতে চালাবেন', en: 'Control hand' },
+  'settings.rightHanded': { bn: 'ডান হাতি', en: 'Right-handed' },
+  'settings.leftHanded': { bn: 'বাঁ হাতি', en: 'Left-handed' },
+  'settings.sensitivity': { bn: 'সংবেদনশীলতা', en: 'Sensitivity' },
+  'settings.deadzone': { bn: 'ডেড জোন', en: 'Dead zone' },
+  'settings.cameraShake': { bn: 'ক্যামেরা কাঁপা', en: 'Camera shake' },
+  'settings.haptics': { bn: 'ভাইব্রেশন', en: 'Haptics' },
+  'settings.hapticsNote': { bn: 'ফোন সাপোর্ট করলে কম্পন হবে', en: 'Vibrates where the phone supports it' },
+  'settings.language': { bn: 'ভাষা', en: 'Language' },
+  'settings.accessibility': { bn: 'সুবিধা', en: 'Accessibility' },
+  'settings.textSize': { bn: 'লেখার আকার', en: 'Text size' },
+  'settings.hudScale': { bn: 'এইচইউডি আকার', en: 'HUD scale' },
+  'settings.reduceEffects': { bn: 'কম ঝলকানি ও ইফেক্ট', en: 'Reduce effects' },
+  'settings.subtitles': { bn: 'সংলাপের লেখা', en: 'Dialogue text' },
+  'settings.fps': { bn: 'ফ্রেম রেট টার্গেট', en: 'Frame rate target' },
+  'settings.fps30': { bn: '৩০ এফপিএস', en: '30 FPS' },
+  'settings.fps60': { bn: '৬০ এফপিএস', en: '60 FPS' },
+  'settings.reset': { bn: 'ডিফল্টে ফেরান', en: 'Reset to defaults' },
+  'settings.resetDone': { bn: 'ডিফল্ট সেটিংস ফিরে এসেছে', en: 'Defaults restored' },
+  'settings.tabletNote': {
+    bn: 'এই ব্রাউজার/ডিভাইসে সব অপশন কাজ করে না, বাকিগুলো কাজ করছে।',
+    en: 'Some options may be unavailable on this device; the rest still apply.',
+  },
+
+  // ----------------------------------------------------------------- garage
+  'garage.title': { bn: 'গ্যারেজ', en: 'Garage' },
+  'garage.subtitle': { bn: 'আপনার রিকশা, আপনার স্টাইল', en: 'Your rickshaw, your style' },
+  'garage.paint': { bn: 'রং', en: 'Paint' },
+  'garage.upgrades': { bn: 'আপগ্রেড', en: 'Upgrades' },
+  'garage.accessories': { bn: 'সাজসজ্জা', en: 'Accessories' },
+  'garage.vehicles': { bn: 'রিকশা', en: 'Rickshaws' },
+  'garage.condition': { bn: 'অবস্থা', en: 'Condition' },
+  'garage.repair': { bn: 'মেরামত করুন', en: 'Repair' },
+  'garage.repairDone': { bn: 'রিকশা মেরামত হয়েছে', en: 'Rickshaw repaired' },
+  'garage.conditionGood': { bn: 'রিকশা একদম ঠিক আছে', en: 'Rickshaw is in good shape' },
+  'garage.repairCost': { bn: '{n} দিয়ে মেরামত', en: 'Repair for {n}' },
+  'garage.drag': { bn: 'ঘোরাতে টানুন', en: 'Drag to rotate' },
+  'garage.stats': { bn: 'পারফরম্যান্স', en: 'Performance' },
+  'garage.own': { bn: 'আপনার', en: 'Owned' },
+  'garage.selected': { bn: 'নির্বাচিত', en: 'Selected' },
+  'garage.select': { bn: 'এই রিকশা নিন', en: 'Ride this one' },
+  'garage.preview': { bn: 'প্রিভিউ', en: 'Preview' },
+  'garage.chargeConfirm': { bn: '{name} কিনতে {price} খরচ হবে।', en: 'Buy {name} for {price}?' },
+  'garage.buyConfirm': { bn: 'নিশ্চিত করুন', en: 'Confirm purchase' },
+  'garage.tooPoor': { bn: 'আরও {n} লাগবে', en: '{n} more needed' },
+  'garage.damaged': { bn: 'রিকশার অবস্থা কম, গতি কমছে', en: 'Low condition — your rides feel heavier' },
+  'garage.stat.speed': { bn: 'গতি ও মোটর', en: 'Speed & Motor' },
+  'garage.stat.handling': { bn: 'নিয়ন্ত্রণ ও গ্রিপ', en: 'Handling & Grip' },
+  'garage.stat.comfort': { bn: 'আরাম ও সাসপেনশন', en: 'Comfort' },
+  'garage.stat.braking': { bn: 'ব্রেক ক্ষমতা', en: 'Braking' },
+  'garage.stat.durability': { bn: 'মজবুতি', en: 'Durability' },
+  'garage.stat.efficiency': { bn: 'এফিসিয়েন্সি', en: 'Efficiency' },
+
+  // ------------------------------------------------------------------ store
+  'store.title': { bn: 'দোকান', en: 'Dokan — Store' },
+  'store.subtitle': { bn: 'নতুন রিকশা, ইলেকট্রিক মডেল ও আপগ্রেড কিনুন', en: 'Buy rickshaws, electric models & upgrades' },
+  'store.vehicles': { bn: 'রিকশা', en: 'Rickshaws' },
+  'store.upgrades': { bn: 'আপগ্রেড', en: 'Upgrades' },
+  'store.paint': { bn: 'রং ও শিল্প', en: 'Paint & art' },
+  'store.accessories': { bn: 'সাজসজ্জা', en: 'Accessories' },
+  'store.buyDone': { bn: 'কেনা হয়েছে!', en: 'Purchased!' },
+  'store.equipDone': { bn: 'লাগানো হয়েছে', en: 'Equipped' },
+  'store.notEnough': { bn: '{n} আরও দরকার', en: '{n} more needed' },
+  'store.confirmTitle': { bn: 'কেনা নিশ্চিত করুন', en: 'Confirm purchase' },
+  'store.comingSoonToast': { bn: 'রিকশা রোডস্টার শীঘ্রই আসছে — এখন কেনা যাবে না!', en: 'Rickshaw Roadster is Coming Soon — not purchasable yet!' },
+
+  // ----------------------------------------------------------------- result
+  'result.title': { bn: 'যাত্রা সম্পন্ন', en: 'Ride complete' },
+  'result.failed': { bn: 'যাত্রা বাতিল', en: 'Ride cancelled' },
+  'result.base': { bn: 'মূল ভাড়া', en: 'Base fare' },
+  'result.distance': { bn: 'দূরত্বের ভাড়া', en: 'Distance' },
+  'result.time': { bn: 'সময়ের বোনাস', en: 'On-time bonus' },
+  'result.smooth': { bn: 'আরামদায়ক যাত্রা', en: 'Smooth ride' },
+  'result.tip': { bn: 'বকশিশ', en: 'Tip' },
+  'result.traffic': { bn: 'জ্যাম এড়ানো বোনাস', en: 'Jam-dodge bonus' },
+  'result.damage': { bn: 'ক্ষতির খরচ', en: 'Damage' },
+  'result.total': { bn: 'মোট আয়', en: 'Total earned' },
+  'result.next': { bn: 'পরের যাত্রী', en: 'Next job' },
+  'result.freeRide': { bn: 'ফ্রি রাইড', en: 'Free ride' },
+  'result.garage': { bn: 'গ্যারেজ', en: 'Garage' },
+  'result.rating': { bn: 'যাত্রীর রেটিং', en: 'Rider rating' },
+  'result.unlock': { bn: 'নতুন আনলক', en: 'New unlock' },
+  'result.moodMood': { bn: 'যাত্রীর মন', en: 'Passenger mood' },
+  'result.boss': { bn: 'বস ড্রাইভার', en: 'BOSS DRIVER' },
+  'result.smoothStamp': { bn: 'সিল্ক স্মুথ', en: 'SILK SMOOTH' },
+  'result.fastStamp': { bn: 'বিদ্যুৎ গতি', en: 'LIGHTNING' },
+  'result.late': { bn: 'দেরি হয়েছে', en: 'Late' },
+  'result.dailyDone': { bn: 'আজকের চ্যালেঞ্জ সম্পন্ন', en: 'Daily challenge complete' },
+
+  // --------------------------------------------------------------- dialogue
+  'who.student': { bn: 'ছাত্র', en: 'Student' },
+  'who.office': { bn: 'অফিসযাত্রী', en: 'Office worker' },
+  'who.shopper': { bn: 'বাজারের যাত্রী', en: 'Market shopper' },
+  'who.elder': { bn: 'মুরুব্বি', en: 'Elderly rider' },
+  'who.tourist': { bn: 'অতিথি যাত্রী', en: 'Visitor' },
+  'who.singer': { bn: 'গায়ক', en: 'Musician' },
+  'who.vendor': { bn: 'দোকানদার', en: 'Shopkeeper' },
+  'd.student.greet': { bn: 'ভাই, ইকবাল রোড কলেজ গেটে যাব।', en: 'Bhai, to Iqbal Road college gate please.' },
+  'd.office.greet': { bn: 'আসাদ গেট যাব ভাই, জ্যাম এড়িয়ে চলেন!', en: 'Heading to Asad Gate — please dodge the jam!' },
+  'd.shopper.greet': { bn: 'টাউন হল বাজার থেকে ফিরছি, আস্তে চালাবেন।', en: 'Back from Town Hall Market, drive gently.' },
+  'd.elder.greet': { bn: 'মসজিদ মোড় পর্যন্ত যাব বাবা, আরাম করে চালান।', en: 'To the mosque corner, drive comfortably.' },
+  'd.tourist.greet': { bn: 'মোহাম্মদপুরের রাস্তাগুলো দারুণ প্রাণবন্ত!', en: 'Mohammadpur streets are so lively!' },
+  'd.singer.greet': { bn: 'তাজমহল রোডে রেওয়াজ আছে, তাড়া আছে ভাই।', en: 'Rehearsal on Tajmahal Road — in a hurry, bhai.' },
+  'd.fast': { bn: 'ভাই, একটু তাড়াতাড়ি।', en: 'A little faster, bhai.' },
+  'd.slow': { bn: 'আস্তে চালান, ভাই।', en: 'Slow down a little, bhai.' },
+  'd.lane': { bn: 'জ্যাম থাকলে পাশের গলি দিয়ে যান।', en: 'Take the side lane if it is jammed.' },
+  'd.rain': { bn: 'বৃষ্টি নামার আগেই পৌঁছাই।', en: 'Let us arrive before the rain.' },
+  'd.fare': { bn: 'ভাড়া কত?', en: 'How much is the fare?' },
+  'd.drop': { bn: 'এখানেই নামিয়ে দিন।', en: 'Drop me right here.' },
+  'd.happy': { bn: 'বাহ, দারুণ চালান!', en: 'Wow, you drive well!' },
+  'd.neutral': { bn: 'ঠিক আছে, ধীরে চালান।', en: 'Okay, easy does it.' },
+  'd.annoyed': { bn: 'ভাই, একটু সাবধানে!', en: 'Careful, bhai!' },
+  'd.thanks': { bn: 'ধন্যবাদ মামা!', en: 'Thanks, mama!' },
+  'd.midroute': { bn: 'একটু দ্রুত করলে ভালো হয়।', en: 'A bit quicker would be nice.' },
+  'd.pickup': { bn: 'এই যে মামা, খালি যাবে?', en: 'Hey mama, are you free?' },
+  'd.enter': { bn: 'চলেন ভাই, রওনা দেন।', en: 'Alright bhai, let us roll.' },
+
+  // --------------------------------------------------- pedestrian reactions
+  'ped.react.1': { bn: 'এই! দেখে চালান!', en: 'Hey! Watch where you are driving!' },
+  'ped.react.2': { bn: 'সামনে দেখেন ভাই!', en: 'Look ahead, bhai!' },
+  'ped.react.3': { bn: 'আস্তে চালান!', en: 'Drive slowly!' },
+  'ped.react.4': { bn: 'ও মামা, ব্রেক ধরেন!', en: 'Whoa mama, hit the brakes!' },
+  'ped.react.5': { bn: 'ফুটপাতের দিকে উঠান ক্যান!', en: 'Why are you riding onto the footpath!' },
+  'ped.react.6': { bn: 'বেল বাজাইয়া আইবেন তো!', en: 'Ring your bell first!' },
+
+  // ------------------------------------------------------------------ toast
+  'toast.newJob': { bn: 'নতুন যাত্রী অপেক্ষা করছে', en: 'A passenger is waiting' },
+  'toast.pickup': { bn: 'যাত্রী উঠেছেন', en: 'Passenger on board' },
+  'toast.drop': { bn: 'যাত্রী নামলেন', en: 'Passenger dropped off' },
+  'toast.purchase': { bn: 'কেনা হয়েছে', en: 'Purchased' },
+  'toast.equipped': { bn: 'লাগানো হয়েছে', en: 'Equipped' },
+  'toast.repaired': { bn: 'মেরামত সম্পন্ন', en: 'Repaired' },
+  'toast.unlock': { bn: 'নতুন আনলক: {name}', en: 'Unlocked: {name}' },
+  'toast.recovered': { bn: 'রিকশা রাস্তায় ফেরা হয়েছে', en: 'Rickshaw recovered' },
+  'toast.notEnough': { bn: 'টাকা যথেষ্ট নয়', en: 'Not enough taka' },
+  'toast.saved': { bn: 'সেভ হয়েছে', en: 'Game saved' },
+  'toast.rainSoon': { bn: 'বৃষ্টি আসছে…', en: 'Rain is coming…' },
+  'toast.dailyDone': { bn: 'আজকের চ্যালেঞ্জ শেষ!', en: 'Daily challenge complete!' },
+  'toast.freeRide': { bn: 'ফ্রি রাইড — মোহাম্মদপুর ঘুরে দেখুন', en: 'Free ride — explore Mohammadpur' },
+  'toast.conditionLow': { bn: 'রিকশার অবস্থা কম', en: 'Rickshaw condition is low' },
+  'toast.tape': { bn: 'নতুন টেপ: {name}', en: 'New tape: {name}' },
+
+  // --------------------------------------------------------------- missions
+  'mission.standard': { bn: 'যাত্রী পৌঁছে দিন', en: 'Passenger delivery' },
+  'mission.market': { bn: 'বাজারের মাল ডেলিভারি', en: 'Market parcel run' },
+  'mission.daily': { bn: 'আজকের যাত্রা', en: "Today's ride" },
+  'mission.to': { bn: '{place}-এ যান', en: 'To {place}' },
+  'mission.from': { bn: '{place} থেকে তুলুন', en: 'Pick up at {place}' },
+  'mission.pickupHere': { bn: 'যাত্রী এখানেই আছেন', en: 'Pick up here' },
+  'mission.negotiate': { bn: 'ভাড়া: {fare}', en: 'Fare: {fare}' },
+  'mission.optional.fast': { bn: 'দ্রুত পৌঁছে দিন', en: 'Arrive quickly' },
+  'mission.optional.smooth': { bn: 'আরামদায়ক যাত্রা', en: 'Keep it smooth' },
+  'mission.optional.alley': { bn: 'জ্যাম এড়িয়ে গলি নিন', en: 'Use back lanes to dodge jams' },
+  'mission.optional.rain': { bn: 'বৃষ্টির আগে পৌঁছান', en: 'Beat the rain' },
+  'mission.optionalLane': { bn: 'চাইলে গলিপথ নিতে পারেন', en: 'Optional: take the lane' },
+
+  // ------------------------------------------------------------ achievements
+  'ach.firstRide': { bn: 'প্রথম যাত্রী', en: 'First passenger' },
+  'ach.tenRides': { bn: '১০ যাত্রা', en: '10 rides' },
+  'ach.cleanRun': { bn: 'নিখুঁত যাত্রা', en: 'Clean run' },
+  'ach.rainRide': { bn: 'বৃষ্টির যাত্রা', en: 'Rainy delivery' },
+  'ach.alleyTurn': { bn: 'গলির কারিগর', en: 'Alley master' },
+  'ach.explorer': { bn: 'মোহাম্মদপুর চেনা', en: 'Knows Mohammadpur' },
+  'ach.firstUpgrade': { bn: 'প্রথম আপগ্রেড', en: 'First upgrade' },
+  'ach.electricOwner': { bn: 'বিদ্যুৎ চালক', en: 'Electric Pioneer' },
+
+  // ------------------------------------------------------------------ titles
+  'title.rookie': { bn: 'নতুন রিকশাওয়ালা', en: 'Rookie puller' },
+  'title.regular': { bn: 'মোহাম্মদপুরের চেনা মুখ', en: 'Mohammadpur regular' },
+  'title.veteran': { bn: 'আসাদ এভেনিউ ওস্তাদ', en: 'Asad Avenue veteran' },
+  'title.legend': { bn: 'বাংলার টেসলা', en: 'Banglar Tesla' },
+
+  // ----------------------------------------------------------------- places
+  'place.stand': { bn: 'মোহাম্মদপুর বাস স্ট্যান্ড', en: 'Mohammadpur Bus Stand' },
+  'place.tea': { bn: 'নূরজাহান রোড চায়ের টং', en: 'Nurjahan Road Tea Stall' },
+  'place.bazaar': { bn: 'টাউন হল কাঁচা বাজার', en: 'Town Hall Kacha Bazar' },
+  'place.school': { bn: 'ইকবাল রোড স্কুল মোড়', en: 'Iqbal Road School Corner' },
+  'place.garage': { bn: 'শেরশাহ সূরী রিকশা গ্যারেজ', en: 'Sher Shah Suri Garage' },
+  'place.pharmacy': { bn: 'আসাদ এভেনিউ ফার্মেসি ও পোস্ট অফিস', en: 'Asad Ave Post Office & Pharmacy' },
+  'place.launch': { bn: 'সাতমসজিদ রোড মোড়', en: 'Satmasjid Road Junction' },
+  'place.mosque': { bn: 'শিয়া মসজিদ ও রিং রোড মোড়', en: 'Shia Mosque & Ring Road' },
+  'place.market': { bn: 'কৃষি মার্কেট মোড়', en: 'Krishi Market Corner' },
+  'place.bridge': { bn: 'বাবর রোড জহুরি মহল্লা', en: 'Babar Road Johuri Moholla' },
+  'place.library': { bn: 'তাজমহল রোড ঈদগাহ মাঠ', en: 'Tajmahal Road Field' },
+  'place.salimullah': { bn: 'সলিমুল্লাহ রোড মোড়', en: 'Salimullah Road Corner' },
+  'place.humayun': { bn: 'হুমায়ুন রোড ক্লিনিক মোড়', en: 'Humayun Road Corner' },
+  'place.zakir': { bn: 'জাকির হোসেন রোড গলি', en: 'Zakir Hossain Lane' },
+
+  // ---------------------------------------------------------------- credits
+  'credits.title': { bn: 'ক্রেডিট', en: 'Credits' },
+  'credits.made': { bn: 'একটি অরিজিনাল বাংলাদেশি ৩ডি রিকশা গেম', en: 'An original Bangladeshi 3D rickshaw game' },
+  'credits.design': { bn: 'গেম ডিজাইন ও কোড', en: 'Game design & code' },
+  'credits.engine': { bn: 'ইঞ্জিন', en: 'Engine' },
+  'credits.fonts': { bn: 'ফন্ট', en: 'Fonts' },
+  'credits.audio': { bn: 'সঙ্গীত ও শব্দ', en: 'Music & sound' },
+  'credits.audioNote': {
+    bn: 'সব মিউজিক ও শব্দ কোডে রিয়েল-টাইমে তৈরি — কোনো কপিরাইট গান নেই।',
+    en: 'All music and SFX are synthesised in code at runtime — no copyrighted recordings.',
+  },
+  'credits.assets': { bn: 'মডেল ও টেক্সচার', en: 'Models & textures' },
+  'credits.assetsNote': {
+    bn: 'সব ৩ডি মডেল ও টেক্সচার এই প্রজেক্টের জন্য প্রসিডিউরালি তৈরি।',
+    en: 'Every 3D model and texture is generated procedurally for this project.',
+  },
+  'credits.osmTitle': { bn: 'মানচিত্রের তথ্যসূত্র', en: 'Map data attribution' },
+  'credits.mapNote': {
+    bn: 'মোহাম্মদপুরের রাস্তার সংযোগ ও প্রধান মোড়গুলো ওপেনস্ট্রিটম্যাপ (© OpenStreetMap contributors, ODbL 1.0) থেকে অনুপ্রাণিত ও সংক্ষিপ্ত স্কেলে রূপান্তরিত; ভবন ও দোকানপাট প্রসিডিউরালি তৈরি।',
+    en: 'Mohammadpur street connectivity and key junctions are derived from OpenStreetMap data (© OpenStreetMap contributors, ODbL 1.0) at a compact playable scale; buildings and street stalls are procedurally approximated.',
+  },
+  'credits.thanks': { bn: 'ঢাকার সব রিকশাওয়ালাকে ভালোবাসা', en: 'With love to every rickshaw puller in Dhaka' },
+
+  // --------------------------------------------------------------- tutorial
+  'tut.1.title': { bn: 'স্বাগতম, ড্রাইভার!', en: 'Welcome, driver!' },
+  'tut.1.body': {
+    bn: 'ডান দিকের প্যাডেল চেপে ধরে রিকশা চালান। বাঁ দিকের বাটন দিয়ে বাঁয়ে ও ডানে ঘুরুন।',
+    en: 'Hold the right pedal to ride. Use the left/right buttons to steer.',
+  },
+  'tut.2.title': { bn: 'যাত্রী তুলুন', en: 'Pick up a passenger' },
+  'tut.2.body': {
+    bn: 'সবুজ চিহ্নে গিয়ে একদম থামুন। যাত্রী নিজেই উঠে আসবেন।',
+    en: 'Stop right inside the green marker. The passenger walks over to you.',
+  },
+  'tut.3.title': { bn: 'জ্যাম এড়িয়ে নামিয়ে দিন', en: 'Dodge jams & drop off' },
+  'tut.3.body': {
+    bn: 'টাউন হল বা আসাদ এভেনিউতে জ্যাম থাকলে পাশের গলি নিন। স্মুথ চালালে বেশি বকশিশ!',
+    en: 'If Town Hall or Asad Ave is jammed, cut through a side lane. Smooth rides earn bigger tips!',
+  },
+  'tut.4.title': { bn: 'দোকান ও গ্যারেজ', en: 'Dokan & Garage' },
+  'tut.4.body': {
+    bn: 'দোকান থেকে ইলেকট্রিক রিকশা, মোটর, ব্রেক, টায়ার ও নতুন রং কিনুন।',
+    en: 'Visit Dokan or Garage to buy the Electric Rickshaw, upgrades and custom art.',
+  },
+  'tut.skip': { bn: 'টিউটোরিয়াল বাদ', en: 'Skip tutorial' },
+  'tut.next': { bn: 'পরের ধাপ', en: 'Next' },
+  'tut.done': { bn: 'বুঝেছি', en: 'Got it' },
+
+  // ------------------------------------------------------- store catalogue
+  'veh.classic': { bn: 'ক্লাসিক ঢাকা', en: 'Classic Dhaka' },
+  'veh.classic.desc': { bn: 'পুরনো কিন্তু প্রাণবন্ত ঐতিহ্যবাহী প্যাডেল রিকশা', en: 'Your classic, lively Dhaka pedal rickshaw' },
+  'veh.neel': { bn: 'নীল বিজলি', en: 'Neel Bijli' },
+  'veh.neel.desc': { bn: 'গাঢ় নীল ক্যানভাস ও হালকা ইস্পাত ফ্রেম', en: 'Deep blue canopy with nimble steel frame' },
+  'veh.shapla': { bn: 'লাল শাপলা', en: 'Lal Shapla' },
+  'veh.shapla.desc': { bn: 'লাল-সবুজ ফুলের হাতে আঁকা রাজকীয় প্যানেল', en: 'Red and green hand-painted floral panels' },
+  'veh.cinema': { bn: 'সিনেমা কিং', en: 'Cinema King' },
+  'veh.cinema.desc': { bn: 'ঢালিউড পোস্টার-স্টাইল আর্ট ও আরামদায়ক গদি', en: 'Dramatic cinema-poster art & plush cushion' },
+  'veh.electric': { bn: 'বাংলার বিদ্যুৎ (ইলেকট্রিক)', en: 'Banglar Bidyut (Electric)' },
+  'veh.electric.desc': { bn: 'ব্যাটারি-চালিত মোটর রিকশা: দ্রুত ত্বরণ, বেশি গতি ও এলইডি লাইট', en: 'Battery-powered electric rickshaw: faster acceleration, higher top speed & LED lights' },
+  'veh.roadster': { bn: 'রিকশা রোডস্টার — শীঘ্রই আসছে', en: 'Rickshaw Roadster — COMING SOON' },
+  'veh.roadster.desc': { bn: 'ভবিষ্যতের সুপার-রিকশা প্রোটোটাইপ (এখনও বাজারে আসেনি)', en: 'Next-gen aerodynamic super-rickshaw prototype (unavailable)' },
+
+  'up.bearings': { bn: 'ড্রাইভট্রেইন ও মোটর টিউনিং', en: 'Engine / Motor & Drivetrain' },
+  'up.bearings.desc': { bn: 'দ্রুত গতি ওঠে এবং সর্বোচ্চ গতি বাড়ায়', en: 'Stronger acceleration and higher top speed' },
+  'up.brakes': { bn: 'হাই-গ্রিপ ব্রেক', en: 'Heavy-Duty Brakes' },
+  'up.brakes.desc': { bn: 'অনেক কম দূরত্বে দ্রুত ও নিরাপদে থামুন', en: 'Faster brake response and shorter stopping distance' },
+  'up.tyres': { bn: 'টায়ার ও গ্রিপ', en: 'Tires & Road Grip' },
+  'up.tyres.desc': { bn: 'বাঁকে স্থিরতা ও ভেজা/ভাঙা রাস্তায় ভালো গ্রিপ', en: 'Higher cornering grip on wet and rough roads' },
+  'up.steering': { bn: 'স্টিয়ারিং ও হ্যান্ডলিং', en: 'Handling & Steering Linkage' },
+  'up.steering.desc': { bn: 'দ্রুত বাঁক ও সরু গলিতে নিখুঁত নিয়ন্ত্রণ', en: 'Quicker steering response and tighter lane agility' },
+  'up.seat': { bn: 'চেসিস ও সাসপেনশন মজবুতি', en: 'Durability & Suspension' },
+  'up.seat.desc': { bn: 'ধাক্কা ও গর্তের ক্ষতি কমায়, যাত্রী আরামে থাকে', en: 'Reduces collision wear and pothole jolts' },
+  'up.efficiency': { bn: 'ব্যাটারি ও এফিসিয়েন্সি', en: 'Electric Efficiency & Roll' },
+  'up.efficiency.desc': { bn: 'ব্যাটারির চার্জ দীর্ঘস্থায়ী করে ও ঘর্ষণ কমায়', en: 'Extends electric battery range & reduces rolling drag' },
+  'up.canopy': { bn: 'মজবুত ছাউনি', en: 'Weatherproof Canopy' },
+  'up.canopy.desc': { bn: 'রোদ-বৃষ্টিতে যাত্রীর মেজাজ ভালো রাখে', en: 'Protects passenger mood in sun and rain' },
+  'up.lights': { bn: 'এলইডি লাইট ও রিফ্লেক্টর', en: 'LED Headlamp & Reflectors' },
+  'up.lights.desc': { bn: 'রাতে উজ্জ্বল আলো ও দূর থেকে দৃশ্যমান', en: 'Brighter night beam and rear visibility' },
+
+  'cos.paint.red': { bn: 'লাল প্যানেল', en: 'Rickshaw red' },
+  'cos.paint.blue': { bn: 'নীল প্যানেল', en: 'Electric blue' },
+  'cos.paint.green': { bn: 'সবুজ প্যানেল', en: 'Bottle green' },
+  'cos.paint.gold': { bn: 'সোনালি প্যানেল', en: 'Gold leaf' },
+  'cos.paint.teal': { bn: 'সবুজাভ নীল', en: 'Ghat teal' },
+  'cos.paint.magenta': { bn: 'গোলাপি বেগুনি', en: 'Dhaka magenta' },
+  'cos.paint.mango': { bn: 'পাকা আম কমলা', en: 'Mango saffron' },
+  'cos.art.floral': { bn: 'ফুলের নকশা', en: 'Floral panel art' },
+  'cos.art.bird': { bn: 'ময়ূর ও পাখির নকশা', en: 'Peacock & bird art' },
+  'cos.art.river': { bn: 'নদী ও নৌকার নকশা', en: 'River & boat art' },
+  'cos.art.cinema': { bn: 'সিনেমা পোস্টার নকশা', en: 'Cinema poster art' },
+  'cos.art.tiger': { bn: 'রয়েল বেঙ্গল টাইগার নকশা', en: 'Royal Bengal Tiger art' },
+  'cos.tassel.red': { bn: 'লাল ঝালর', en: 'Red tassels' },
+  'cos.tassel.gold': { bn: 'সোনালি ঝালর', en: 'Gold tassels' },
+  'cos.tassel.green': { bn: 'সবুজ ঝালর', en: 'Green tassels' },
+  'cos.tassel.cyan': { bn: 'আসমানি ঝালর', en: 'Sky cyan tassels' },
+  'cos.bell.classic': { bn: 'ক্লাসিক ঘণ্টা', en: 'Classic tring-tring' },
+  'cos.bell.brass': { bn: 'পিতলের ঘণ্টা', en: 'Brass bell' },
+  'cos.bell.double': { bn: 'ডাবল ঘণ্টা', en: 'Double bell' },
+  'cos.flowers.marigold': { bn: 'গাঁদা ফুলের মালা', en: 'Marigold garland' },
+  'cos.flowers.rose': { bn: 'কাগজের গোলাপ', en: 'Paper roses' },
+  'cos.mirror.round': { bn: 'গোল আয়না', en: 'Round mirror' },
+  'cos.mirror.star': { bn: 'তারা আয়না', en: 'Star mirror' },
+
+  // ---------------------------------------------------------------- tapes
+  'tape.cassette': { bn: 'ক্যাসেট ঢাকা', en: 'Cassette Dhaka' },
+  'tape.radio': { bn: 'রিকশা রেডিও', en: 'Rickshaw Radio' },
+  'tape.brishti': { bn: 'বৃষ্টি ও সন্ধ্যা', en: 'Brishti at Dusk' },
+  'tape.locked': { bn: 'আনলক করতে যাত্রা সম্পন্ন করুন', en: 'Complete rides to unlock' },
+
+  // ------------------------------------------------------------- daily mode
+  'daily.ride1': { bn: 'আজকের চ্যালেঞ্জ: দ্রুত পৌঁছান', en: 'Daily: arrive fast' },
+  'daily.ride2': { bn: 'আজকের চ্যালেঞ্জ: আরামদায়ক যাত্রা', en: 'Daily: keep it smooth' },
+  'daily.ride3': { bn: 'আজকের চ্যালেঞ্জ: বৃষ্টির আগে', en: 'Daily: beat the rain' },
+  'daily.done': { bn: 'আজকের চ্যালেঞ্জ সম্পন্ন হয়েছে', en: 'Today’s challenge is complete' },
+};
+
+export function translate(locale: Locale, key: string, params?: Record<string, string | number>): string {
+  const entry = STRINGS[key];
+  let text = entry ? entry[locale] : key;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      text = text.replaceAll(`{${k}}`, String(v));
+    }
+  }
+  return text;
+}
+
+let currentLocale: Locale = 'bn';
+const localeListeners = new Set<(l: Locale) => void>();
+
+export function setLocale(locale: Locale): void {
+  if (locale !== 'bn' && locale !== 'en') return;
+  if (currentLocale === locale) return;
+  currentLocale = locale;
+  for (const fn of localeListeners) fn(locale);
+}
+
+export function getLocale(): Locale {
+  return currentLocale;
+}
+
+export function onLocaleChange(fn: (l: Locale) => void): () => void {
+  localeListeners.add(fn);
+  return () => localeListeners.delete(fn);
+}
+
+/** Translate using the active locale. */
+export function t(key: string, params?: Record<string, string | number>): string {
+  return translate(currentLocale, key, params);
+}
+
+export function hasString(key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(STRINGS, key);
+}
+
+export const STRING_KEYS = Object.keys(STRINGS);

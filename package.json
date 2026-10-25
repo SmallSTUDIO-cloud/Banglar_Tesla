@@ -1,0 +1,34 @@
+{
+  "name": "banglar-tesla",
+  "private": true,
+  "version": "0.3.0",
+  "description": "Banglar Tesla \u2014 a 3D Mohammadpur, Dhaka rickshaw driving simulator.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "tsc --noEmit && vite build",
+    "build:apk": "npm run build && python3 scripts/build-apk.py",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node tests/e2e/run-e2e.mjs",
+    "test:ui": "node tests/e2e/ui-flow.mjs",
+    "test:mobile": "node tests/e2e/mobile-check.mjs",
+    "test:spec": "node tests/e2e/verify-spec.mjs",
+    "benchmark": "node tests/e2e/benchmark-suite.mjs",
+    "shots": "node tests/e2e/shoot.mjs",
+    "perf": "node tests/e2e/perf.mjs"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@sparticuz/chromium": "^153.0.0",
+    "@types/three": "0.186.0",
+    "puppeteer-core": "^25.16.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vitest": "^3.2.7"
+  }
+}

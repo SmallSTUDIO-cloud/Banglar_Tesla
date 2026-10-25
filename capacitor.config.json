@@ -1,0 +1,10 @@
+{
+  "appId": "com.shostalab.banglartesla",
+  "appName": "Banglar Tesla",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "hostname": "appassets.androidplatform.net"
+  }
+}
