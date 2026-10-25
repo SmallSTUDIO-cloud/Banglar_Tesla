@@ -57,8 +57,21 @@ type AssetKey =
   | 'sfxTan'
   | 'sfxLampCrash'
   | 'sfxStallCrash'
+  | 'sfxTurboIgnite'
+  | 'sfxTurboLoop'
+  | 'sfxTurboRelease'
+  | 'sfxCrashHeavy'
+  | 'sfxPoliceSiren'
   | 'dlgDriver'
-  | 'dlgPlayer';
+  | 'dlgDriverEn'
+  | 'dlgPlayer'
+  | 'dlgPlayerEn'
+  | 'dlgRivalBn'
+  | 'dlgRivalEn'
+  | 'dlgPoliceBn'
+  | 'dlgPoliceEn';
+
+export type DialogueClipRole = 'driver' | 'player' | 'rival' | 'police';
 
 const ASSET_PATHS: Record<AssetKey, string> = {
   musicMenu: 'audio/music/menu-dhaka-sondhya.wav',
@@ -74,8 +87,19 @@ const ASSET_PATHS: Record<AssetKey, string> = {
   sfxTan: 'audio/sfx/tan-boost.wav',
   sfxLampCrash: 'audio/sfx/lamp-crash.wav',
   sfxStallCrash: 'audio/sfx/stall-crash.wav',
+  sfxTurboIgnite: 'audio/sfx/turbo-ignite.wav',
+  sfxTurboLoop: 'audio/sfx/turbo-loop.wav',
+  sfxTurboRelease: 'audio/sfx/turbo-release.wav',
+  sfxCrashHeavy: 'audio/sfx/crash-heavy.wav',
+  sfxPoliceSiren: 'audio/sfx/police-siren-loop.wav',
   dlgDriver: 'audio/dialogue/roadrage-driver-cue.wav',
+  dlgDriverEn: 'audio/dialogue/roadrage-driver-en.wav',
   dlgPlayer: 'audio/dialogue/roadrage-player-cue.wav',
+  dlgPlayerEn: 'audio/dialogue/roadrage-player-en.wav',
+  dlgRivalBn: 'audio/dialogue/rival-taunt-bn.wav',
+  dlgRivalEn: 'audio/dialogue/rival-taunt-en.wav',
+  dlgPoliceBn: 'audio/dialogue/police-alert-bn.wav',
+  dlgPoliceEn: 'audio/dialogue/police-alert-en.wav',
 };
 
 const CONSTRUCTION_SPOTS = [
@@ -83,7 +107,7 @@ const CONSTRUCTION_SPOTS = [
   { x: 74, z: -52 },  // Shahjahan Rd site
 ] as const;
 
-const MAX_ONE_SHOTS = 8;
+const MAX_ONE_SHOTS = 6;
 
 function resolveAudioAssetUrl(relPath: string): string {
   const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? './';
@@ -104,7 +128,9 @@ export class AudioEngine {
   private musicBus!: GainNode;
   private musicDuckGain!: GainNode;
   private ambienceBus!: GainNode;
+  private ambienceDuckGain!: GainNode;
   private trafficBus!: GainNode;
+  private trafficDuckGain!: GainNode;
   private vehicleBus!: GainNode;
   private dialogueBus!: GainNode;
   private uiBus!: GainNode;
@@ -125,6 +151,9 @@ export class AudioEngine {
   private streetLoop: LoopChannel | null = null;
   private bazaarLoop: LoopChannel | null = null;
   private chainLoop: LoopChannel | null = null;
+  private turboLoop: LoopChannel | null = null;
+  private sirenLoop: LoopChannel | null = null;
+  private turboAudioActive = false;
   private rainFilter: BiquadFilterNode | null = null;
   private rainGain: GainNode | null = null;
   private rainSource: AudioBufferSourceNode | null = null;
@@ -204,10 +233,21 @@ export class AudioEngine {
     if (this.streetLoop) loops++;
     if (this.bazaarLoop) loops++;
     if (this.chainLoop) loops++;
+    if (this.turboLoop) loops++;
+    if (this.sirenLoop) loops++;
     if (this.rainSource) loops++;
     if (this.eMotorOsc) loops++;
     if (this.activeDialogueSource) loops++;
     return loops + this.activeOneShots;
+  }
+
+  get dialogueGainLevel(): number {
+    if (!this.dialogueBus || this.volumes.muted || !this.volumes.sfxEnabled) return 0;
+    return Number((this.dialogueBus.gain.value * this.volumes.master).toFixed(3));
+  }
+
+  get isDialogueDucking(): boolean {
+    return this.dialogueDucked;
   }
 
   onUnlockChange(fn: (unlocked: boolean) => void): () => void {
@@ -303,16 +343,35 @@ export class AudioEngine {
     this.musicBus.connect(this.musicDuckGain);
     this.musicDuckGain.connect(this.masterGain);
 
+    this.ambienceDuckGain = ctx.createGain();
+    this.ambienceDuckGain.gain.value = 1;
     this.ambienceBus = ctx.createGain();
+    this.ambienceBus.connect(this.ambienceDuckGain);
+    this.ambienceDuckGain.connect(this.masterGain);
+
+    this.trafficDuckGain = ctx.createGain();
+    this.trafficDuckGain.gain.value = 1;
     this.trafficBus = ctx.createGain();
+    this.trafficBus.connect(this.trafficDuckGain);
+    this.trafficDuckGain.connect(this.masterGain);
+
     this.vehicleBus = ctx.createGain();
     this.dialogueBus = ctx.createGain();
     this.uiBus = ctx.createGain();
 
-    this.ambienceBus.connect(this.masterGain);
-    this.trafficBus.connect(this.masterGain);
     this.vehicleBus.connect(this.masterGain);
-    this.dialogueBus.connect(this.masterGain);
+    // Gentle soft-knee vocal compressor on dialogueBus so voices stay loud & clip-free
+    if (typeof ctx.createDynamicsCompressor === 'function') {
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -14;
+      comp.knee.value = 16;
+      comp.ratio.value = 3.5;
+      comp.attack.value = 0.005;
+      comp.release.value = 0.14;
+      this.dialogueBus.connect(comp).connect(this.masterGain);
+    } else {
+      this.dialogueBus.connect(this.masterGain);
+    }
     this.uiBus.connect(this.masterGain);
 
     this.noiseBuffer = this.makeNoise(ctx, 2.0);
@@ -431,6 +490,10 @@ export class AudioEngine {
   setSceneMode(mode: MusicSceneMode): void {
     if (this.sceneMode === mode) return;
     this.sceneMode = mode;
+    if (mode !== 'driving') {
+      this.stopTurboAudioImmediate();
+      this.stopPoliceSirenImmediate();
+    }
     this.syncBuses();
     this.syncMusicTrack();
   }
@@ -451,9 +514,19 @@ export class AudioEngine {
     this.dialogueDucked = active;
     if (!this.ctx || !this.musicDuckGain) return;
     const now = this.ctx.currentTime;
-    const target = active ? 0.24 : this.sceneMode === 'paused' ? 0.42 : 1.0;
+    const musicTarget = active ? 0.2 : this.sceneMode === 'paused' ? 0.42 : 1.0;
+    const ambTarget = active ? 0.25 : 1.0;
+    const trafficTarget = active ? 0.28 : 1.0;
     this.musicDuckGain.gain.cancelScheduledValues(now);
-    this.musicDuckGain.gain.setTargetAtTime(target, now, 0.09);
+    this.musicDuckGain.gain.setTargetAtTime(musicTarget, now, 0.08);
+    if (this.ambienceDuckGain) {
+      this.ambienceDuckGain.gain.cancelScheduledValues(now);
+      this.ambienceDuckGain.gain.setTargetAtTime(ambTarget, now, 0.08);
+    }
+    if (this.trafficDuckGain) {
+      this.trafficDuckGain.gain.cancelScheduledValues(now);
+      this.trafficDuckGain.gain.setTargetAtTime(trafficTarget, now, 0.08);
+    }
   }
 
   private desiredMusicAsset(): AssetKey | null {
@@ -559,7 +632,11 @@ export class AudioEngine {
       now,
       0.06,
     );
-    this.dialogueBus.gain.setTargetAtTime(clamp01(v.dialogue) * (v.sfxEnabled ? 1 : 0), now, 0.05);
+    this.dialogueBus.gain.setTargetAtTime(
+      clamp(v.dialogue * 1.18, 0, 1.35) * (v.sfxEnabled ? 1 : 0),
+      now,
+      0.05,
+    );
     this.uiBus.gain.setTargetAtTime(clamp01(v.ui) * sfxMaster, now, 0.04);
   }
 
@@ -727,7 +804,7 @@ export class AudioEngine {
     pan = 0,
   ): boolean {
     if (!this.ctx || this.ctx.state !== 'running' || this.volumes.muted || !this.volumes.sfxEnabled) return false;
-    if (this.activeOneShots >= MAX_ONE_SHOTS) return false;
+    if (this.activeOneShots >= MAX_ONE_SHOTS || this.activeSourceCount >= 13) return false;
     const buf = this.buffers.get(key);
     if (!buf) return false;
 
@@ -895,19 +972,119 @@ export class AudioEngine {
     this.trackSynthOneShot(0.75);
   }
 
-  /** Plays bundled fallback vocal cadence clip when native/browser Bengali TTS is unavailable. */
-  playDialogueClip(speaker: 'driver' | 'player', onEnded?: () => void): boolean {
+  /** Layered hold-to-boost `টার্বো` ignition, sustained flame rush loop, and release blow-off. */
+  setTurboBoostAudio(active: boolean, blend = 1, playReleaseCue = true): void {
+    if (!this.ctx || this.volumes.muted || !this.volumes.sfxEnabled || this.sceneMode !== 'driving') {
+      this.stopTurboAudioImmediate();
+      return;
+    }
+    const now = this.ctx.currentTime;
+    if (active) {
+      if (!this.turboAudioActive) {
+        this.turboAudioActive = true;
+        this.playOneShotBuffer('sfxTurboIgnite', this.vehicleBus, 0.72, 1.0);
+        if (!this.turboLoop && this.buffers.has('sfxTurboLoop')) {
+          this.turboLoop = this.createLoop('sfxTurboLoop', this.vehicleBus, 0.01);
+        }
+      }
+      if (this.turboLoop) {
+        this.turboLoop.gain.gain.setTargetAtTime(0.46 * clamp01(0.35 + blend * 0.65), now, 0.05);
+        this.turboLoop.source.playbackRate.setTargetAtTime(0.96 + blend * 0.28, now, 0.06);
+      }
+    } else if (this.turboAudioActive) {
+      this.turboAudioActive = false;
+      this.stopTurboAudioImmediate();
+      if (playReleaseCue) {
+        this.playOneShotBuffer('sfxTurboRelease', this.vehicleBus, 0.56, 1.0);
+      }
+    }
+  }
+
+  stopTurboAudioImmediate(): void {
+    this.turboAudioActive = false;
+    if (this.turboLoop) {
+      const lp = this.turboLoop;
+      this.turboLoop = null;
+      try {
+        lp.source.stop();
+        lp.source.disconnect();
+        lp.gain.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /** Continuous distance- & heat-scaled Police Patrol Siren loop; stops cleanly on escape/pause. */
+  setPoliceSirenAudio(active: boolean, proximity01: number, heat: number): void {
+    if (!active || !this.ctx || this.volumes.muted || !this.volumes.sfxEnabled || this.sceneMode !== 'driving') {
+      this.stopPoliceSirenImmediate();
+      return;
+    }
+    if (!this.sirenLoop && this.buffers.has('sfxPoliceSiren')) {
+      this.sirenLoop = this.createLoop('sfxPoliceSiren', this.trafficBus, 0.001);
+    }
+    if (this.sirenLoop) {
+      const now = this.ctx.currentTime;
+      const gain = clamp(0.08 + proximity01 * 0.34 + heat * 0.025, 0, 0.48);
+      const rate = clamp(0.96 + heat * 0.045 + proximity01 * 0.06, 0.92, 1.26);
+      this.sirenLoop.gain.gain.setTargetAtTime(gain, now, 0.1);
+      this.sirenLoop.source.playbackRate.setTargetAtTime(rate, now, 0.12);
+    }
+  }
+
+  stopPoliceSirenImmediate(): void {
+    if (this.sirenLoop) {
+      const lp = this.sirenLoop;
+      this.sirenLoop = null;
+      try {
+        lp.source.stop();
+        lp.source.disconnect();
+        lp.gain.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  playArcadeCrash(tier: 'minor' | 'medium' | 'major', intensity: number): void {
+    if (tier === 'minor') {
+      this.bump(clamp(intensity, 0.4, 1.2));
+      return;
+    }
+    const rate = tier === 'major' ? 0.92 + Math.random() * 0.1 : 1.04 + Math.random() * 0.1;
+    const gain = tier === 'major' ? 0.88 : 0.62;
+    if (!this.playOneShotBuffer('sfxCrashHeavy', this.vehicleBus, gain, rate)) {
+      this.bump(tier === 'major' ? 2.1 : 1.45);
+    }
+  }
+
+  /**
+   * Plays bundled offline phonetic speech WAV (`bn` or `en`) when no verified
+   * native Android TTS or browser `SpeechSynthesisVoice` is installed.
+   */
+  playBundledDialogue(
+    role: DialogueClipRole,
+    locale: 'bn' | 'en' = 'bn',
+    onEnded?: () => void,
+  ): boolean {
     this.stopDialogueClip();
     if (!this.ctx || this.ctx.state !== 'running' || this.volumes.muted || !this.volumes.sfxEnabled) {
       return false;
     }
-    const key: AssetKey = speaker === 'driver' ? 'dlgDriver' : 'dlgPlayer';
+    const keyMap: Record<DialogueClipRole, { bn: AssetKey; en: AssetKey }> = {
+      driver: { bn: 'dlgDriver', en: 'dlgDriverEn' },
+      player: { bn: 'dlgPlayer', en: 'dlgPlayerEn' },
+      rival: { bn: 'dlgRivalBn', en: 'dlgRivalEn' },
+      police: { bn: 'dlgPoliceBn', en: 'dlgPoliceEn' },
+    };
+    const key = keyMap[role][locale];
     const buf = this.buffers.get(key);
     if (!buf) return false;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     const g = this.ctx.createGain();
-    g.gain.value = 0.88;
+    g.gain.value = 1.0;
     src.connect(g).connect(this.dialogueBus);
     this.activeDialogueSource = src;
     this.setDialogueDuck(true);
@@ -926,6 +1103,11 @@ export class AudioEngine {
     };
     src.start();
     return true;
+  }
+
+  /** Plays bundled fallback vocal clip for road-rage (backward-compatible helper). */
+  playDialogueClip(speaker: 'driver' | 'player', onEnded?: () => void, locale: 'bn' | 'en' = 'bn'): boolean {
+    return this.playBundledDialogue(speaker, locale, onEnded);
   }
 
   stopDialogueClip(): void {
@@ -1092,7 +1274,7 @@ export class AudioEngine {
   }
 
   private crow(): void {
-    if (!this.ctx || this.activeOneShots >= MAX_ONE_SHOTS) return;
+    if (!this.ctx || this.activeOneShots >= MAX_ONE_SHOTS || this.activeSourceCount >= 13) return;
     const now = this.ctx.currentTime;
     for (let c = 0; c < 2; c++) {
       const t0 = now + c * 0.24;

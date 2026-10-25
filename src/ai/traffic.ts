@@ -35,6 +35,8 @@ export interface TrafficObstacle {
   x: number;
   z: number;
   radius: number;
+  halfWidth: number;
+  halfLength: number;
   kind: VehicleKind;
   agentIndex: number;
   speed: number;
@@ -246,6 +248,8 @@ export class TrafficSystem {
           x: a.x,
           z: a.z,
           radius: a.arch.radius,
+          halfWidth: a.arch.halfWidth,
+          halfLength: a.arch.halfLength,
           kind: a.kind,
           agentIndex: i,
           speed: a.speed,
@@ -256,6 +260,8 @@ export class TrafficSystem {
         ob.x = a.x;
         ob.z = a.z;
         ob.radius = a.arch.radius;
+        ob.halfWidth = a.arch.halfWidth;
+        ob.halfLength = a.arch.halfLength;
         ob.kind = a.kind;
         ob.agentIndex = i;
         ob.speed = a.speed;

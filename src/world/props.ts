@@ -98,17 +98,27 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     halfX: number,
     halfZ: number,
     height: number,
+    yaw = 0,
     breakableId?: number,
   ): Collider => {
+    const cosA = Math.abs(Math.cos(yaw));
+    const sinA = Math.abs(Math.sin(yaw));
+    const envX = halfX * cosA + halfZ * sinA;
+    const envZ = halfX * sinA + halfZ * cosA;
     const col: Collider = {
-      minX: x - halfX,
-      maxX: x + halfX,
-      minZ: z - halfZ,
-      maxZ: z + halfZ,
+      minX: x - envX,
+      maxX: x + envX,
+      minZ: z - envZ,
+      maxZ: z + envZ,
       height,
       cameraBlocking: false,
       kind: 'prop',
       breakableId,
+      cx: x,
+      cz: z,
+      halfX,
+      halfZ,
+      yaw,
     };
     colliders.push(col);
     return col;
@@ -221,7 +231,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
       addPersonFigure(cust2.x, cust2.z, yaw + Math.PI + 0.25, '#2a9d8f', '#264653');
     }
 
-    addPropCollider(x, z, 1.05, 0.65, 2.4);
+    addPropCollider(x, z, 0.94, 0.50, 2.4, yaw);
     vendorSpots.push({ x, z, kind: 'fuchka' });
   };
 
@@ -277,7 +287,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
       addPersonFigure(cPos.x, cPos.z, yaw + Math.PI, '#457b9d', '#1d3557');
     }
 
-    addPropCollider(x, z, 0.8, 0.55, 2.2);
+    addPropCollider(x, z, 0.68, 0.42, 2.2, yaw);
     vendorSpots.push({ x, z, kind: 'jhalmuri' });
   };
 
@@ -320,7 +330,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     }
     const vPos = at(0, -0.68);
     addPersonFigure(vPos.x, vPos.z, yaw, '#e76f51', '#1d4e6e');
-    addPropCollider(x, z, 1.1, 0.55, 2.5);
+    addPropCollider(x, z, 1.04, 0.45, 2.5, yaw);
     vendorSpots.push({ x, z, kind: 'tea' });
   };
 
@@ -351,7 +361,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
         solid.cylinder({ x: fp.x, y: groundY + 0.78, z: fp.z }, 0.13, 0.20, fruitCol);
       }
     }
-    addPropCollider(x, z, 0.9, 0.58, 1.2);
+    addPropCollider(x, z, 0.86, 0.50, 1.2, yaw);
     vendorSpots.push({ x, z, kind: 'market' });
   };
 
@@ -411,7 +421,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
         y: byaw,
       });
       solid.box({ x: bx, y: 0.48, z: bz }, { x: 3.8, y: 0.08, z: 0.46 }, '#d99b38', { y: byaw });
-      addPropCollider(bx, bz, 2.1, 0.9, 2.6);
+      addPropCollider(bx, bz, 2.1, 0.86, 2.6, byaw);
     }
   }
 

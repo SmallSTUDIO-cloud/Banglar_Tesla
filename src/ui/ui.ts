@@ -27,6 +27,13 @@ import { ROADS, PLACES, segmentById } from '../world/layout';
 import { h, button, slider, toggle, segmented, sheet, modal, statBar, clear } from './dom';
 import { ICONS } from './icons';
 import type { MissionOffer } from '../missions/mission';
+import {
+  BLACKLIST_RIVALS,
+  OPEN_STREET_EVENTS,
+  type RivalEventSpec,
+} from '../blacklist/blacklistCatalog';
+import type { CinematicUiState } from '../blacklist/cinematic';
+import type { RaceResultSummary } from '../blacklist/raceSystem';
 
 export interface HudState {
   speed: number;
@@ -52,6 +59,32 @@ export interface HudState {
   routePoints?: { x: number; z: number }[] | null;
   jammedSegments?: string[];
   detourActive?: boolean;
+  // v0.5.0 Dynamic Time, Turbo, REP, Condition, Police & Rival Race
+  clockText?: string;
+  turboCharge?: number;
+  turboActive?: boolean;
+  rep?: number;
+  condition?: number;
+  conditionLow?: boolean;
+  policeState?: 'idle' | 'detecting' | 'pursuing' | 'losingSight' | 'cooldown';
+  policeHeat?: number;
+  policeProgress?: number;
+  policeUnits?: readonly { active: boolean; x: number; z: number }[];
+  roadblocks?: readonly { active: boolean; smashed: boolean; x: number; z: number }[];
+  race?: {
+    active: boolean;
+    countdownText: string;
+    title: string;
+    pos: 1 | 2;
+    cpCur: number;
+    cpTot: number;
+    remSec: number;
+    targetX: number;
+    targetZ: number;
+    rivalX: number;
+    rivalZ: number;
+    hasRival: boolean;
+  } | null;
 }
 
 export interface UIBridge {
@@ -78,6 +111,12 @@ export interface UIBridge {
   buyRoadsideTea(): void;
   settleRoadRagePay(): void;
   refuseRoadRagePay(): void;
+  openBlacklist(from: 'menu' | 'hud' | 'pause'): void;
+  startRivalEvent(eventId: string): void;
+  retryLastEvent(): void;
+  exitRaceToFreeRide(): void;
+  replayBlacklistIntro(): void;
+  skipBlacklistIntro(): void;
   isAndroidApp(): boolean;
   applySettings(): void;
   dailyAvailable(): boolean;
@@ -105,6 +144,13 @@ export class AppUI {
   private settingsEl: HTMLElement | null = null;
   private creditsEl: HTMLElement | null = null;
   private tutorialEl: HTMLElement | null = null;
+  private blacklistEl: HTMLElement | null = null;
+  private raceResultEl: HTMLElement | null = null;
+  private cinematicEl!: HTMLElement;
+  private cinematicBadgeEl!: HTMLElement;
+  private cinematicHeadEl!: HTMLElement;
+  private cinematicSubEl!: HTMLElement;
+  private cinematicSkipBtn!: HTMLElement;
   private loadingEl!: HTMLElement;
   private dialogueEl!: HTMLElement;
   private dialogueTimer = 0;
@@ -118,6 +164,9 @@ export class AppUI {
   private garageTab: 'paint' | 'upgrades' | 'accessories' | 'vehicles' = 'paint';
   private garageFrom: 'menu' | 'pause' | 'result' = 'menu';
   private storeTab: 'vehicles' | 'upgrades' | 'paint' | 'accessories' = 'vehicles';
+  private blacklistTab: 'rivals' | 'events' = 'rivals';
+  private blacklistFrom: 'menu' | 'hud' | 'pause' = 'menu';
+  private toastLastAt = new Map<string, number>();
   private busy = false;
   private installEvent: Event | null = null;
   private currentTape: 'cassette' | 'radio' | 'brishti' = 'cassette';
@@ -134,13 +183,25 @@ export class AppUI {
     this.buildHud();
     this.buildPause();
     this.buildResult();
+    this.buildCinematicOverlay();
     this.buildLoading();
     this.show('menu');
 
     this.state.on('balance', () => {
       this.refreshMenuChrome();
     });
+    this.state.on('rep', () => {
+      this.refreshMenuChrome();
+    });
     this.state.on('toast', (payload) => {
+      // `toast.conditionLow` is displayed via the single persistent `#hud-condition-warn`
+      // HUD element + edge-triggered single toast with 30s cooldown (zero spam!).
+      if (payload.key === 'toast.conditionLow') {
+        const now = performance.now();
+        const prev = this.toastLastAt.get('__cond_low__') ?? -60000;
+        if (now - prev < 30000) return;
+        this.toastLastAt.set('__cond_low__', now);
+      }
       this.toast(t(payload.key, payload.params), payload.tone);
     });
     this.bridge.audio.onUnlockChange(() => {
@@ -165,10 +226,15 @@ export class AppUI {
     this.bridge.input.setWheelSteer(0);
     this.bridge.input.setPedal(false);
     this.bridge.input.setBrake(false);
+    this.bridge.input.setTurbo(false);
   }
 
   /** Handles Android hardware back / browser back navigation. Returns true if consumed. */
   handleBackAction(): boolean {
+    if (!this.cinematicEl.classList.contains('hidden')) {
+      this.bridge.skipBlacklistIntro();
+      return true;
+    }
     if (this.roadRageModalEl) {
       // Cannot bypass active road-rage confrontation via hardware back
       return true;
@@ -179,6 +245,12 @@ export class AppUI {
         return true;
       case 'pause':
         this.bridge.resumeGame();
+        return true;
+      case 'blacklist':
+        this.closeBlacklist();
+        return true;
+      case 'raceResult':
+        this.bridge.exitRaceToFreeRide();
         return true;
       case 'settings':
         this.closeSettings();
@@ -237,6 +309,10 @@ export class AppUI {
       h('span', { class: 'menu-money-icon', html: ICONS.coin }),
       h('span', { attrs: { id: 'menu-balance' }, text: formatTaka(this.state.balance) }),
     );
+    const repChip = h('div', { class: 'menu-rep-chip' },
+      h('span', { html: ICONS.trophy }),
+      h('span', { attrs: { id: 'menu-rep' }, text: `${t('hud.rep')} ${this.state.rep}` }),
+    );
 
     const brand = h('div', { class: 'menu-brand' },
       h('div', { class: 'menu-emblem', html: `<svg viewBox="0 0 100 100" aria-hidden="true">
@@ -273,7 +349,7 @@ export class AppUI {
     );
     this.menuSoundUnlockEl = soundUnlockMenu;
 
-    const topRightRow = h('div', { class: 'menu-top-row' }, soundUnlockMenu, money);
+    const topRightRow = h('div', { class: 'menu-top-row' }, soundUnlockMenu, repChip, money);
     const topRight = h('div', { class: 'menu-top-right' }, topRightRow);
     if (ENABLE_WEB_INSTALL_APK_BUTTON && !this.bridge.isAndroidApp()) {
       const apkLink = h('a', {
@@ -349,6 +425,17 @@ export class AppUI {
       },
     });
 
+    const blacklistBtn = button(t('menu.blacklist'), {
+      variant: 'gold',
+      wide: true,
+      sub: t('menu.blacklistSub'),
+      attrs: { id: 'menu-blacklist-btn', 'data-action': 'open-blacklist' },
+      onClick: () => {
+        this.bridge.audio.uiConfirm();
+        this.bridge.openBlacklist('menu');
+      },
+    });
+
     const secondary = h('div', { class: 'menu-secondary' },
       button(t('common.garage'), { variant: 'ghost', attrs: { 'data-action': 'open-garage' }, onClick: () => this.openGarage('menu') }),
       button(t('common.store'), { variant: 'ghost', attrs: { 'data-action': 'open-store' }, onClick: () => this.openStore() }),
@@ -357,7 +444,7 @@ export class AppUI {
     );
 
     const meta = h('div', { class: 'menu-meta' },
-      h('span', { text: `v0.4.0` }),
+      h('span', { text: `v0.5.0` }),
       h('span', { text: '·' }),
       h('span', { text: t('menu.district') }),
       h('span', { text: '·' }),
@@ -366,6 +453,7 @@ export class AppUI {
 
     const actions = h('div', { class: 'menu-actions' },
       playBtn,
+      blacklistBtn,
       h('div', { class: 'menu-playrow' }, continueBtn),
       secondary,
       meta,
@@ -385,6 +473,8 @@ export class AppUI {
   private refreshMenuChrome(): void {
     const bal = this.menuEl.querySelector('#menu-balance');
     if (bal) bal.textContent = formatTaka(this.state.balance);
+    const rep = this.menuEl.querySelector('#menu-rep');
+    if (rep) rep.textContent = `${t('hud.rep')} ${this.state.rep}`;
     const playrow = this.menuEl.querySelector('.menu-playrow');
     if (playrow) {
       const has = this.bridge.hasSave();
@@ -455,15 +545,41 @@ export class AppUI {
       html: ICONS.pause,
       on: { click: () => this.bridge.pauseGame() },
     });
+    const blacklistHudBtn = h('button', {
+      class: 'icon-btn bl-hud-btn',
+      attrs: { id: 'hud-blacklist-btn', type: 'button', 'aria-label': t('hud.blacklistBtn'), 'data-action': 'blacklist' },
+      html: ICONS.trophy,
+      on: { click: () => this.bridge.openBlacklist('hud') },
+    });
     const camChip = h('span', { class: 'cam-mode-chip', text: t(`cam.short.${this.settingsStore.get().cameraMode}`) });
     const camBtn = h('button', {
       class: 'icon-btn cam-btn',
       attrs: { id: 'hud-cam', type: 'button', 'aria-label': 'camera', 'data-action': 'camera' },
       on: { click: () => this.bridge.toggleCamera() },
     }, h('span', { html: ICONS.camera }), camChip);
+    const clockTextEl = h('span', { class: 'clock-val', attrs: { id: 'hud-clock-text' }, text: '08:00 AM' });
+    const clockChip = h(
+      'div',
+      { class: 'hud-clock-chip', attrs: { id: 'hud-clock' } },
+      h('span', { class: 'clock-ico', html: ICONS.clock }),
+      clockTextEl,
+    );
+    this.hudClockTextEl = clockTextEl;
     const mini = h('div', { class: 'minimap' });
     this.miniCanvas = h('canvas', { attrs: { width: 208, height: 208 } });
-    mini.append(this.miniCanvas);
+    mini.append(this.miniCanvas, clockChip);
+
+    const repCondSpan = h('span', { text: `${t('hud.rep')} 0 · ${t('hud.condition')} 100%` });
+    const repCondPill = h('div', { class: 'rep-cond-pill', attrs: { id: 'hud-rep-cond' } }, repCondSpan);
+    this.hudRepCondText = repCondSpan;
+
+    const condWarnBadge = h(
+      'div',
+      { class: 'cond-warn-chip hidden', attrs: { id: 'hud-condition-warn' } },
+      h('span', { text: t('toast.conditionLow') }),
+    );
+    this.hudCondWarnEl = condWarnBadge;
+
     const moodBarFill = h('i');
     const moodRow = h('div', { class: 'mood' }, h('span', { text: t('hud.mood') }), h('div', { class: 'mood-bar' }, moodBarFill));
     moodRow.id = 'hud-mood';
@@ -473,8 +589,10 @@ export class AppUI {
       h(
         'div',
         { class: 'hud-topright' },
-        h('div', { class: 'row' }, hudSoundUnlock, pauseBtn, camBtn),
+        h('div', { class: 'row' }, hudSoundUnlock, pauseBtn, camBtn, blacklistHudBtn),
         wallet,
+        repCondPill,
+        condWarnBadge,
         batteryPill,
         staminaPill,
         mini,
@@ -493,6 +611,37 @@ export class AppUI {
     this.roadRageBannerEl = roadRageBanner;
     this.roadRageHeadEl = roadRageHead;
     this.roadRageSubEl = roadRageSub;
+
+    // Police Pursuit Heat 1..5 HUD banner (hidden when idle)
+    const pursuitHeatText = h('div', { class: 'pursuit-head', text: '' });
+    const pursuitFill = h('i');
+    const pursuitBanner = h(
+      'div',
+      { class: 'pursuit-banner hidden', attrs: { id: 'hud-pursuit' } },
+      pursuitHeatText,
+      h('div', { class: 'pursuit-track' }, pursuitFill),
+    );
+    this.hudPursuitEl = pursuitBanner;
+    this.hudPursuitHeadEl = pursuitHeatText;
+    this.hudPursuitFillEl = pursuitFill;
+
+    // Rival Race / Event HUD strip & 3-2-1-GO countdown splash
+    const racePosEl = h('span', { class: 'race-pos', text: '1ST' });
+    const raceCpEl = h('span', { class: 'race-cp', text: 'CP 1/3' });
+    const raceTimerEl = h('span', { class: 'race-timer', text: '01:00' });
+    const raceStrip = h(
+      'div',
+      { class: 'race-hud-strip hidden', attrs: { id: 'hud-race' } },
+      racePosEl,
+      raceCpEl,
+      raceTimerEl,
+    );
+    const raceCountdown = h('div', { class: 'race-countdown hidden', attrs: { id: 'hud-countdown' }, text: '3' });
+    this.hudRaceEl = raceStrip;
+    this.hudRacePosEl = racePosEl;
+    this.hudRaceCpEl = raceCpEl;
+    this.hudRaceTimerEl = raceTimerEl;
+    this.hudCountdownEl = raceCountdown;
 
     const teaBtn = h('button', {
       class: 'tea-prompt-btn hidden',
@@ -621,12 +770,47 @@ export class AppUI {
     });
     this.hudTanBtn = tanBtn;
 
+    const turboFill = h('i', { class: 'turbo-bar-fill' });
+    const turboLabel = h('span', { text: t('hud.turbo') });
+    const turboBtn = h(
+      'button',
+      {
+        class: 'touch-btn turbo',
+        attrs: { id: 'hud-turbo-btn', type: 'button', 'aria-label': 'টার্বো', 'data-action': 'turbo' },
+      },
+      h('span', { html: ICONS.flame }),
+      turboLabel,
+      h('span', { class: 'turbo-bar-track' }, turboFill),
+    );
+    holdButton(
+      turboBtn,
+      () => this.bridge.input.setTurbo(true),
+      () => this.bridge.input.setTurbo(false),
+    );
+    this.hudTurboBtn = turboBtn;
+    this.hudTurboFill = turboFill;
+    this.hudTurboLabel = turboLabel;
+
     const left = h('div', { class: 'drive-left' }, steerPad);
     const right = h('div', { class: 'drive-right' }, horn, speedo, brake, pedal);
     right.id = 'drive-right';
     const bottom = h('div', { class: 'hud-bottom' }, left, right);
 
-    el.append(top, roadRageBanner, dialogue, pedCallout, hint, teaBtn, tanBtn, bottom, wheel.el);
+    el.append(
+      top,
+      roadRageBanner,
+      pursuitBanner,
+      raceStrip,
+      raceCountdown,
+      dialogue,
+      pedCallout,
+      hint,
+      teaBtn,
+      turboBtn,
+      tanBtn,
+      bottom,
+      wheel.el,
+    );
     this.hud = this.register('hud', el);
     this.hudHint = hint;
     this.hudSpeedo = speedo;
@@ -663,6 +847,20 @@ export class AppUI {
   private hudStaminaText!: HTMLElement;
   private hudStaminaFill!: HTMLElement;
   private hudTanBtn!: HTMLElement;
+  private hudTurboBtn!: HTMLElement;
+  private hudTurboFill!: HTMLElement;
+  private hudTurboLabel!: HTMLElement;
+  private hudClockTextEl!: HTMLElement;
+  private hudRepCondText!: HTMLElement;
+  private hudCondWarnEl!: HTMLElement;
+  private hudPursuitEl!: HTMLElement;
+  private hudPursuitHeadEl!: HTMLElement;
+  private hudPursuitFillEl!: HTMLElement;
+  private hudRaceEl!: HTMLElement;
+  private hudRacePosEl!: HTMLElement;
+  private hudRaceCpEl!: HTMLElement;
+  private hudRaceTimerEl!: HTMLElement;
+  private hudCountdownEl!: HTMLElement;
   private hudTeaBtn!: HTMLElement;
   private menuSoundUnlockEl: HTMLElement | null = null;
   private hudSoundUnlockEl: HTMLElement | null = null;
@@ -695,6 +893,17 @@ export class AppUI {
   private prevTanExhausted: boolean | null = null;
   private prevTeaAvail: boolean | null = null;
   private prevMarkerText = '';
+  private prevClockText = '';
+  private prevTurboPct = -1;
+  private prevTurboActive: boolean | null = null;
+  private prevRepVal = -1;
+  private prevCondVal = -1;
+  private prevCondLow: boolean | null = null;
+  private prevPursuitKey = '';
+  private prevPursuitPct = -1;
+  private prevRaceVis: boolean | null = null;
+  private prevCountdownText = '';
+  private prevRaceSummary = '';
 
   private buildWheel(): { el: HTMLElement } {
     const knob = h('div', {
@@ -766,10 +975,11 @@ export class AppUI {
     bottom.style.flexDirection = leftFirst ? 'row' : 'row-reverse';
     const rightCluster = this.hudPedal.parentElement as HTMLElement | null;
     if (rightCluster) rightCluster.style.flexDirection = leftFirst ? 'row' : 'row-reverse';
-    // mirror the wheel & টান boost button to the opposite corner when left-handed
+    // mirror the wheel & টান/টার্বো boost buttons to the opposite corner when left-handed
     this.hudWheel.style.left = settings.handedness === 'right' ? 'calc(var(--safe-l) + 1.1rem)' : 'auto';
     this.hudWheel.style.right = settings.handedness === 'right' ? 'auto' : 'calc(var(--safe-r) + 1.1rem)';
     this.hudTanBtn?.classList.toggle('left-handed', settings.handedness === 'left');
+    this.hudTurboBtn?.classList.toggle('left-handed', settings.handedness === 'left');
   }
 
   updateCameraBadge(mode: CameraMode): void {
@@ -891,6 +1101,97 @@ export class AppUI {
       this.prevTeaAvail = teaAvail;
       this.hudTeaBtn.textContent = t('hud.teaPrompt');
       this.hudTeaBtn.classList.toggle('hidden', !teaAvail);
+    }
+
+    // Dynamic In-Game Clock: updates ONLY when displayed whole minute changes!
+    if (state.clockText && state.clockText !== this.prevClockText) {
+      this.prevClockText = state.clockText;
+      this.hudClockTextEl.textContent = state.clockText;
+    }
+
+    // Hold-to-boost Turbo button & meter (dirty-checked!)
+    const turboPct = Math.round(clamp(state.turboCharge ?? 100, 0, 100));
+    if (turboPct !== this.prevTurboPct) {
+      this.prevTurboPct = turboPct;
+      this.hudTurboFill.style.width = `${turboPct}%`;
+      this.hudTurboBtn.classList.toggle('exhausted', turboPct < 8);
+    }
+    const turboOn = !!state.turboActive;
+    if (turboOn !== this.prevTurboActive) {
+      this.prevTurboActive = turboOn;
+      this.hudTurboBtn.classList.toggle('engaged', turboOn);
+      this.hudTurboBtn.setAttribute('aria-pressed', turboOn ? 'true' : 'false');
+    }
+
+    // REP & Condition readout + single persistent deduplicated warning chip
+    const repInt = Math.round(state.rep ?? 0);
+    const condInt = Math.round(clamp(state.condition ?? 100, 0, 100));
+    if (repInt !== this.prevRepVal || condInt !== this.prevCondVal) {
+      this.prevRepVal = repInt;
+      this.prevCondVal = condInt;
+      this.hudRepCondText.textContent = `${t('hud.rep')} ${repInt} · ${t('hud.condition')} ${condInt}%`;
+    }
+    const condLow = !!state.conditionLow;
+    if (condLow !== this.prevCondLow) {
+      this.prevCondLow = condLow;
+      this.hudCondWarnEl.firstElementChild!.textContent = t('toast.conditionLow');
+      this.hudCondWarnEl.classList.toggle('hidden', !condLow);
+    }
+
+    // Police Pursuit Heat 1..5 HUD banner
+    const pState = state.policeState ?? 'idle';
+    const pHeat = state.policeHeat ?? 0;
+    const pKey = `${pState}:${pHeat}`;
+    if (pKey !== this.prevPursuitKey) {
+      this.prevPursuitKey = pKey;
+      if (pState === 'idle' || pHeat <= 0) {
+        this.hudPursuitEl.classList.add('hidden');
+      } else {
+        const msg =
+          pState === 'detecting'
+            ? t('police.detecting')
+            : pState === 'pursuing'
+              ? t('police.pursuing', { heat: pHeat })
+              : pState === 'losingSight'
+                ? t('police.losing')
+                : t('police.cooldown');
+        this.hudPursuitHeadEl.textContent = `${'★'.repeat(pHeat)} ${msg}`;
+        this.hudPursuitEl.classList.toggle('flashing', pState === 'pursuing' || pState === 'losingSight');
+        this.hudPursuitEl.classList.remove('hidden');
+      }
+    }
+    if (pState !== 'idle' && pHeat > 0) {
+      const pPct = Math.round(clamp01(state.policeProgress ?? 0) * 100);
+      if (pPct !== this.prevPursuitPct) {
+        this.prevPursuitPct = pPct;
+        this.hudPursuitFillEl.style.width = `${pPct}%`;
+      }
+    }
+
+    // Rival Race / Event HUD strip + 3-2-1-GO countdown
+    const race = state.race ?? null;
+    const raceVis = !!(race && race.active);
+    if (raceVis !== this.prevRaceVis) {
+      this.prevRaceVis = raceVis;
+      this.hudRaceEl.classList.toggle('hidden', !raceVis);
+    }
+    const cdText = race?.countdownText === 'GO!' ? t('race.go') : (race?.countdownText ?? '');
+    if (cdText !== this.prevCountdownText) {
+      this.prevCountdownText = cdText;
+      this.hudCountdownEl.textContent = cdText;
+      this.hudCountdownEl.classList.toggle('hidden', !cdText);
+    }
+    if (race && race.active) {
+      const remS = Math.max(0, Math.ceil(race.remSec));
+      const mm = String(Math.floor(remS / 60)).padStart(2, '0');
+      const ss = String(remS % 60).padStart(2, '0');
+      const sumKey = `${race.pos}:${race.cpCur}/${race.cpTot}:${mm}:${ss}`;
+      if (sumKey !== this.prevRaceSummary) {
+        this.prevRaceSummary = sumKey;
+        this.hudRacePosEl.textContent = race.pos === 1 ? t('race.pos1') : t('race.pos2');
+        this.hudRaceCpEl.textContent = t('race.cp', { cur: race.cpCur, tot: race.cpTot });
+        this.hudRaceTimerEl.textContent = `${mm}:${ss}`;
+      }
     }
 
     if (state.hint) {
@@ -1037,6 +1338,54 @@ export class AppUI {
       ctx.beginPath();
       ctx.arc(clampedX, clampedY, 5, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // 4b. Roadblocks (orange barricade dots)
+    if (state.roadblocks) {
+      for (let i = 0; i < state.roadblocks.length; i++) {
+        const rb = state.roadblocks[i];
+        if (!rb.active || rb.smashed) continue;
+        const rx = cx + (rb.x - px) * scale;
+        const ry = cy + (rb.z - pz) * scale;
+        if (rx < 4 || rx > w - 4 || ry < 4 || ry > hgt - 4) continue;
+        ctx.fillStyle = '#fb923c';
+        ctx.fillRect(rx - 3, ry - 1.5, 6, 3);
+      }
+    }
+
+    // 4c. Police SUVs (flashing red/blue dots)
+    if (state.policeUnits && state.policeState && state.policeState !== 'idle') {
+      const flashBlue = ((performance.now() * 0.008) | 0) % 2 === 0;
+      for (let i = 0; i < state.policeUnits.length; i++) {
+        const pu = state.policeUnits[i];
+        if (!pu.active) continue;
+        const ux = clamp(cx + (pu.x - px) * scale, 6, w - 6);
+        const uy = clamp(cy + (pu.z - pz) * scale, 6, hgt - 6);
+        ctx.fillStyle = flashBlue ? '#38bdf8' : '#ef4444';
+        ctx.beginPath();
+        ctx.arc(ux, uy, 4.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // 4d. Rival Rickshaw & Race Checkpoint marker
+    if (state.race && state.race.active) {
+      const tx = clamp(cx + (state.race.targetX - px) * scale, 7, w - 7);
+      const ty = clamp(cy + (state.race.targetZ - pz) * scale, 7, hgt - 7);
+      ctx.strokeStyle = '#22d3ee';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 5.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (state.race.hasRival) {
+        const rvx = clamp(cx + (state.race.rivalX - px) * scale, 6, w - 6);
+        const rvy = clamp(cy + (state.race.rivalZ - pz) * scale, 6, hgt - 6);
+        ctx.fillStyle = '#f472b6';
+        ctx.beginPath();
+        ctx.arc(rvx, rvy, 4.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // 5. Player directional arrow
@@ -1187,6 +1536,7 @@ export class AppUI {
     body.append(
       button(t('pause.resume'), { variant: 'primary', wide: true, onClick: () => this.bridge.resumeGame() }),
       button(t('pause.recover'), { variant: 'ghost', wide: true, sub: t('pause.recoverFee', { n: formatTaka(45) }), onClick: () => this.bridge.recoverRickshaw() }),
+      button(t('menu.blacklist'), { variant: 'gold', wide: true, onClick: () => this.bridge.openBlacklist('pause') }),
       button(t('pause.restart'), { variant: 'ghost', wide: true, onClick: () => this.bridge.restartMission() }),
       button(t('common.settings'), { variant: 'ghost', wide: true, onClick: () => this.openSettings(() => this.show('pause')) }),
       button(t('pause.quit'), { variant: 'danger', wide: true, onClick: () => this.confirmQuit() }),
@@ -2107,8 +2457,356 @@ export class AppUI {
     this.offerEl = null;
   }
 
+  // --------------------------------------------------- Blacklist & Race UI (v0.5.0)
+  private buildCinematicOverlay(): void {
+    this.cinematicBadgeEl = h('div', { class: 'cinematic-badge', text: '' });
+    this.cinematicHeadEl = h('div', { class: 'cinematic-head', text: '' });
+    this.cinematicSubEl = h('div', { class: 'cinematic-sub', text: '' });
+    this.cinematicSkipBtn = h(
+      'button',
+      {
+        class: 'btn ghost small cinematic-skip-btn',
+        attrs: { id: 'cinematic-skip-btn', type: 'button' },
+        on: {
+          click: () => {
+            this.bridge.audio.uiTap();
+            this.bridge.skipBlacklistIntro();
+          },
+        },
+      },
+      h('span', { text: t('cinematic.skip') }),
+    );
+
+    const el = h(
+      'div',
+      { class: 'cinematic-overlay hidden', attrs: { id: 'cinematic-overlay' } },
+      h('div', { class: 'cinematic-bar top' }, this.cinematicSkipBtn),
+      h(
+        'div',
+        { class: 'cinematic-bar bottom' },
+        this.cinematicBadgeEl,
+        this.cinematicHeadEl,
+        this.cinematicSubEl,
+      ),
+    );
+    this.cinematicEl = el;
+    this.root.append(el);
+  }
+
+  updateCinematicUi(state: CinematicUiState): void {
+    if (!state.active) {
+      this.cinematicEl.classList.add('hidden');
+      return;
+    }
+    this.cinematicSkipBtn.firstElementChild!.textContent = t('cinematic.skip');
+    this.cinematicBadgeEl.textContent = state.rankBadge;
+    this.cinematicBadgeEl.classList.toggle('hidden', !state.rankBadge);
+    this.cinematicHeadEl.textContent = state.headline;
+    this.cinematicSubEl.textContent = state.subline;
+    this.cinematicEl.classList.remove('hidden');
+  }
+
+  openBlacklistView(from: 'menu' | 'hud' | 'pause'): void {
+    this.blacklistFrom = from;
+    this.renderBlacklistScreen();
+    this.show('blacklist');
+  }
+
+  closeBlacklist(): void {
+    if (this.blacklistEl) {
+      this.blacklistEl.remove();
+      this.screens.delete('blacklist');
+      this.blacklistEl = null;
+    }
+    if (this.blacklistFrom === 'hud') {
+      this.bridge.resumeGame();
+    } else if (this.blacklistFrom === 'pause') {
+      this.show('pause');
+    } else {
+      this.show('menu');
+    }
+  }
+
+  private renderBlacklistScreen(): void {
+    if (this.blacklistEl) {
+      this.blacklistEl.remove();
+      this.screens.delete('blacklist');
+      this.blacklistEl = null;
+    }
+    const loc = getLocale();
+    const { wrap, body } = sheet(t('blacklist.title'), {
+      subtitle: t('blacklist.subtitle'),
+      onClose: () => this.closeBlacklist(),
+    });
+    wrap.id = 'blacklist-sheet';
+
+    const curRank = this.state.blacklistRank;
+    const statusChipText =
+      curRank <= 0
+        ? t('blacklist.championBadge')
+        : t('blacklist.nextRank', { rank: curRank });
+
+    const summaryBar = h(
+      'div',
+      { class: 'blacklist-summary' },
+      h('span', { class: 'pill gold', text: t('blacklist.yourRep', { rep: this.state.rep }) }),
+      h('span', { class: 'pill', text: statusChipText }),
+      button(t('blacklist.replayIntro'), {
+        variant: 'ghost',
+        small: true,
+        attrs: { id: 'blacklist-replay-intro' },
+        onClick: () => {
+          this.bridge.audio.uiTap();
+          this.bridge.replayBlacklistIntro();
+        },
+      }),
+    );
+
+    const tabs = segmented<'rivals' | 'events'>({
+      options: [
+        { value: 'rivals', label: t('blacklist.tabRivals') },
+        { value: 'events', label: t('blacklist.tabEvents') },
+      ],
+      value: this.blacklistTab,
+      onChange: (val) => {
+        this.blacklistTab = val;
+        this.renderBlacklistScreen();
+        this.show('blacklist');
+      },
+    });
+
+    const listWrap = h('div', { class: 'blacklist-list' });
+    const defeatedSet = this.state.defeatedRanks;
+    if (this.blacklistTab === 'rivals') {
+      for (const rival of BLACKLIST_RIVALS) {
+        const defeated = defeatedSet.has(rival.rank);
+        const rankUnlocked = rival.rank >= curRank || defeated;
+        const hasRep = this.state.rep >= rival.repRequired || defeated;
+        const canChallenge = rankUnlocked && hasRep;
+        const name = loc === 'en' ? rival.nameEn : rival.nameBn;
+        const arch = loc === 'en' ? rival.archetypeEn : rival.archetypeBn;
+        const terr = loc === 'en' ? rival.territoryEn : rival.territoryBn;
+        const taunt = loc === 'en' ? rival.tauntEn : rival.tauntBn;
+        const ev = rival.bossEvent;
+
+        const badgeLabel = defeated
+          ? t('blacklist.defeated')
+          : canChallenge
+            ? t('blacklist.ready')
+            : t('blacklist.lockedRep', { rep: rival.repRequired });
+
+        const challengeBtn = button(t('blacklist.challengeBtn'), {
+          variant: canChallenge ? (defeated ? 'ghost' : 'primary') : 'ghost',
+          small: true,
+          attrs: {
+            'data-event-id': ev.id,
+            'data-rival-rank': String(rival.rank),
+            ...(canChallenge ? {} : { disabled: 'true', 'aria-disabled': 'true' }),
+          },
+          onClick: () => {
+            if (!canChallenge) return;
+            this.bridge.audio.uiConfirm();
+            this.bridge.startRivalEvent(ev.id);
+          },
+        });
+        if (!canChallenge) challengeBtn.classList.add('disabled');
+
+        const card = h(
+          'div',
+          {
+            class: `blacklist-card${defeated ? ' defeated' : canChallenge ? ' ready' : ' locked'}`,
+            attrs: { 'data-rank': String(rival.rank) },
+          },
+          h(
+            'div',
+            { class: 'bl-card-head' },
+            h(
+              'span',
+              {
+                class: 'bl-rank-pill',
+                style: `border-color:${rival.accentHex};color:${rival.accentHex}`,
+                text: `#${rival.rank}`,
+              },
+            ),
+            h(
+              'div',
+              { class: 'bl-title-col' },
+              h('strong', { text: name }),
+              h('span', { class: 'tiny muted', text: `${arch} · ${terr}` }),
+            ),
+            h('span', { class: `pill ${defeated ? '' : canChallenge ? 'gold' : ''}`, text: badgeLabel }),
+          ),
+          h('div', { class: 'bl-taunt', text: `“${taunt}”` }),
+          h(
+            'div',
+            { class: 'bl-card-foot' },
+            h(
+              'div',
+              { class: 'tiny' },
+              h('div', {
+                text: `${t(`event.kind.${ev.kind}`)} · ${t('blacklist.rewardLine', {
+                  cash: formatTaka(ev.cashReward),
+                  rep: ev.repReward,
+                })}`,
+              }),
+              h('div', {
+                class: 'muted',
+                text: t('blacklist.lossNote', { fee: formatTaka(ev.lossFee) }),
+              }),
+            ),
+            challengeBtn,
+          ),
+        );
+        listWrap.append(card);
+      }
+    } else {
+      for (const ev of OPEN_STREET_EVENTS) {
+        listWrap.append(this.buildStreetEventCard(ev, loc));
+      }
+    }
+
+    body.append(
+      summaryBar,
+      tabs,
+      listWrap,
+      button(t('common.back'), { variant: 'ghost', wide: true, onClick: () => this.closeBlacklist() }),
+    );
+    this.blacklistEl = h('div', { class: 'screen' }, wrap);
+    this.register('blacklist', this.blacklistEl);
+  }
+
+  private buildStreetEventCard(ev: RivalEventSpec, loc: Locale): HTMLElement {
+    const title = loc === 'en' ? ev.titleEn : ev.titleBn;
+    const desc = loc === 'en' ? ev.descEn : ev.descBn;
+    const completed = this.state.completedEvents.has(ev.id);
+    return h(
+      'div',
+      { class: 'blacklist-card ready', attrs: { 'data-street-event': ev.id } },
+      h(
+        'div',
+        { class: 'bl-card-head' },
+        h('span', { class: 'pill gold', text: t(`event.kind.${ev.kind}`) }),
+        h('strong', { class: 'grow', text: title }),
+        ...(completed ? [h('span', { class: 'pill', text: '✓' })] : []),
+      ),
+      h('p', { class: 'tiny muted', style: 'margin:0.18rem 0', text: desc }),
+      h(
+        'div',
+        { class: 'bl-card-foot' },
+        h('span', {
+          class: 'tiny',
+          text: t('blacklist.rewardLine', { cash: formatTaka(ev.cashReward), rep: ev.repReward }),
+        }),
+        button(t('blacklist.startEventBtn'), {
+          variant: 'primary',
+          small: true,
+          attrs: { 'data-event-id': ev.id },
+          onClick: () => {
+            this.bridge.audio.uiConfirm();
+            this.bridge.startRivalEvent(ev.id);
+          },
+        }),
+      ),
+    );
+  }
+
+  openRaceResult(summary: RaceResultSummary): void {
+    if (this.raceResultEl) {
+      this.raceResultEl.remove();
+      this.screens.delete('raceResult');
+      this.raceResultEl = null;
+    }
+    const loc = getLocale();
+    const evTitle = loc === 'en' ? summary.event.titleEn : summary.event.titleBn;
+    const { wrap, body } = sheet(summary.won ? t('race.wonTitle') : t('race.lostTitle'), {
+      subtitle: evTitle,
+    });
+    wrap.id = 'race-result-sheet';
+
+    const rows = h(
+      'div',
+      { class: 'breakdown' },
+      h('p', { class: 'small', style: 'margin:0 0 0.4rem', text: t(summary.reasonKey) }),
+      h(
+        'div',
+        { class: 'brow' },
+        h('span', { text: t('race.timeTaken') }),
+        h('span', { text: `${summary.timeSeconds.toFixed(1)}s` }),
+      ),
+      row(t('race.cashDelta'), summary.cashDelta, summary.cashDelta < 0),
+      h(
+        'div',
+        { class: 'brow' },
+        h('span', { text: t('race.repEarned') }),
+        h('span', { text: `+${summary.repEarned} REP` }),
+      ),
+    );
+
+    if (summary.won && summary.unlockedNextRank !== null) {
+      rows.append(
+        h('div', {
+          class: 'pill gold',
+          style: 'margin-top:0.4rem;align-self:flex-start',
+          text:
+            summary.unlockedNextRank === 0
+              ? t('race.crowned')
+              : t('race.rankUp', { rank: summary.unlockedNextRank }),
+        }),
+      );
+    }
+
+    const btnCol = h(
+      'div',
+      { class: 'btn-stack' },
+      button(t('race.retry'), {
+        variant: summary.won ? 'ghost' : 'primary',
+        wide: true,
+        attrs: { id: 'race-retry-btn' },
+        onClick: () => {
+          this.bridge.audio.uiConfirm();
+          this.bridge.retryLastEvent();
+        },
+      }),
+      button(t('race.backBlacklist'), {
+        variant: summary.won ? 'primary' : 'ghost',
+        wide: true,
+        attrs: { id: 'race-blacklist-btn' },
+        onClick: () => {
+          this.bridge.audio.uiTap();
+          this.openBlacklistView('hud');
+        },
+      }),
+      button(t('race.freeRide'), {
+        variant: 'ghost',
+        wide: true,
+        attrs: { id: 'race-freeride-btn' },
+        onClick: () => {
+          this.bridge.audio.uiTap();
+          this.bridge.exitRaceToFreeRide();
+        },
+      }),
+    );
+
+    body.append(rows, btnCol);
+    this.raceResultEl = h('div', { class: 'screen' }, wrap);
+    this.register('raceResult', this.raceResultEl);
+    this.show('raceResult');
+  }
+
   // ---------------------------------------------------------------- toasts
   toast(message: string, tone?: 'good' | 'bad'): void {
+    const now = performance.now();
+    const lastAt = this.toastLastAt.get(message) ?? -10000;
+    if (now - lastAt < 3200) {
+      return; // Deduplicate identical rapid toast messages!
+    }
+    this.toastLastAt.set(message, now);
+
+    // Cap visible toast stack at <= 2 elements so warnings never pile up on screen
+    while (this.toastStack.childElementCount >= 2) {
+      this.toastStack.firstElementChild?.remove();
+    }
+
     const el = h('div', { class: `toast${tone ? ` ${tone}` : ''}`, text: message });
     this.toastStack.append(el);
     window.setTimeout(() => {
@@ -2131,6 +2829,12 @@ export class AppUI {
   rebuildAll(): void {
     this.menuEl.remove();
     this.buildMenu();
+    this.pauseEl.remove();
+    this.buildPause();
+    if (this.hudTurboLabel) this.hudTurboLabel.textContent = t('hud.turbo');
+    if (this.hudCondWarnEl?.firstElementChild) {
+      this.hudCondWarnEl.firstElementChild.textContent = t('toast.conditionLow');
+    }
     this.applyControlLayout();
     this.refreshMenuChrome();
     this.prevCamMode = '';
@@ -2141,6 +2845,11 @@ export class AppUI {
     this.prevMoney = -1;
     this.prevStamina = -1;
     this.prevTeaAvail = null;
+    this.prevRepVal = -1;
+    this.prevCondVal = -1;
+    this.prevCondLow = null;
+    this.prevPursuitKey = '';
+    this.prevRaceSummary = '';
   }
 
   /** Keep UI text in sync when the language changes mid-session. */
@@ -2148,6 +2857,11 @@ export class AppUI {
     setLocale(this.settingsStore.get().language);
     this.prevCamMode = '';
     this.lastHintKey = null;
+    this.prevRepVal = -1;
+    this.prevCondVal = -1;
+    this.prevCondLow = null;
+    this.prevPursuitKey = '';
+    this.prevRaceSummary = '';
   }
 
   /** Debug helper used by the automated smoke test. */

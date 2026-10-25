@@ -51,6 +51,18 @@ export const ICONS = {
     20,
   ),
   bolt: svg(`<path d="M13.2 3.2L6.4 13h5l-.8 7.8L17.6 11h-5z" fill="currentColor" stroke="none"/>`, 18),
+  flame: svg(
+    `<path d="M12.4 2.8c.4 3.2-1.8 4.8-1.8 7.2 0 1.4 1 2.4 2.3 2.4 1.6 0 2.5-1.4 2.4-3.1 2.2 1.6 3.5 4 3.5 6.5a6.8 6.8 0 0 1-13.6 0c0-3.1 1.9-5.7 4.4-7.6-.1 1.4.5 2.4 1.3 2.8-.3-2.6.9-5.6 1.5-8.2z" fill="currentColor" stroke="none"/>`,
+    18,
+  ),
+  shield: svg(
+    `<path d="M12 3.2 5 6.2v5.4c0 4.5 3 8.3 7 9.6 4-1.3 7-5.1 7-9.6V6.2z"/><path d="M12 8v4.5M12 15.6h.01" stroke-width="2.1"/>`,
+    18,
+  ),
+  clock: svg(
+    `<circle cx="12" cy="12" r="8.4"/><path d="M12 7.4V12l3.1 1.9" stroke-width="2"/>`,
+    16,
+  ),
   speaker: svg(
     `<path d="M5 9.5h3.4L13 5.8v12.4l-4.6-3.7H5z"/><path d="M16.2 9a4.4 4.4 0 0 1 0 6M18.6 6.8a7.5 7.5 0 0 1 0 10.4"/>`,
     18,

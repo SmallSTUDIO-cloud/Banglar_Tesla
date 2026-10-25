@@ -33,6 +33,7 @@ export type PurchaseResult =
 
 interface StateEvents {
   balance: number;
+  rep: number;
   progress: Readonly<Progress>;
   achievement: string;
   unlock: string;
@@ -44,7 +45,13 @@ export class GameState extends Emitter<StateEvents> {
   readonly store: SaveStore;
   progress: Progress;
   readonly recoveredFromBackup: boolean;
+  /** Runtime hold-to-boost Turbo charge (0..100, completely separate from `টান` stamina). */
+  turboCharge = 100;
   private txBusy = false;
+  /** Edge-triggered low-condition warning latch: warns once below 35%, resets only at >= 50%. */
+  private lowConditionWarned = false;
+  /** Debounce timestamp (seconds) so one multi-system crash never double-damages condition. */
+  private lastImpactAtSec = -10;
 
   constructor(storage: StorageLike | null, now = () => Date.now()) {
     super();
@@ -52,6 +59,7 @@ export class GameState extends Emitter<StateEvents> {
     const loaded = this.store.load(now());
     this.recoveredFromBackup = loaded.recovered;
     this.progress = loaded.progress ?? createDefaultProgress(now());
+    this.lowConditionWarned = this.progress.condition < 35;
     this.now = now;
   }
 
@@ -59,6 +67,34 @@ export class GameState extends Emitter<StateEvents> {
 
   get balance(): number {
     return this.progress.balance;
+  }
+
+  get rep(): number {
+    return this.progress.rep;
+  }
+
+  get clockMinutes(): number {
+    return this.progress.clockMinutes;
+  }
+
+  setClockMinutes(minutes: number): void {
+    this.progress.clockMinutes = minutes;
+  }
+
+  get blacklistRank(): number {
+    return this.progress.blacklistNextRank;
+  }
+
+  get blacklistIntroSeen(): boolean {
+    return this.progress.blacklistIntroSeen;
+  }
+
+  get defeatedRanks(): ReadonlySet<number> {
+    return new Set(this.progress.blacklistDefeated);
+  }
+
+  get completedEvents(): ReadonlySet<string> {
+    return new Set(this.progress.completedEvents);
   }
 
   get selectedVehicleId(): string {
@@ -89,6 +125,26 @@ export class GameState extends Emitter<StateEvents> {
     this.emit('balance', this.progress.balance);
     this.emit('progress', this.progress);
     return true;
+  }
+
+  /** Deduct a bounded penalty (e.g. race loss or police bust) without ever going below 0. */
+  deductPenalty(requestedAmount: number): number {
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) return 0;
+    const actual = Math.min(this.progress.balance, Math.round(requestedAmount));
+    if (actual <= 0) return 0;
+    this.progress.balance -= actual;
+    this.emit('balance', this.progress.balance);
+    this.emit('progress', this.progress);
+    return actual;
+  }
+
+  // ------------------------------------------------------------------- REP
+  addRep(amount: number): void {
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const add = Math.round(amount);
+    this.progress.rep = clamp(this.progress.rep + add, 0, 100_000_000);
+    this.emit('rep', this.progress.rep);
+    this.emit('progress', this.progress);
   }
 
   // --------------------------------------------------------------- upgrades
@@ -218,11 +274,25 @@ export class GameState extends Emitter<StateEvents> {
 
   // -------------------------------------------------------------- condition
   damageCondition(amount: number): void {
-    if (amount <= 0) return;
-    this.progress.condition = clamp(this.progress.condition - amount, 5, 100);
-    if (this.progress.condition < 35) {
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const prev = this.progress.condition;
+    if (prev >= 50) {
+      this.lowConditionWarned = false;
+    }
+    this.progress.condition = clamp(prev - amount, 5, 100);
+    if (this.progress.condition < 35 && !this.lowConditionWarned) {
+      this.lowConditionWarned = true;
       this.emit('toast', { key: 'toast.conditionLow', tone: 'bad' });
     }
+  }
+
+  /** Guarded impact damage so a single multi-collider impact applies wear at most once. */
+  damageFromImpact(amount: number, simTimeSec: number): boolean {
+    if (amount <= 0) return false;
+    if (simTimeSec - this.lastImpactAtSec < 0.28) return false;
+    this.lastImpactAtSec = simTimeSec;
+    this.damageCondition(amount);
+    return true;
   }
 
   repairQuote(): number {
@@ -237,8 +307,46 @@ export class GameState extends Emitter<StateEvents> {
     }
     this.spend(price);
     this.progress.condition = 100;
+    this.lowConditionWarned = false;
     this.saveNow();
     return { ok: true, balance: this.progress.balance };
+  }
+
+  // --------------------------------------------------- Blacklist & Events
+  recordEventVictory(opts: {
+    eventId: string;
+    cashReward: number;
+    repReward: number;
+    blacklistRank?: number;
+  }): void {
+    if (opts.cashReward > 0) this.addMoney(opts.cashReward);
+    if (opts.repReward > 0) this.addRep(opts.repReward);
+    if (opts.eventId && !this.progress.completedEvents.includes(opts.eventId)) {
+      this.progress.completedEvents.push(opts.eventId);
+    }
+    if (opts.blacklistRank && opts.blacklistRank >= 1 && opts.blacklistRank <= 10) {
+      if (!this.progress.blacklistDefeated.includes(opts.blacklistRank)) {
+        this.progress.blacklistDefeated.push(opts.blacklistRank);
+        this.progress.blacklistDefeated.sort((a, b) => b - a);
+      }
+      this.progress.blacklistNextRank = Math.min(
+        this.progress.blacklistNextRank,
+        opts.blacklistRank - 1,
+      );
+      if (opts.blacklistRank === 10) this.unlockAchievement('ach.blacklistStart');
+      if (opts.blacklistRank === 1) this.unlockAchievement('ach.blacklistChamp');
+    }
+    this.saveNow();
+  }
+
+  markBlacklistIntroSeen(): void {
+    if (this.progress.blacklistIntroSeen) return;
+    this.progress.blacklistIntroSeen = true;
+    this.saveNow();
+  }
+
+  setHeat(heat: number): void {
+    this.progress.heat = clamp(heat, 0, 5);
   }
 
   // -------------------------------------------------------------- rides
@@ -247,6 +355,8 @@ export class GameState extends Emitter<StateEvents> {
     this.progress.distanceTravelled += Math.max(0, opts.distance);
     this.progress.lastMode = opts.mode;
     this.addMoney(opts.earned);
+    const rideRep = 35 + Math.round(Math.max(0, opts.distance) * 0.06) + (opts.damage === 0 ? 20 : 0) + (opts.mood >= 80 ? 15 : 0);
+    this.addRep(rideRep);
 
     if (this.progress.rides === 1) this.unlockAchievement('ach.firstRide');
     if (this.progress.rides >= 10) this.unlockAchievement('ach.tenRides');
@@ -295,8 +405,11 @@ export class GameState extends Emitter<StateEvents> {
   resetProgress(): void {
     this.store.clear();
     this.progress = createDefaultProgress(this.now());
+    this.lowConditionWarned = false;
+    this.turboCharge = 100;
     this.store.save(this.progress, this.now());
     this.emit('balance', this.progress.balance);
+    this.emit('rep', this.progress.rep);
     this.emit('progress', this.progress);
   }
 }

@@ -44,7 +44,7 @@
 .end method
 
 .method private tryEnableLocale(Landroid/speech/tts/TextToSpeech;Ljava/util/Locale;)Z
-    .locals 2
+    .locals 4
 
     const/4 v0, 0x0
     if-eqz p2, :cond_fail
@@ -57,6 +57,38 @@
     invoke-virtual {p1, p2}, Landroid/speech/tts/TextToSpeech;->setLanguage(Ljava/util/Locale;)I
     move-result v1
     if-ltz v1, :cond_fail
+
+    invoke-virtual {p1}, Landroid/speech/tts/TextToSpeech;->getVoice()Landroid/speech/tts/Voice;
+    move-result-object v1
+    if-eqz v1, :cond_fail
+
+    invoke-virtual {v1}, Landroid/speech/tts/Voice;->getLocale()Ljava/util/Locale;
+    move-result-object v2
+    if-eqz v2, :cond_fail
+
+    invoke-virtual {v2}, Ljava/util/Locale;->getLanguage()Ljava/lang/String;
+    move-result-object v2
+    const-string v3, "bn"
+    invoke-virtual {v3, v2}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v3
+    if-nez v3, :cond_lang_ok
+
+    const-string v3, "ben"
+    invoke-virtual {v3, v2}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v3
+    if-eqz v3, :cond_fail
+
+    :cond_lang_ok
+    invoke-virtual {v1}, Landroid/speech/tts/Voice;->getFeatures()Ljava/util/Set;
+    move-result-object v2
+    if-eqz v2, :cond_feat_ok
+
+    const-string v3, "notInstalled"
+    invoke-interface {v2, v3}, Ljava/util/Set;->contains(Ljava/lang/Object;)Z
+    move-result v2
+    if-nez v2, :cond_fail
+
+    :cond_feat_ok
     :try_end_loc
     .catch Ljava/lang/Throwable; {:try_start_loc .. :try_end_loc} :catch_loc
 

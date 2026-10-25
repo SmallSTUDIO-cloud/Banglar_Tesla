@@ -115,6 +115,8 @@ export interface DerivedVehicle {
   damageMultiplier: number;
   batteryDrainMultiplier: number;
   regenFactor: number;
+  turboDrainMultiplier: number;
+  turboRechargeMultiplier: number;
   rainShield: number;
   nightBeam: number;
 }
@@ -143,11 +145,13 @@ export function deriveVehicle(
   const steering = clamp(upgrades.steering ?? 0, 0, 3);
   const seat = clamp(upgrades.seat ?? 0, 0, 3);
   const efficiency = clamp(upgrades.efficiency ?? 0, 0, 3);
+  const turboCap = clamp(upgrades.turboCap ?? 0, 0, 3);
+  const turboRecharge = clamp(upgrades.turboRecharge ?? 0, 0, 3);
   const canopy = clamp(upgrades.canopy ?? 0, 0, 2);
   const lights = clamp(upgrades.lights ?? 0, 0, 2);
 
-  // Condition gently drags on performance below 65%, never bricking the ride.
-  const condFactor = 0.72 + 0.28 * clamp01(condition / 85);
+  // Condition gently trims performance below 85% while keeping worn rickshaws brisk (~18+ km/h).
+  const condFactor = 0.85 + 0.15 * clamp01(condition / 85);
   const wetGripLoss = wetness * 0.22 * (1 - tyres * 0.22);
   const isElectric = vehicle.kind === 'electric';
 
@@ -162,21 +166,23 @@ export function deriveVehicle(
     condFactor;
 
   const brakeDecel =
-    (RIDE.brakeDecel + (vehicle.brakeBonus ?? 0) + brakes * 0.75) *
+    (RIDE.brakeDecel + (vehicle.brakeBonus ?? 0) + brakes * 0.85) *
     (1 - wetGripLoss * 0.72);
 
   const steerMaxLow = RIDE.maxSteerLow + steering * 0.045;
-  const steerMaxHigh = RIDE.maxSteerHigh + steering * 0.018;
-  const steerRateMultiplier = 1 + steering * 0.14;
+  const steerMaxHigh = RIDE.maxSteerHigh + steering * 0.015;
+  const steerRateMultiplier = 1 + steering * 0.15;
 
-  const grip = clamp(0.6 + (vehicle.gripBonus ?? 0) + tyres * 0.09 - wetGripLoss, 0.34, 0.98);
-  const roughSurfaceKeep = clamp(0.76 + tyres * 0.035 + seat * 0.025, 0.72, 0.95);
+  const grip = clamp(0.64 + (vehicle.gripBonus ?? 0) + tyres * 0.09 - wetGripLoss, 0.38, 0.99);
+  const roughSurfaceKeep = clamp(0.84 + tyres * 0.03 + seat * 0.02, 0.8, 0.97);
   const rollingDragScale = clamp(1 - bearings * 0.05 - efficiency * 0.08, 0.62, 1);
 
   const comfortBonus = seat * 0.2 + canopy * 0.06;
   const damageMultiplier = clamp(1 - seat * 0.16, 0.48, 1);
   const batteryDrainMultiplier = clamp(1 - efficiency * 0.16, 0.48, 1);
   const regenFactor = isElectric ? 0.12 + efficiency * 0.11 : 0;
+  const turboDrainMultiplier = clamp(1 - turboCap * 0.14, 0.54, 1);
+  const turboRechargeMultiplier = 1 + turboRecharge * 0.22;
 
   return {
     isElectric,
@@ -193,6 +199,8 @@ export function deriveVehicle(
     damageMultiplier,
     batteryDrainMultiplier,
     regenFactor,
+    turboDrainMultiplier,
+    turboRechargeMultiplier,
     rainShield: canopy * 0.4,
     nightBeam: 1 + lights * 0.55 + (isElectric ? 0.35 : 0),
   };

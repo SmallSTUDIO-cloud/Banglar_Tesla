@@ -99,23 +99,46 @@ export const RIDE = {
   rearTrackHalf: 0.49,
   frontWheelRadius: 0.37,
   rearWheelRadius: 0.386,
-  maxSpeed: 6.4, // m/s (~23 km/h) for a standard pedal rickshaw
-  maxReverse: 1.85,
-  accel: 2.35, // m/s^2 peak low-speed push
-  accelFalloff: 0.62, // tapers near maxSpeed so pedalling feels human
-  coastDrag: 0.62, // natural slowdown when not pedalling
-  rollingDrag: 0.085, // quadratic-ish drag per m/s
-  brakeDecel: 4.5,
-  handbrakeDecel: 5.8,
+  /** Classic pedal rickshaw street cruising speed (~20.3 km/h). */
+  maxSpeed: 5.65,
+  maxReverse: 1.95,
+  accel: 2.95, // m/s^2 crisp low-speed launch
+  accelFalloff: 0.56, // smooth progressive pull to cruising speed
+  coastDrag: 0.64, // natural slowdown when not pedalling
+  rollingDrag: 0.068, // aerodynamic/rolling resistance per m/s
+  brakeDecel: 5.4,
+  handbrakeDecel: 6.8,
   maxSteerLow: 0.68, // rad (~39 deg) — tight pivot in narrow Mohammadpur lanes
-  maxSteerHigh: 0.175, // rad (~10 deg) — stable >8m radius at cruising speed
-  steerRate: 3.6, // rad/s response
-  steerReturn: 4.6,
-  lateralGrip: 7.5,
-  bodyRadius: 0.86, // collision circle around rickshaw centre
-  collisionBounce: 0.25,
-  conditionLossPerHit: 3.2, // % per m/s of impact above threshold
-  reverseHold: 0.3, // s of holding brake at standstill before reversing
+  maxSteerHigh: 0.165, // rad (~9.5 deg) — calm >8.8m radius at cruising/boost speed
+  steerRate: 4.4, // rad/s progressive response
+  steerReturn: 5.8,
+  lateralGrip: 9.2,
+  lateralGripWet: 6.6,
+  /** Tight rickshaw body width radius (eliminates oversized 0.86m air bubble). */
+  bodyRadius: 0.53,
+  bodyHalfWidth: 0.52,
+  bodyHalfLength: 0.94,
+  frontCircleZ: 0.44,
+  rearCircleZ: -0.46,
+  circleRadius: 0.50,
+  collisionBounce: 0.18,
+  conditionLossPerHit: 2.8, // % per m/s of genuine impact above threshold
+  reverseHold: 0.28, // s of holding brake at standstill before reversing
+} as const;
+
+/** Hold-to-boost extreme arcade Turbo (`টার্বো`) tuning (separate from `টান`). */
+export const TURBO = {
+  speedMultiplier: 3.0, // ~61 km/h on classic rickshaw
+  maxSpeedCap: 18.0, // ~64.8 km/h hard safety cap
+  accelMultiplier: 2.4,
+  drainPerSec: 25.0,
+  autoRechargeMoving: 4.4,
+  autoRechargeIdle: 1.8,
+  minActivateCharge: 8.0,
+  nearMissGain: 9.0,
+  cleanDrivingPerSec: 2.6,
+  checkpointGain: 12.0,
+  escapeGain: 28.0,
 } as const;
 
 export const MISSION = {

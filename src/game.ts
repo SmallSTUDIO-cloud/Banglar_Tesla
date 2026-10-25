@@ -9,6 +9,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   QUALITY,
   RIDE,
+  TURBO,
   WORLD,
   type CameraMode,
   type DayPhase,
@@ -19,7 +20,7 @@ import { clamp, clamp01, formatDistance, formatTaka, mulberry32 } from './core/m
 import { InputManager } from './core/input';
 import { SettingsStore } from './core/settings';
 import { GameState } from './core/gameState';
-import { setLocale, t } from './core/i18n';
+import { getLocale, setLocale, t } from './core/i18n';
 import { audio } from './audio/audio';
 import { BanglaSpeechService } from './audio/speech';
 
@@ -27,6 +28,9 @@ import { buildCity, type CityResult } from './world/city';
 import { buildProps, type VendorSpot } from './world/props';
 import { DestructionSystem } from './world/destruction';
 import { EnvironmentSystem } from './world/environment';
+import { GameTimeSystem } from './world/timeSystem';
+import { ArcadeVfxSystem, classifyCrashTier } from './world/arcadeVfx';
+import { DevColliderDebugView } from './world/colliderDebug';
 import { Showroom } from './world/showroom';
 import { SignAtlas, releaseScratchCanvas, setTextureQuality } from './world/textures';
 import {
@@ -40,12 +44,20 @@ import {
 } from './world/layout';
 
 import { RickshawVisual, lookFrom, type RickshawLook } from './vehicle/rickshawModel';
-import { RickshawController } from './vehicle/rickshawController';
+import { RickshawController, testRickshawCapsuleVsObb } from './vehicle/rickshawController';
 import { ChaseCamera, nextCameraMode } from './vehicle/chaseCamera';
 
 import { TrafficSystem } from './ai/traffic';
 import { PedestrianSystem } from './ai/pedestrians';
 import { ROADRAGE_ESCAPED_TEXT, RoadRageSystem } from './ai/roadRage';
+import { RoadblockSystem } from './ai/roadblocks';
+import { PolicePursuitSystem } from './ai/police';
+import {
+  eventById,
+  rivalByRank,
+} from './blacklist/blacklistCatalog';
+import { BlacklistIntroCinematic } from './blacklist/cinematic';
+import { RivalRaceSystem } from './blacklist/raceSystem';
 
 import { MissionSystem } from './missions/missionSystem';
 import { dailySeed, dateKey, generateMission, type MissionOffer } from './missions/mission';
@@ -56,8 +68,6 @@ import { AppUI, type HudState, type UIBridge } from './ui/ui';
 import { DevPerfOverlay } from './ui/perfOverlay';
 
 export type Mode = 'menu' | 'duty' | 'free' | 'daily';
-
-const PHASE_CYCLE: DayPhase[] = ['morning', 'noon', 'golden', 'blue', 'night'];
 
 export class Game implements UIBridge {
   readonly renderer: THREE.WebGLRenderer;
@@ -72,10 +82,17 @@ export class Game implements UIBridge {
 
   private city: CityResult;
   private env: EnvironmentSystem;
+  readonly gameTime: GameTimeSystem;
+  private arcadeVfx: ArcadeVfxSystem;
+  private colliderDebug: DevColliderDebugView;
   private destruction: DestructionSystem;
   private vendorSpots: VendorSpot[];
   private speech: BanglaSpeechService;
   private roadRage: RoadRageSystem;
+  readonly roadblocks: RoadblockSystem;
+  readonly police: PolicePursuitSystem;
+  readonly raceSystem: RivalRaceSystem;
+  readonly cinematic: BlacklistIntroCinematic;
   private tanWindLines: THREE.LineSegments;
   private traffic: TrafficSystem;
   private peds: PedestrianSystem;
@@ -92,6 +109,11 @@ export class Game implements UIBridge {
   private lastTime = 0;
   private running = false;
   private menuTime = 0;
+  private simClockSec = 0;
+  private nearMissCooldown = 0;
+  private lastEventId: string | null = null;
+  private pendingBlacklistFrom: 'menu' | 'hud' | 'pause' = 'menu';
+  private phaseLockedForDebug = false;
   private pendingOffer: MissionOffer | null = null;
   private currentOffer: MissionOffer | null = null;
   private frameCount = 0;
@@ -108,7 +130,7 @@ export class Game implements UIBridge {
   private jammedList: string[] = [];
   private detourToastCooldown = 0;
   private idleTimer = 0;
-  private debugInput: { throttle: number; steer: number; brake: number } | null = null;
+  private debugInput: { throttle: number; steer: number; brake: number; turbo?: boolean } | null = null;
   private debugFreeCamera = false;
 
   // Pre-allocated scratch vectors for zero per-frame GC churn
@@ -139,12 +161,22 @@ export class Game implements UIBridge {
     this.scene.add(this.camera);
 
     this.env = new EnvironmentSystem(this.scene, initialQuality);
+    this.gameTime = new GameTimeSystem(this.state.clockMinutes);
+    this.gameTime.onPhaseChange = (phase) => {
+      if (!this.phaseLockedForDebug) {
+        this.env.setPhase(phase);
+        this.state.progress.dayPhase = phase;
+      }
+    };
     this.signAtlas = new SignAtlas();
     this.city = buildCity(this.signAtlas, initialQuality);
     this.scene.add(this.city.group);
     this.env.setLampPositions(this.city.lampPositions);
     this.env.onWetnessChange = (wet) => this.city.setWetness(wet);
     this.env.onPhaseChange = (phase) => this.city.setNight(phase === 'night' || phase === 'blue');
+    this.env.setPhase(this.gameTime.phase);
+
+    this.colliderDebug = new DevColliderDebugView(this.scene);
 
     const props = buildProps(this.signAtlas);
     this.scene.add(props.group);
@@ -160,7 +192,25 @@ export class Game implements UIBridge {
     this.scene.add(this.destruction.group);
     this.destruction.onBreak = (prop, impactSpeed) => {
       this.audio.playBreakableCrash(prop.kind === 'lamp' ? 'lamp' : 'stall');
+      this.arcadeVfx?.triggerCrash(
+        'medium',
+        prop.x,
+        this.city.heightAt(prop.x, prop.z) + 0.5,
+        prop.z,
+        Math.sin(this.controller.yaw),
+        Math.cos(this.controller.yaw),
+        this.env.wetness,
+      );
       this.chase.addTrauma(clamp(impactSpeed * 0.045, 0.14, 0.42));
+      if (this.mode === 'free' && !this.raceSystem?.isActive && this.missions.state === 'none') {
+        this.police?.recordInfraction(
+          0.95,
+          this.controller.x,
+          this.controller.z,
+          this.controller.yaw,
+          this.roadRage.isActive,
+        );
+      }
       if (this.settings.get().haptics && navigator.vibrate) {
         navigator.vibrate(35);
       }
@@ -184,11 +234,17 @@ export class Game implements UIBridge {
       (x, z) => surfaceAtWorld(x, z),
     );
     this.controller.stamina = this.state.progress.stamina;
+    this.controller.turboCharge = this.state.turboCharge;
     this.controller.onBreakableHit = (id, impactSpeed, x, z, yaw) =>
       this.destruction.tryBreak(id, impactSpeed, x, z, yaw);
     this.controller.onTanAutoStop = (reason) => {
       this.audio.setTanBoost(false);
       this.ui.toast(t(reason === 'battery' ? 'toast.tanLowBattery' : 'toast.tanEmpty'), 'bad');
+    };
+    this.controller.onTurboStateChange = (active) => {
+      if (!active) {
+        this.audio.setTurboBoostAudio(false, 0);
+      }
     };
 
     this.speech = new BanglaSpeechService(this.audio);
@@ -233,6 +289,99 @@ export class Game implements UIBridge {
 
     this.player = new RickshawVisual(this.state.vehicle(), this.currentLook());
     this.scene.add(this.player.root);
+    this.arcadeVfx = new ArcadeVfxSystem(this.player.root, this.scene);
+
+    // Pooled dynamic Roadblocks, 5-Heat Police Pursuit, Rival Race & Cinematic systems (v0.5.0)
+    this.roadblocks = new RoadblockSystem((x, z) => this.city.heightAt(x, z));
+    this.roadblocks.onBarrierSmashed = (x, z, speed) => {
+      this.audio.playBreakableCrash('stall');
+      this.arcadeVfx.triggerCrash(
+        'medium',
+        x,
+        this.city.heightAt(x, z) + 0.45,
+        z,
+        Math.sin(this.controller.yaw),
+        Math.cos(this.controller.yaw),
+        this.env.wetness,
+      );
+      this.chase.addTrauma(clamp(speed * 0.035, 0.12, 0.35));
+      this.state.addRep(15);
+      this.controller.addTurboCharge(TURBO.checkpointGain);
+      this.ui.toast(t('toast.roadblockSmashed'), 'good');
+    };
+    this.scene.add(this.roadblocks.group);
+
+    this.police = new PolicePursuitSystem(this.roadblocks, {
+      heightAt: (x, z) => this.city.heightAt(x, z),
+      onDispatchRadio: () => {
+        const s = this.settings.get();
+        const loc = getLocale();
+        const heat = this.police.heatLevel;
+        const lineKey = heat >= 3 ? 'police.line.escalate' : 'police.line.start';
+        const lineText = t(lineKey);
+        this.speech.speak({
+          speaker: 'police',
+          text: lineText,
+          locale: loc,
+          priority: 2,
+          volume: s.dialogue * s.master,
+          muted: s.muted || !s.sfxEnabled,
+        });
+        if (s.subtitles) {
+          this.ui.showRoadRageSubtitle('police.speaker', lineText);
+        }
+      },
+      onHeatEscalated: (newHeat) => {
+        this.state.setHeat(newHeat);
+      },
+      onPursuitEscaped: (maxHeat, repReward) => {
+        this.state.setHeat(0);
+        this.state.addRep(repReward);
+        void maxHeat;
+        this.controller.addTurboCharge(TURBO.escapeGain);
+        this.audio.setPoliceSirenAudio(false, 0, 0);
+        this.audio.successStinger();
+        this.ui.toast(t('police.escapedToast', { rep: repReward }), 'good');
+        this.state.saveNow();
+      },
+      onPlayerBusted: (_heat, finePaid) => {
+        const paid = this.state.deductPenalty(finePaid);
+        this.state.setHeat(0);
+        this.controller.speed = 0;
+        this.controller.setTanActive(false);
+        this.audio.setTanBoost(false);
+        this.audio.setTurboBoostAudio(false, 0);
+        this.audio.setPoliceSirenAudio(false, 0, 0);
+        this.ui.toast(t('police.bustedToast', { fine: formatTaka(paid) }), 'bad');
+        if (this.raceSystem.isActive && this.raceSystem.currentEvent) {
+          const ev = this.raceSystem.currentEvent;
+          const rv = this.raceSystem.currentRival;
+          this.raceSystem.cancel();
+          this.ui.openRaceResult({
+            won: false,
+            event: ev,
+            rival: rv,
+            timeSeconds: 0,
+            cashDelta: -paid,
+            repEarned: 0,
+            unlockedNextRank: null,
+            reasonKey: 'race.bustedReason',
+          });
+        } else {
+          this.recoverRickshawFreeAfterBust();
+        }
+        this.state.saveNow();
+      },
+    });
+    this.police.setSavedHeat(this.state.progress.heat);
+    this.scene.add(this.police.group);
+
+    this.raceSystem = new RivalRaceSystem((x, z) => this.city.heightAt(x, z));
+    this.scene.add(this.raceSystem.group);
+    this.raceSystem.onCountdownTick = () => this.audio.uiTap();
+    this.raceSystem.onRaceGo = () => this.audio.uiConfirm();
+    this.raceSystem.onCheckpointPassed = () => this.audio.coin();
+    this.raceSystem.onRaceFinished = (summary) => this.handleRaceFinished(summary);
 
     this.chase = new ChaseCamera(this.camera);
     this.missions = new MissionSystem({
@@ -257,6 +406,11 @@ export class Game implements UIBridge {
     this.input.onRecover = () => this.recoverRickshaw();
     this.input.onHorn = () => this.ringBell();
     this.input.onTanToggle = () => this.toggleTanBoost();
+    this.input.onBlacklistOpen = () => {
+      if (this.mode !== 'menu' && !this.paused && !this.cinematic.isPlaying) {
+        this.openBlacklist('hud');
+      }
+    };
     this.input.onTeaInteract = () => {
       if (this.isTeaRestAvailable(this.state.vehicle().kind === 'electric')) {
         this.buyRoadsideTea();
@@ -264,11 +418,29 @@ export class Game implements UIBridge {
     };
 
     this.ui = new AppUI(this, this.state, this.settings);
+    this.cinematic = new BlacklistIntroCinematic(
+      this.scene,
+      this.camera,
+      this.player,
+      (x, z) => this.city.heightAt(x, z),
+      this.audio,
+      this.speech,
+      () => {
+        const s = this.settings.get();
+        return { volume: s.dialogue * s.master, muted: s.muted || !s.sfxEnabled };
+      },
+      (uiState) => this.ui.updateCinematicUi(uiState),
+    );
     this.devPerf = new DevPerfOverlay();
     this.input.onDevPerf = () => {
       this.devPerf.toggle();
     };
+    this.input.onDevColliders = () => {
+      this.colliderDebug.toggle();
+    };
     (window as unknown as { __btToggleDevPerf?: () => boolean }).__btToggleDevPerf = () => this.devPerf.toggle();
+    (window as unknown as { __btToggleColliderDebug?: () => boolean }).__btToggleColliderDebug = () =>
+      this.colliderDebug.toggle();
 
     // Pedestrian near-miss & bump Bengali reactions
     this.peds.onReaction = (ev) => {
@@ -394,15 +566,23 @@ export class Game implements UIBridge {
               this.traffic.withPrewarmState(() => {
                 this.destruction.withPrewarmState(() => {
                   this.roadRage.withPrewarmState(() => {
-                    this.tanWindLines.visible = true;
-                    this.player.setNightLighting(true);
-                    try {
-                      this.renderer.compile(this.scene, this.camera);
-                      this.renderer.render(this.scene, this.camera);
-                    } finally {
-                      this.tanWindLines.visible = false;
-                      this.player.setNightLighting(false);
-                    }
+                    this.arcadeVfx.withPrewarmState(() => {
+                      this.roadblocks.withPrewarmState(() => {
+                        this.police.withPrewarmState(() => {
+                          this.raceSystem.withPrewarmState(() => {
+                            this.tanWindLines.visible = true;
+                            this.player.setNightLighting(true);
+                            try {
+                              this.renderer.compile(this.scene, this.camera);
+                              this.renderer.render(this.scene, this.camera);
+                            } finally {
+                              this.tanWindLines.visible = false;
+                              this.player.setNightLighting(false);
+                            }
+                          });
+                        });
+                      });
+                    });
                   });
                 });
               });
@@ -458,7 +638,10 @@ export class Game implements UIBridge {
     }
 
     if (!this.paused) this.update(dt);
-    else this.audio.setVehicleSpeed(0, 0);
+    else {
+      this.audio.setVehicleSpeed(0, 0);
+      this.audio.setTurboBoostAudio(false, 0);
+    }
 
     this.render();
     this.updatePerf(dt);
@@ -478,14 +661,32 @@ export class Game implements UIBridge {
   }
 
   private update(dt: number): void {
+    if (this.paused) {
+      this.audio.setVehicleSpeed(0, 0);
+      this.audio.setTurboBoostAudio(false, 0);
+      return;
+    }
     this.menuTime += dt;
     this.detourToastCooldown = Math.max(0, this.detourToastCooldown - dt);
     this.teaCooldown = Math.max(0, this.teaCooldown - dt);
+    this.nearMissCooldown = Math.max(0, this.nearMissCooldown - dt);
     const settings = this.settings.get();
 
     if (this.showroomVisible) {
       this.audio.setSceneMode('menu');
+      this.audio.setTurboBoostAudio(false, 0);
       this.showroom.update(dt);
+      return;
+    }
+
+    if (this.cinematic.isPlaying) {
+      this.audio.setSceneMode('driving');
+      this.audio.setTurboBoostAudio(false, 0);
+      this.audio.update(dt, this.controller.x, this.controller.z);
+      this.tmpPlayerVec.set(this.controller.x, 0, this.controller.z);
+      this.env.update(dt, this.tmpPlayerVec);
+      this.traffic.update(dt);
+      this.cinematic.update(dt);
       return;
     }
 
@@ -507,6 +708,8 @@ export class Game implements UIBridge {
 
     if (this.mode === 'menu') {
       this.tanWindLines.visible = false;
+      this.audio.setTurboBoostAudio(false, 0);
+      this.arcadeVfx.update(dt, this.controller.x, 0, this.controller.z, this.controller.yaw, 0, false, 0, 0);
       if (!this.debugFreeCamera) this.updateMenuCamera(dt);
       const menuGround = this.city.heightAt(this.controller.x, this.controller.z);
       this.player.root.position.set(this.controller.x, menuGround, this.controller.z);
@@ -516,11 +719,24 @@ export class Game implements UIBridge {
       return;
     }
 
+    // Advance Dynamic In-Game Clock only during active unpaused gameplay!
+    this.simClockSec += dt;
+    this.gameTime.update(dt);
+    this.state.setClockMinutes(this.gameTime.minutesOfDay);
+
     const sampled = this.input.sample();
-    const rawInput = this.debugInput ? { ...sampled, ...this.debugInput, horn: false } : sampled;
+    const rawInput = this.debugInput
+      ? {
+          ...sampled,
+          ...this.debugInput,
+          turbo: this.debugInput.turbo ?? sampled.turbo,
+          horn: false,
+        }
+      : sampled;
     const lockedByRage = this.roadRage.isControlLocked;
-    const input = lockedByRage
-      ? { throttle: 0, brake: 1, steer: 0, horn: false }
+    const lockedByStart = this.raceSystem.isStartLocked;
+    const input = lockedByRage || lockedByStart
+      ? { throttle: 0, brake: 1, steer: 0, horn: false, turbo: false }
       : rawInput;
     const wetness = this.env.wetness;
     const derived = deriveVehicle(
@@ -542,6 +758,8 @@ export class Game implements UIBridge {
       isElectric: derived.isElectric,
       batteryDrainMultiplier: derived.batteryDrainMultiplier,
       regenFactor: derived.regenFactor,
+      turboDrainMultiplier: derived.turboDrainMultiplier,
+      turboRechargeMultiplier: derived.turboRechargeMultiplier,
     });
     this.audio.setElectricMode(derived.isElectric);
     this.audio.setTanBoost(this.controller.tanActive);
@@ -558,7 +776,13 @@ export class Game implements UIBridge {
     while (this.accumulator >= stepSize && steps < 4) {
       const events = this.controller.step(
         stepSize,
-        { throttle: input.throttle, brake: input.brake, steer: input.steer, handbrake: false },
+        {
+          throttle: input.throttle,
+          brake: input.brake,
+          steer: input.steer,
+          handbrake: false,
+          turbo: input.turbo,
+        },
         settings.sensitivity,
         settings.deadzone,
       );
@@ -572,39 +796,153 @@ export class Game implements UIBridge {
       this.accumulator -= stepSize;
       steps++;
     }
-    if (lockedByRage) {
+    if (lockedByRage || lockedByStart) {
       this.controller.speed = 0;
       if (this.roadRage.currentState === 'scuffling') {
         this.chase.addTrauma(0.06);
       }
     }
     this.state.progress.stamina = this.controller.stamina;
+    this.state.turboCharge = this.controller.turboCharge;
 
     const trafficImpact = this.resolveTrafficCollisions();
     if (trafficImpact > totalImpact) totalImpact = trafficImpact;
+
+    // Roadblock & Police & Rival OBB contacts
+    const rbHit = this.roadblocks.resolvePlayerCollision(
+      this.controller.x,
+      this.controller.z,
+      this.controller.yaw,
+      this.controller.speed,
+    );
+    if (rbHit.hit) {
+      this.controller.x += rbHit.pushX;
+      this.controller.z += rbHit.pushZ;
+      this.controller.speed *= rbHit.speedScale;
+      if (!rbHit.smashed) {
+        totalImpact = Math.max(totalImpact, 1.35);
+      }
+    }
+
+    const polHit = this.police.resolvePlayerCollision(
+      this.controller.x,
+      this.controller.z,
+      this.controller.yaw,
+      this.controller.speed,
+    );
+    if (polHit.hit) {
+      this.controller.x += polHit.pushX;
+      this.controller.z += polHit.pushZ;
+      this.controller.speed *= 0.55;
+      totalImpact = Math.max(totalImpact, 0.9 + polHit.closingSpeed * 0.22);
+    }
+
+    const rivHit = this.raceSystem.resolvePlayerVsRival(
+      this.controller.x,
+      this.controller.z,
+      this.controller.yaw,
+    );
+    if (rivHit.hit) {
+      this.controller.x += rivHit.pushX;
+      this.controller.z += rivHit.pushZ;
+      totalImpact = Math.max(totalImpact, 0.8);
+    }
+
     if (onSidewalk && steppedDistance > 0) this.chase.addTrauma(0.03);
 
     this.handleImpact(totalImpact, lastImpactX, lastImpactZ);
     this.roadRage.update(dt, this.controller.x, this.controller.z);
+    this.police.update(
+      dt,
+      this.controller.x,
+      this.controller.z,
+      this.controller.yaw,
+      this.controller.speed,
+      this.roadRage.isActive,
+    );
+    if (this.police.isActive) {
+      const prox = clamp01(1 - this.police.nearestDistance / 95);
+      this.audio.setPoliceSirenAudio(true, prox, this.police.heatLevel);
+    } else {
+      this.audio.setPoliceSirenAudio(false, 0, 0);
+    }
 
-    // -------- pooled `টান` motion streaks + FOV surge
-    const boostVisual =
+    const raceSnap = this.raceSystem.update(
+      dt,
+      this.controller.x,
+      this.controller.z,
+      this.controller.hits,
+      this.simClockSec,
+    );
+
+    // Reckless ultra-high-speed driving in Free Ride gradually attracts police attention!
+    if (
+      this.mode === 'free' &&
+      !this.raceSystem.isActive &&
+      this.missions.state === 'none' &&
+      this.controller.speed > 13.8
+    ) {
+      this.police.recordInfraction(
+        dt * 0.25,
+        this.controller.x,
+        this.controller.z,
+        this.controller.yaw,
+        this.roadRage.isActive,
+      );
+    }
+
+    // -------- pooled `টান` + `টার্বো` motion streaks, rear flames & FOV surge
+    const tanVisual =
       this.controller.tanActive && this.controller.speed > derived.maxSpeed * 0.72
         ? clamp01((this.controller.speed - derived.maxSpeed * 0.72) / Math.max(1, derived.maxSpeed * 0.9))
         : 0;
-    this.chase.setBoostAmount(boostVisual);
-    if (!settings.reduceEffects && boostVisual > 0.08) {
+    const turboVisual = this.controller.turboActive
+      ? clamp01(0.45 + this.controller.speed / Math.max(12, derived.maxSpeed * TURBO.speedMultiplier))
+      : 0;
+    this.chase.setBoostAmount(tanVisual);
+    this.chase.setTurboAmount(turboVisual);
+    this.chase.setLongitudinalAccel(this.controller.acceleration, dt);
+    this.audio.setTurboBoostAudio(this.controller.turboActive, turboVisual);
+
+    const streakIntensity = Math.max(tanVisual, turboVisual * 1.15);
+    if (!settings.reduceEffects && streakIntensity > 0.08) {
       this.tanWindLines.visible = true;
-      this.tanWindLines.rotation.z = (this.menuTime * 9.5) % (Math.PI * 2);
+      this.tanWindLines.rotation.z = (this.menuTime * (this.controller.turboActive ? 14.5 : 9.5)) % (Math.PI * 2);
     } else {
       this.tanWindLines.visible = false;
     }
 
-    // -------- visuals (YXZ Euler order + true steerAngle & slope pitch!)
+    this.arcadeVfx.setReduceEffects(settings.reduceEffects);
+    this.arcadeVfx.update(
+      dt,
+      this.controller.x,
+      this.controller.y,
+      this.controller.z,
+      this.controller.yaw,
+      this.controller.speed,
+      this.controller.turboActive,
+      this.controller.turboBlend,
+      wetness,
+    );
+
+    if (this.colliderDebug.isEnabled()) {
+      this.colliderDebug.update(
+        this.controller.x,
+        this.controller.y,
+        this.controller.z,
+        this.controller.yaw,
+        this.city.colliders,
+        this.traffic.obstacles(),
+        this.controller.lastContact,
+        this.roadblocks.getActiveObbs(),
+      );
+    }
+
+    // -------- visuals (YXZ Euler order + true steerAngle & slope + weight-transfer pitch!)
     const lateral = this.controller.lateralAccel;
     this.player.root.position.set(this.controller.x, this.controller.y, this.controller.z);
     this.player.root.rotation.y = this.controller.yaw;
-    this.player.root.rotation.x = this.controller.pitch;
+    this.player.root.rotation.x = this.controller.pitch + this.controller.bodyPitchOffset;
     this.player.root.rotation.z = this.controller.roll;
     this.player.setCockpitVisibility(settings.cameraMode === 'cockpit');
     this.player.updateVisual(
@@ -642,10 +980,18 @@ export class Game implements UIBridge {
     if (this.routeTick >= 1.0) {
       this.routeTick = 0;
       this.jammedList = this.traffic.getJammedSegments();
-      this.recomputeRoute(this.missions.zone);
+      const routeTarget = raceSnap.active
+        ? { x: raceSnap.targetX, z: raceSnap.targetZ }
+        : this.missions.zone;
+      this.recomputeRoute(routeTarget);
     }
 
-    if ((this.mode === 'duty' || this.mode === 'daily') && this.missions.state === 'none' && !this.pendingOffer) {
+    if (
+      (this.mode === 'duty' || this.mode === 'daily') &&
+      !this.raceSystem.isActive &&
+      this.missions.state === 'none' &&
+      !this.pendingOffer
+    ) {
       this.idleTimer += dt;
       if (this.idleTimer > 1.6) {
         this.idleTimer = 0;
@@ -654,7 +1000,9 @@ export class Game implements UIBridge {
     } else {
       this.idleTimer = 0;
     }
-    if (this.mode === 'free' && this.currentOffer === null) this.freeRideInteractions(dt);
+    if (this.mode === 'free' && this.currentOffer === null && !this.raceSystem.isActive) {
+      this.freeRideInteractions(dt);
+    }
     if (input.horn) this.ringBell();
 
     // -------- audio
@@ -728,6 +1076,11 @@ export class Game implements UIBridge {
   // --------------------------------------------------------------- actions
   startMode(mode: 'duty' | 'free' | 'daily'): void {
     void this.audio.init();
+    this.phaseLockedForDebug = false;
+    this.cinematic.stop(false);
+    this.raceSystem.cancel();
+    this.police.stopPursuit(true);
+    this.roadblocks.clearAll();
     this.roadRage.cancel();
     if (this.showroomVisible) this.showroomVisible = false;
     this.mode = mode;
@@ -753,13 +1106,12 @@ export class Game implements UIBridge {
 
   private chooseAtmosphere(mode: Mode): void {
     const rides = this.state.progress.rides;
-    let phase: DayPhase = PHASE_CYCLE[rides % PHASE_CYCLE.length];
     let weather: WeatherKind = rides > 0 && rides % 5 === 4 ? 'overcast' : 'clear';
     if (mode === 'daily') {
       const seed = dailySeed(new Date());
-      phase = PHASE_CYCLE[seed % PHASE_CYCLE.length];
       weather = seed % 2 === 0 ? 'rain' : 'overcast';
     }
+    const phase = this.gameTime.phase;
     this.env.setPhase(phase);
     this.env.setWeather(weather);
     this.state.progress.dayPhase = phase;
@@ -847,11 +1199,14 @@ export class Game implements UIBridge {
 
   private togglePause(force?: boolean): void {
     if (this.mode === 'menu') return;
-    if (this.roadRage.isControlLocked) return;
+    if (this.roadRage.isControlLocked || this.cinematic.isPlaying) return;
     const next = force ?? !this.paused;
     if (next === this.paused) return;
     this.paused = next;
+    this.input.clearAllHolds();
     if (this.paused) {
+      this.controller.forceStopTurbo();
+      this.audio.setTurboBoostAudio(false, 0);
       this.ui.showPause(0);
       this.audio.setSceneMode('paused');
       this.audio.setVehicleSpeed(0, 0);
@@ -916,11 +1271,26 @@ export class Game implements UIBridge {
     }
   }
 
+  private recoverRickshawFreeAfterBust(): void {
+    const snapped = snapToNearestRoad(this.controller.x, this.controller.z, false);
+    this.controller.reset(snapped.x, snapped.z, snapped.yaw);
+    this.chase.snapTo(snapped.x, snapped.z, snapped.yaw, this.controller.y);
+    this.player.root.position.set(snapped.x, this.controller.y, snapped.z);
+  }
+
   returnToMenu(): void {
+    this.cinematic.stop(false);
+    this.raceSystem.cancel();
+    this.police.stopPursuit(true);
+    this.roadblocks.clearAll();
     this.roadRage.cancel();
+    this.input.clearAllHolds();
     this.tanWindLines.visible = false;
     this.controller.setTanActive(false);
+    this.controller.forceStopTurbo();
     this.audio.setTanBoost(false);
+    this.audio.setTurboBoostAudio(false, 0);
+    this.audio.setPoliceSirenAudio(false, 0, 0);
     this.audio.setSceneMode('menu');
     this.state.setSpawn(this.controller.x, this.controller.z, this.controller.yaw);
     this.state.saveNow();
@@ -1079,8 +1449,27 @@ export class Game implements UIBridge {
     const now = performance.now();
     if (now - this.lastImpactAt < 220) return;
     this.lastImpactAt = now;
-    this.chase.addTrauma(clamp(magnitude * 0.22, 0.05, 0.65));
-    this.audio.bump(magnitude);
+
+    const tier = classifyCrashTier(magnitude) ?? 'minor';
+    this.chase.addTrauma(
+      tier === 'major'
+        ? clamp(magnitude * 0.25, 0.28, 0.62)
+        : tier === 'medium'
+          ? clamp(magnitude * 0.2, 0.14, 0.42)
+          : clamp(magnitude * 0.14, 0.05, 0.24),
+    );
+    this.audio.playArcadeCrash(tier, magnitude);
+    if (!this.settings.get().reduceEffects) {
+      this.arcadeVfx.triggerCrash(
+        tier,
+        this.controller.x,
+        this.controller.y + 0.55,
+        this.controller.z,
+        nx || Math.sin(this.controller.yaw),
+        nz || Math.cos(this.controller.yaw),
+        this.env.wetness,
+      );
+    }
     if (this.settings.get().haptics && navigator.vibrate) {
       navigator.vibrate(Math.round(clamp(magnitude * 28, 10, 65)));
     }
@@ -1091,13 +1480,28 @@ export class Game implements UIBridge {
       this.state.progress.condition,
       this.env.wetness,
     ).damageMultiplier;
-    this.state.damageCondition(magnitude * RIDE.conditionLossPerHit * durabilityReduction);
+    this.state.damageFromImpact(
+      magnitude * RIDE.conditionLossPerHit * durabilityReduction,
+      this.simClockSec,
+    );
+    if (
+      tier === 'major' &&
+      this.mode === 'free' &&
+      !this.raceSystem.isActive &&
+      this.missions.state === 'none'
+    ) {
+      this.police.recordInfraction(
+        0.85,
+        this.controller.x,
+        this.controller.z,
+        this.controller.yaw,
+        this.roadRage.isActive,
+      );
+    }
     if (this.controller.hardBrakes > 0) {
       this.missions.registerHardBrake();
       this.controller.hardBrakes = 0;
     }
-    void nx;
-    void nz;
   }
 
   private ringBell(): void {
@@ -1120,25 +1524,54 @@ export class Game implements UIBridge {
       const ob = obstacles[i];
       const dx = this.controller.x - ob.x;
       const dz = this.controller.z - ob.z;
-      const dist = Math.hypot(dx, dz);
-      const minDist = ob.radius + RIDE.bodyRadius * 0.84;
-      if (dist < minDist && dist > 0.0001) {
+      const broadR = ob.radius + 1.85;
+      const distSq = dx * dx + dz * dz;
+      if (distSq > broadR * broadR) continue;
+
+      // Exact 2-circle rickshaw capsule vs rotated vehicle OBB (zero phantom air hits!)
+      const hit = testRickshawCapsuleVsObb(
+        this.controller.x,
+        this.controller.z,
+        this.controller.yaw,
+        ob.x,
+        ob.z,
+        ob.halfWidth,
+        ob.halfLength,
+        ob.yaw,
+      );
+      if (hit.hit) {
         const oVx = Math.sin(ob.yaw) * ob.speed;
         const oVz = Math.cos(ob.yaw) * ob.speed;
         const relSpeed = Math.hypot(pVx - oVx, pVz - oVz);
 
-        const push = (minDist - dist) / dist;
-        this.controller.x += dx * push;
-        this.controller.z += dz * push;
-        const speedLoss = Math.min(Math.abs(this.controller.speed), 2.2);
-        this.controller.speed *= 0.35;
-        const hitImpact = Math.max(speedLoss * 0.5 + 0.2, relSpeed * 0.26);
+        this.controller.x += hit.pushX;
+        this.controller.z += hit.pushZ;
+
+        // Tangential scrape vs direct impact: glancing passes preserve momentum!
+        const pFwdX = Math.sin(this.controller.yaw);
+        const pFwdZ = Math.cos(this.controller.yaw);
+        const headOn = Math.abs(pFwdX * hit.nx + pFwdZ * hit.nz);
+        const retain = 0.72 - headOn * 0.42;
+        const speedLoss = Math.abs(this.controller.speed) * (1 - retain);
+        this.controller.speed *= retain;
+        const hitImpact = Math.max(speedLoss * 0.45 + 0.18, relSpeed * (0.14 + headOn * 0.16));
         impact = Math.max(impact, hitImpact);
+        this.controller.hits++;
 
         // Milestone 2: High-impact collision with a private passenger car (`car` ONLY)
         if (ob.kind === 'car' && (Math.abs(preSpeed) >= 4.0 || relSpeed >= 4.2)) {
           this.roadRage.tryStart(ob.agentIndex, this.controller.x, this.controller.z);
         }
+      } else if (
+        this.nearMissCooldown <= 0 &&
+        Math.abs(preSpeed) >= 5.2 &&
+        distSq < (ob.halfWidth + 1.35) * (ob.halfWidth + 1.35)
+      ) {
+        // Clean high-speed near miss rewards Turbo charge!
+        this.nearMissCooldown = 2.6;
+        this.controller.addTurboCharge(TURBO.nearMissGain);
+        this.state.turboCharge = this.controller.turboCharge;
+        this.ui.toast(t('toast.nearMiss', { pct: TURBO.nearMissGain }), 'good');
       }
     }
     return impact;
@@ -1220,6 +1653,191 @@ export class Game implements UIBridge {
     this.roadRage.refusePayment();
   }
 
+  // ------------------------------------------------ Blacklist, Cinematic & Rival Races (v0.5.0)
+  openBlacklist(from: 'menu' | 'hud' | 'pause'): void {
+    void this.audio.init();
+    this.input.clearAllHolds();
+    this.audio.setTurboBoostAudio(false, 0);
+    this.pendingBlacklistFrom = from;
+    if (from === 'hud' && this.mode !== 'menu') {
+      this.paused = true;
+    }
+
+    // First-time entry triggers the skippable 18s Mohammadpur Blacklist intro cinematic!
+    if (!this.state.blacklistIntroSeen) {
+      this.state.markBlacklistIntroSeen();
+      this.state.saveNow();
+      this.playBlacklistIntro(() => {
+        this.ui.openBlacklistView(this.pendingBlacklistFrom);
+      });
+      return;
+    }
+    this.ui.openBlacklistView(from);
+  }
+
+  replayBlacklistIntro(): void {
+    this.playBlacklistIntro(() => {
+      this.ui.openBlacklistView(this.pendingBlacklistFrom);
+    });
+  }
+
+  private playBlacklistIntro(onDone: () => void): void {
+    this.showroomVisible = false;
+    this.paused = false;
+    this.ui.show(null);
+    const prevPhase = this.env.getPhase();
+    this.env.setPhase('blue');
+    this.cinematic.start(
+      {
+        x: this.controller.x,
+        y: this.controller.y,
+        z: this.controller.z,
+        yaw: this.controller.yaw,
+      },
+      () => {
+        if (!this.phaseLockedForDebug) {
+          this.env.setPhase(this.mode === 'menu' ? prevPhase : this.gameTime.phase);
+        }
+        if (this.pendingBlacklistFrom === 'hud' && this.mode !== 'menu') {
+          this.paused = true;
+        }
+        onDone();
+      },
+    );
+  }
+
+  skipBlacklistIntro(): void {
+    this.cinematic.skip();
+  }
+
+  startRivalEvent(eventId: string): void {
+    const ev = eventById(eventId);
+    if (!ev) return;
+    void this.audio.init();
+    this.lastEventId = eventId;
+    this.cinematic.stop(false);
+    this.roadRage.cancel();
+    this.missions.cancel();
+    this.pendingOffer = null;
+    this.currentOffer = null;
+    this.ui.hideJobOffer();
+    this.police.stopPursuit(true);
+    this.roadblocks.clearAll();
+    this.showroomVisible = false;
+
+    this.mode = 'free';
+    this.paused = false;
+    this.audio.setSceneMode('driving');
+
+    if (ev.weatherOverride) {
+      this.env.setWeather(ev.weatherOverride);
+    }
+
+    const rival = ev.blacklistRank ? rivalByRank(ev.blacklistRank) ?? null : null;
+    const grid = this.raceSystem.startEvent(ev, rival, this.controller.hits);
+    this.controller.reset(grid.x, grid.z, grid.yaw);
+    this.controller.restoreStamina(100);
+    this.controller.addTurboCharge(100);
+    this.player.root.position.set(grid.x, this.controller.y, grid.z);
+    this.chase.snapTo(grid.x, grid.z, grid.yaw, this.controller.y);
+    this.ui.show('hud');
+    this.ui.applyControlLayout();
+
+    // Speak rival's opening taunt!
+    if (rival) {
+      const s = this.settings.get();
+      const loc = getLocale();
+      const taunt = loc === 'en' ? rival.tauntEn : rival.tauntBn;
+      const who = loc === 'en' ? rival.nameEn : rival.nameBn;
+      this.speech.speak({
+        speaker: 'rival',
+        text: taunt,
+        locale: loc,
+        priority: 3,
+        volume: s.dialogue * s.master,
+        muted: s.muted || !s.sfxEnabled,
+      });
+      if (s.subtitles) {
+        this.ui.showRoadRageSubtitle(who, taunt);
+      }
+    }
+
+    // Spawn event roadblocks & police pursuit if specified!
+    if (ev.roadblockCount && ev.roadblockCount > 0) {
+      for (let i = 0; i < ev.roadblockCount; i++) {
+        this.roadblocks.trySpawnAhead(
+          grid.x + Math.sin(grid.yaw) * i * 38,
+          grid.z + Math.cos(grid.yaw) * i * 38,
+          Math.sin(grid.yaw),
+          Math.cos(grid.yaw),
+          ev.heatLevel ?? 2,
+        );
+      }
+    }
+    if (ev.heatLevel && ev.heatLevel > 0) {
+      this.police.startPursuit(ev.heatLevel, grid.x, grid.z, grid.yaw);
+    }
+
+    const snap = this.raceSystem.update(0, grid.x, grid.z, this.controller.hits, this.simClockSec);
+    if (snap.active) {
+      this.recomputeRoute({ x: snap.targetX, z: snap.targetZ });
+    }
+    this.hudTick = 1;
+    this.updateHud(this.state.vehicle().kind === 'electric');
+  }
+
+  retryLastEvent(): void {
+    if (this.lastEventId) {
+      this.startRivalEvent(this.lastEventId);
+    } else {
+      this.exitRaceToFreeRide();
+    }
+  }
+
+  exitRaceToFreeRide(): void {
+    this.raceSystem.cancel();
+    this.police.stopPursuit(true);
+    this.roadblocks.clearAll();
+    this.activeRoute = null;
+    this.paused = false;
+    this.mode = 'free';
+    this.audio.setSceneMode('driving');
+    this.ui.show('hud');
+  }
+
+  private handleRaceFinished(summary: import('./blacklist/raceSystem').RaceResultSummary): void {
+    this.input.clearAllHolds();
+    this.controller.speed = 0;
+    this.controller.setTanActive(false);
+    this.audio.setTanBoost(false);
+    this.audio.setTurboBoostAudio(false, 0);
+    this.police.stopPursuit(true);
+    this.roadblocks.clearAll();
+    this.activeRoute = null;
+
+    if (summary.won) {
+      this.audio.successStinger();
+      this.controller.addTurboCharge(TURBO.escapeGain);
+      this.state.recordEventVictory({
+        eventId: summary.event.id,
+        cashReward: summary.cashDelta,
+        repReward: summary.repEarned,
+        blacklistRank: summary.rival?.rank,
+      });
+    } else if (summary.cashDelta < 0) {
+      this.audio.failStinger();
+      const actualPaid = this.state.deductPenalty(Math.abs(summary.cashDelta));
+      summary.cashDelta = -actualPaid;
+    } else {
+      this.audio.failStinger();
+    }
+
+    this.state.setSpawn(this.controller.x, this.controller.z, this.controller.yaw);
+    this.state.saveNow();
+    this.paused = true;
+    this.ui.openRaceResult(summary);
+  }
+
   isAndroidApp(): boolean {
     return this.speech.isAndroidApp();
   }
@@ -1279,6 +1897,29 @@ export class Game implements UIBridge {
       sub = t('mission.negotiate', { fare: formatTaka(this.pendingOffer.fareEstimate) });
     }
 
+    const raceSnap = this.raceSystem.isActive
+      ? this.raceSystem.update(0, this.controller.x, this.controller.z, this.controller.hits, this.simClockSec)
+      : null;
+
+    if (raceSnap && raceSnap.active) {
+      const loc = getLocale();
+      label = t(`event.kind.${this.raceSystem.currentEvent?.kind ?? 'street_race'}`);
+      title = loc === 'en' ? raceSnap.eventTitleEn : raceSnap.eventTitleBn;
+      distance = Math.hypot(raceSnap.targetX - this.controller.x, raceSnap.targetZ - this.controller.z);
+      sub = `${t('race.cp', { cur: raceSnap.checkpointIndex, tot: raceSnap.checkpointTotal })} · ${formatDistance(distance)}`;
+      this.tmpProjVec.set(raceSnap.targetX, 3.0, raceSnap.targetZ).project(this.camera);
+      if (this.tmpProjVec.z < 1) {
+        markerX = (this.tmpProjVec.x * 0.5 + 0.5) * window.innerWidth;
+        markerY = (-this.tmpProjVec.y * 0.5 + 0.5) * window.innerHeight;
+      }
+    }
+
+    const pState = this.police.currentPhase;
+    const pProg =
+      pState === 'losingSight' || pState === 'cooldown'
+        ? this.police.evadeRatio
+        : this.police.bustedRatio;
+
     const hudState: HudState = {
       speed: this.controller.speed,
       money: this.state.balance,
@@ -1296,7 +1937,7 @@ export class Game implements UIBridge {
       passengerAboard: mission.state === 'toDropoff',
       markerX,
       markerY,
-      markerLabel: zone ? t(zone.nameKey) : null,
+      markerLabel: raceSnap?.active ? 'CP' : zone ? t(zone.nameKey) : null,
       cameraMode: this.settings.get().cameraMode,
       isElectric,
       battery: this.controller.battery,
@@ -1306,6 +1947,34 @@ export class Game implements UIBridge {
       routePoints: this.activeRoute ? this.activeRoute.points : null,
       jammedSegments: this.jammedList,
       detourActive: !!this.activeRoute?.avoidedJam,
+      clockText: this.gameTime.formatted,
+      turboCharge: this.controller.turboCharge,
+      turboActive: this.controller.turboActive,
+      rep: this.state.rep,
+      condition: this.state.progress.condition,
+      conditionLow: this.state.progress.condition < 35,
+      policeState: pState,
+      policeHeat: this.police.heatLevel,
+      policeProgress: pProg,
+      policeUnits: this.police.getActiveSnapshots().map((u) => ({ active: true, x: u.x, z: u.z })),
+      roadblocks: this.roadblocks.getMinimapMarkers().map((m) => ({ active: true, smashed: false, x: m.x, z: m.z })),
+      race:
+        raceSnap && raceSnap.active
+          ? {
+              active: true,
+              countdownText: raceSnap.countdownText,
+              title,
+              pos: raceSnap.playerRank,
+              cpCur: raceSnap.checkpointIndex,
+              cpTot: raceSnap.checkpointTotal,
+              remSec: raceSnap.remainingSeconds,
+              targetX: raceSnap.targetX,
+              targetZ: raceSnap.targetZ,
+              rivalX: raceSnap.rivalX,
+              rivalZ: raceSnap.rivalZ,
+              hasRival: raceSnap.hasRival,
+            }
+          : null,
     };
     this.ui.updateHud(hudState);
     this.ui.setMinimapPlayer(this.controller.x, this.controller.z, this.controller.yaw);
@@ -1416,17 +2085,27 @@ export class Game implements UIBridge {
 
   private updatePerf(dt: number): void {
     if (!this.devPerf.isEnabled()) return;
+    const spDiag = this.speech.getDiagnostics();
     this.devPerf.update(
       dt,
       this.renderer,
       this.traffic.vehicleCount,
       this.peds.activePedestrianCount,
       this.jammedList.length,
+      {
+        speechMode: spDiag.engine,
+        voiceName: spDiag.selectedVoice,
+        voiceLang: spDiag.locale,
+        fallbackReason: spDiag.fallbackReason,
+        colliderDebug: this.colliderDebug.isEnabled(),
+        clockText: this.gameTime.formatted,
+      },
     );
   }
 
   // --------------------------------------------------------- test & debug hooks
   debugSnapshot(): Record<string, unknown> {
+    const spDiag = this.speech.getDiagnostics();
     return {
       audio: this.audio.ready,
       audioUnlocked: this.audio.unlocked,
@@ -1436,6 +2115,7 @@ export class Game implements UIBridge {
       speechBackend: this.speech.activeBackend,
       speechCount: this.speech.spokenCount,
       speechLastText: this.speech.lastSpokenText,
+      speechDiagnostics: spDiag,
       tutorialDone: this.state.progress.tutorialDone,
       mode: this.mode,
       paused: this.paused,
@@ -1449,6 +2129,21 @@ export class Game implements UIBridge {
       battery: this.controller.battery,
       stamina: this.controller.stamina,
       tanActive: this.controller.tanActive,
+      turboCharge: this.controller.turboCharge,
+      turboActive: this.controller.turboActive,
+      clockText: this.gameTime.formatted,
+      clockMinutes: this.gameTime.minutesOfDay,
+      dayPhase: this.env.getPhase(),
+      rep: this.state.rep,
+      blacklistRank: this.state.blacklistRank,
+      blacklistIntroSeen: this.state.blacklistIntroSeen,
+      cinematicPlaying: this.cinematic.isPlaying,
+      raceActive: this.raceSystem.isActive,
+      policeState: this.police.currentPhase,
+      policeHeat: this.police.heatLevel,
+      policeUnits: this.police.activeUnitCount,
+      roadblocksActive: this.roadblocks.activeCount,
+      activeVfxParticles: this.arcadeVfx.getActiveParticleCount(),
       vehicleId: this.state.selectedVehicleId,
       cameraMode: this.settings.get().cameraMode,
       missionState: this.missions.state,
@@ -1575,8 +2270,33 @@ export class Game implements UIBridge {
   }
 
   debugSetPhase(phase: DayPhase, weather: WeatherKind): void {
+    this.phaseLockedForDebug = true;
     this.env.setPhase(phase);
     this.env.setWeather(weather);
+  }
+
+  debugSetTimeForTest(hour24: number, minute = 0): string {
+    this.phaseLockedForDebug = false;
+    this.gameTime.setMinutes(hour24 * 60 + minute);
+    this.state.setClockMinutes(this.gameTime.minutesOfDay);
+    this.env.setPhase(this.gameTime.phase);
+    this.hudTick = 1;
+    this.updateHud(this.state.vehicle().kind === 'electric');
+    return this.gameTime.formatted;
+  }
+
+  debugStartPursuitForTest(heat = 2): void {
+    this.police.startPursuit(heat, this.controller.x, this.controller.z, this.controller.yaw);
+    this.hudTick = 1;
+    this.updateHud(this.state.vehicle().kind === 'electric');
+  }
+
+  debugStartEventForTest(eventId: string): void {
+    this.startRivalEvent(eventId);
+  }
+
+  debugOpenBlacklistForTest(): void {
+    this.openBlacklist('menu');
   }
 
   debugOpenGarageForTest(): void {
@@ -1674,7 +2394,7 @@ export class Game implements UIBridge {
       this.debugTeleport(prop.x - ux * 1.4, prop.z - uz * 1.4, yaw);
       this.controller.speed = speed;
       this.debugInput = { throttle: 1, brake: 0, steer: 0 };
-      this.debugStepSim(0.25);
+      this.debugStepSim(0.32);
       this.debugInput = null;
       if (prop.broken) return true;
     }

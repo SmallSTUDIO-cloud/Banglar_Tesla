@@ -142,6 +142,14 @@ export class DevPerfOverlay {
     activeVehicles: number,
     activePedestrians: number,
     jammedCorridors: number,
+    extraDiag?: {
+      speechMode?: string;
+      voiceName?: string;
+      voiceLang?: string;
+      fallbackReason?: string;
+      colliderDebug?: boolean;
+      clockText?: string;
+    },
   ): void {
     if (!this.enabled) return;
     const ms = dt * 1000;
@@ -186,6 +194,11 @@ export class DevPerfOverlay {
       gpuMs: this.lastGpuMs,
     };
 
+    const speechInfo = extraDiag
+      ? `\nSpeech: ${extraDiag.speechMode ?? 'none'} | ${extraDiag.voiceName ?? 'none'} (${extraDiag.voiceLang ?? '-'}) | fb=${extraDiag.fallbackReason ?? 'none'}` +
+        `\nColliders(F4): ${extraDiag.colliderDebug ? 'ON' : 'OFF'} | Clock: ${extraDiag.clockText ?? '-'}`
+      : '';
+
     this.el.textContent =
       `[DEV PERF]\n` +
       `FPS: ${this.lastSnapshot.fps.toFixed(1)} (${this.lastSnapshot.frameMs.toFixed(1)}ms | p95 ${this.lastSnapshot.p95Ms.toFixed(1)}ms` +
@@ -194,7 +207,8 @@ export class DevPerfOverlay {
       `Draws: ${this.lastSnapshot.drawCalls} | Tris: ${this.lastSnapshot.triangles.toLocaleString()}\n` +
       `Geoms: ${this.lastSnapshot.geometries} | Tex: ${this.lastSnapshot.textures} | Shaders: ${this.lastSnapshot.programs}\n` +
       `Traffic: ${activeVehicles} (Jams: ${jammedCorridors}) | Peds: ${activePedestrians}` +
-      (heapMB !== null ? `\nJS Heap: ${heapMB.toFixed(2)} MB` : '');
+      (heapMB !== null ? `\nJS Heap: ${heapMB.toFixed(2)} MB` : '') +
+      speechInfo;
   }
 
   dispose(): void {

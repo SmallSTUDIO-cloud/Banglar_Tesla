@@ -128,7 +128,7 @@ async function main() {
       document.getElementById('menu-sound-unlock')?.click();
       await window.__banglarTesla.audio.init();
     });
-    await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === 15', { timeout: 15000 });
+    await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === 26', { timeout: 15000 });
 
     const menuAudioSnap = await page.evaluate(() => {
       const s = window.__banglarTesla.debugSnapshot();
@@ -146,7 +146,7 @@ async function main() {
       menuAudioSnap.audio &&
         menuAudioSnap.audioUnlocked &&
         menuAudioSnap.audioScene === 'menu' &&
-        menuAudioSnap.audioAssets === 15 &&
+        menuAudioSnap.audioAssets === 26 &&
         menuAudioSnap.pillHidden,
       JSON.stringify(menuAudioSnap),
     );

@@ -49,6 +49,12 @@ export interface Collider {
   kind: 'building' | 'prop' | 'wall';
   disabled?: boolean;
   breakableId?: number;
+  /** Optional oriented bounding box (OBB) in world XZ for rotated buildings/stalls/barriers. */
+  cx?: number;
+  cz?: number;
+  halfX?: number;
+  halfZ?: number;
+  yaw?: number;
 }
 
 export interface SpeedHump {
@@ -450,14 +456,19 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       bGlow.setTag(-1);
       lampPositions.push(new THREE.Vector3(headX, 5.9, headZ));
       const lampCollider: Collider = {
-        minX: lx - 0.24,
-        maxX: lx + 0.24,
-        minZ: lz - 0.24,
-        maxZ: lz + 0.24,
+        minX: lx - 0.14,
+        maxX: lx + 0.14,
+        minZ: lz - 0.14,
+        maxZ: lz + 0.14,
         height: 5.5,
         cameraBlocking: false,
         kind: 'prop',
         breakableId: lampBreakId,
+        cx: lx,
+        cz: lz,
+        halfX: 0.14,
+        halfZ: 0.14,
+        yaw: 0,
       };
       colliders.push(lampCollider);
       breakableLamps.push({
@@ -683,19 +694,27 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             }
           }
 
-          // Conservative axis-aligned collider around rotated footprint (strictly clear of road & sidewalk!)
+          // Oriented bounding box (OBB) matching exact rotated building footprint
+          // + tight AABB envelope for spatial grid broad-phase (zero road/sidewalk air jutting!).
           const cosA = Math.abs(Math.cos(yaw));
           const sinA = Math.abs(Math.sin(yaw));
-          const halfX = (bDepth * 0.5) * cosA + (bWidth * 0.5) * sinA;
-          const halfZ = (bDepth * 0.5) * sinA + (bWidth * 0.5) * cosA;
+          const obbHalfX = bDepth * 0.5;
+          const obbHalfZ = bWidth * 0.5;
+          const envHalfX = obbHalfX * cosA + obbHalfZ * sinA;
+          const envHalfZ = obbHalfX * sinA + obbHalfZ * cosA;
           colliders.push({
-            minX: cx - halfX,
-            maxX: cx + halfX,
-            minZ: cz - halfZ,
-            maxZ: cz + halfZ,
+            minX: cx - envHalfX,
+            maxX: cx + envHalfX,
+            minZ: cz - envHalfZ,
+            maxZ: cz + envHalfZ,
             height,
             cameraBlocking: true,
             kind: 'building',
+            cx,
+            cz,
+            halfX: obbHalfX,
+            halfZ: obbHalfZ,
+            yaw,
           });
 
           along += bWidth + 1.6 + rng() * 2.2;

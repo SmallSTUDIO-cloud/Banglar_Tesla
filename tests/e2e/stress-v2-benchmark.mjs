@@ -97,7 +97,7 @@ async function main() {
       window.__banglarTesla.debugSetQuality('balanced');
       window.__banglarTesla.debugStartMode('free');
     });
-    await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === 15', { timeout: 15000 });
+    await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === 26', { timeout: 15000 });
 
     async function profileScenario(name, setupFnStr) {
       await cdp.send('HeapProfiler.collectGarbage').catch(() => {});

@@ -10,6 +10,7 @@ import { clamp } from './mathx';
 import { DEFAULT_COSMETICS, cosmeticById, UPGRADES, VEHICLES, TAPES } from '../economy/catalog';
 import type { CosmeticCategory } from '../economy/catalog';
 import type { StorageLike } from './settings';
+import { canonicalMinutesForPhase, DEFAULT_START_MINUTES, normalizeMinutes } from '../world/timeSystem';
 
 export const SAVE_VERSION = 2;
 export const SAVE_KEY = 'banglar-tesla.save';
@@ -20,6 +21,7 @@ export type GameMode = 'duty' | 'free' | 'daily';
 export interface Progress {
   version: number;
   balance: number;
+  rep: number;
   ownedVehicles: string[];
   selectedVehicle: string;
   upgrades: Record<string, number>;
@@ -37,7 +39,14 @@ export interface Progress {
   lastMode: GameMode;
   spawn: { x: number; z: number; yaw: number } | null;
   dayPhase: DayPhase;
+  clockMinutes: number;
   weather: WeatherKind;
+  /** Next Blacklist rank to defeat: 10 (#10) down to 1 (#1), 0 = Champion crowned. */
+  blacklistNextRank: number;
+  blacklistDefeated: number[];
+  blacklistIntroSeen: boolean;
+  completedEvents: string[];
+  heat: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -46,6 +55,7 @@ export function createDefaultProgress(now = Date.now()): Progress {
   return {
     version: SAVE_VERSION,
     balance: 500,
+    rep: 0,
     ownedVehicles: VEHICLES.filter((v) => v.ownedByDefault && !v.comingSoon).map((v) => v.id),
     selectedVehicle: 'classic',
     upgrades: {},
@@ -63,7 +73,13 @@ export function createDefaultProgress(now = Date.now()): Progress {
     lastMode: 'duty',
     spawn: null,
     dayPhase: 'morning',
+    clockMinutes: DEFAULT_START_MINUTES,
     weather: 'clear',
+    blacklistNextRank: 10,
+    blacklistDefeated: [],
+    blacklistIntroSeen: false,
+    completedEvents: [],
+    heat: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -162,9 +178,41 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
     };
   }
 
+  const dayPhase =
+    (['morning', 'noon', 'golden', 'blue', 'night'] as const).find((p) => p === data.dayPhase) ??
+    'morning';
+  const rawClock =
+    typeof data.clockMinutes === 'number' && Number.isFinite(data.clockMinutes)
+      ? normalizeMinutes(data.clockMinutes)
+      : canonicalMinutesForPhase(dayPhase);
+
+  const defeatedSet = new Set<number>();
+  if (Array.isArray(data.blacklistDefeated)) {
+    for (const r of data.blacklistDefeated) {
+      if (typeof r === 'number' && Number.isFinite(r)) {
+        const rk = Math.floor(r);
+        if (rk >= 1 && rk <= 10) defeatedSet.add(rk);
+      }
+    }
+  }
+  const blacklistDefeated = [...defeatedSet].sort((a, b) => b - a);
+  let derivedNext = 10;
+  while (derivedNext >= 1 && defeatedSet.has(derivedNext)) {
+    derivedNext -= 1;
+  }
+  const rawNext =
+    typeof data.blacklistNextRank === 'number' && Number.isFinite(data.blacklistNextRank)
+      ? Math.floor(clamp(data.blacklistNextRank, 0, 10))
+      : derivedNext;
+  const blacklistNextRank = Math.min(rawNext, derivedNext);
+
+  const ridesCount = Math.max(0, Math.floor(num(data.rides, 0, 0, 1_000_000)));
+  const defaultLegacyRep = typeof data.rep === 'number' ? 0 : ridesCount * 45;
+
   return {
     version: SAVE_VERSION,
     balance: Math.max(0, Math.floor(num(data.balance, def.balance, 0, 10_000_000))),
+    rep: Math.max(0, Math.floor(num(data.rep, defaultLegacyRep, 0, 100_000_000))),
     ownedVehicles,
     selectedVehicle,
     upgrades,
@@ -172,7 +220,7 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
     cosmetics,
     condition: num(data.condition, def.condition, 5, 100),
     stamina: num(data.stamina, def.stamina, 0, 100),
-    rides: Math.max(0, Math.floor(num(data.rides, 0, 0, 1_000_000))),
+    rides: ridesCount,
     totalEarned: Math.max(0, Math.floor(num(data.totalEarned, 0, 0, 1_000_000_000))),
     distanceTravelled: Math.max(0, num(data.distanceTravelled, 0, 0, 1e9)),
     achievements: strArray(data.achievements).slice(0, 64),
@@ -181,8 +229,14 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
     dailyDoneDate: typeof data.dailyDoneDate === 'string' ? data.dailyDoneDate.slice(0, 10) : '',
     lastMode: data.lastMode === 'free' || data.lastMode === 'daily' ? data.lastMode : 'duty',
     spawn,
-    dayPhase: (['morning', 'noon', 'golden', 'blue', 'night'] as const).find((p) => p === data.dayPhase) ?? 'morning',
+    dayPhase,
+    clockMinutes: rawClock,
     weather: (['clear', 'overcast', 'rain'] as const).find((w) => w === data.weather) ?? 'clear',
+    blacklistNextRank,
+    blacklistDefeated,
+    blacklistIntroSeen: data.blacklistIntroSeen === true,
+    completedEvents: strArray(data.completedEvents).slice(0, 128),
+    heat: num(data.heat, 0, 0, 5),
     createdAt: num(data.createdAt, now, 0, 9e15),
     updatedAt: num(data.updatedAt, now, 0, 9e15),
   };

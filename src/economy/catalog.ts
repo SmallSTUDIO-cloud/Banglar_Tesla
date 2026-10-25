@@ -177,6 +177,8 @@ export const UPGRADES: UpgradeDef[] = [
   { id: 'steering', nameKey: 'up.steering', descKey: 'up.steering.desc', maxLevel: 3, prices: [300, 700, 1350] },
   { id: 'seat', nameKey: 'up.seat', descKey: 'up.seat.desc', maxLevel: 3, prices: [340, 760, 1400] },
   { id: 'efficiency', nameKey: 'up.efficiency', descKey: 'up.efficiency.desc', maxLevel: 3, prices: [340, 780, 1450] },
+  { id: 'turboCap', nameKey: 'up.turboCap', descKey: 'up.turboCap.desc', maxLevel: 3, prices: [380, 860, 1550] },
+  { id: 'turboRecharge', nameKey: 'up.turboRecharge', descKey: 'up.turboRecharge.desc', maxLevel: 3, prices: [350, 800, 1480] },
   { id: 'canopy', nameKey: 'up.canopy', descKey: 'up.canopy.desc', maxLevel: 2, prices: [400, 950] },
   { id: 'lights', nameKey: 'up.lights', descKey: 'up.lights.desc', maxLevel: 2, prices: [260, 640] },
 ];

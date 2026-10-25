@@ -3,17 +3,20 @@ package com.shostalab.banglartesla;
 import android.content.Context;
 import android.os.Bundle;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.Voice;
 import android.webkit.JavascriptInterface;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Offline native Android TextToSpeech bridge (`window.__btAndroidTts`) for Bangla dialogue.
  *
- * Strictly verifies that an actual Bengali (`bn-BD` / `bn-IN` / `bn`) voice pack is available
- * on the device before reporting `isBengaliAvailable() == true`. If Bengali voice data is
- * missing (`LANG_MISSING_DATA` or `LANG_NOT_SUPPORTED`), returns `false` so the WebView
- * cleanly falls back to browser `bn-*` SpeechSynthesis or bundled vocal clips + Bangla subtitles.
+ * Strictly verifies that an actual installed Bengali (`bn-BD` -> `bn-IN` -> `bn`) `Voice`
+ * (without `KEY_FEATURE_NOT_INSTALLED` and never an `en` fallback voice) is active on the
+ * device before reporting `isBengaliAvailable() == true`. If Bengali voice data is missing
+ * or uninstalled, returns `false` so the WebView immediately plays the bundled offline
+ * Bengali phonetic WAV clip + Bangla subtitles.
  */
 public final class BanglaTtsBridge implements TextToSpeech.OnInitListener {
     private final AtomicInteger utteranceSeq = new AtomicInteger(0);
@@ -30,6 +33,32 @@ public final class BanglaTtsBridge implements TextToSpeech.OnInitListener {
         }
     }
 
+    private boolean tryEnableLocale(TextToSpeech engine, Locale loc) {
+        if (loc == null) return false;
+        try {
+            int avail = engine.isLanguageAvailable(loc);
+            if (avail < TextToSpeech.LANG_AVAILABLE) return false;
+            int setRes = engine.setLanguage(loc);
+            if (setRes < TextToSpeech.LANG_AVAILABLE) return false;
+
+            Voice v = engine.getVoice();
+            if (v == null) return false;
+            Locale vLoc = v.getLocale();
+            if (vLoc == null) return false;
+            String lang = vLoc.getLanguage();
+            if (!"bn".equalsIgnoreCase(lang) && !"ben".equalsIgnoreCase(lang)) {
+                return false;
+            }
+            Set<String> features = v.getFeatures();
+            if (features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) {
+                return false;
+            }
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     @Override
     public void onInit(int status) {
         TextToSpeech engine = this.tts;
@@ -38,25 +67,17 @@ public final class BanglaTtsBridge implements TextToSpeech.OnInitListener {
             return;
         }
 
-        Locale[] candidates = new Locale[] {
-            Locale.forLanguageTag("bn-BD"),
-            Locale.forLanguageTag("bn-IN"),
-            new Locale("bn")
-        };
-
-        for (Locale loc : candidates) {
-            try {
-                int avail = engine.isLanguageAvailable(loc);
-                if (avail >= TextToSpeech.LANG_AVAILABLE) {
-                    int setRes = engine.setLanguage(loc);
-                    if (setRes >= TextToSpeech.LANG_AVAILABLE) {
-                        this.bengaliReady = true;
-                        return;
-                    }
-                }
-            } catch (Throwable ignored) {
-                // Continue trying fallback Bengali locale variants
-            }
+        if (tryEnableLocale(engine, Locale.forLanguageTag("bn-BD"))) {
+            this.bengaliReady = true;
+            return;
+        }
+        if (tryEnableLocale(engine, Locale.forLanguageTag("bn-IN"))) {
+            this.bengaliReady = true;
+            return;
+        }
+        if (tryEnableLocale(engine, new Locale("bn"))) {
+            this.bengaliReady = true;
+            return;
         }
         this.bengaliReady = false;
     }
@@ -80,7 +101,7 @@ public final class BanglaTtsBridge implements TextToSpeech.OnInitListener {
             engine.setSpeechRate(safeRate);
             Bundle params = new Bundle();
             params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, safeVol);
-            String utteranceId = "bt_bn_" + utteranceSeq.incrementAndGet();
+            String utteranceId = String.valueOf(utteranceSeq.incrementAndGet());
             int res = engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
             return res == TextToSpeech.SUCCESS;
         } catch (Throwable ignored) {

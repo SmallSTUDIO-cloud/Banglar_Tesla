@@ -190,9 +190,9 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
 
   if (type === 'cng') {
     wheelRadius = 0.25;
-    halfLength = 1.34;
-    halfWidth = 0.68;
-    radius = 1.15;
+    halfLength = 1.14;
+    halfWidth = 0.62;
+    radius = 1.12;
     schemeHexes = ['#177245', '#12653c', '#1e7f4f', '#155d39'];
     primary.box({ x: 0, y: 0.46, z: -0.18 }, { x: 1.24, y: 0.42, z: 1.72 }, '#ffffff');
     primary.box({ x: 0, y: 0.48, z: 0.86 }, { x: 0.82, y: 0.40, z: 0.56 }, '#ffffff');
@@ -232,9 +232,9 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     wheelRadius = 0.375;
     spokedWheels = true;
     glossyPrimary = false;
-    halfLength = 1.25;
-    halfWidth = 0.58;
-    radius = 1.02;
+    halfLength = 1.10;
+    halfWidth = 0.53;
+    radius = 0.98;
     schemeHexes = ['#b31329', '#126499', '#1c7c54', '#9e2870', '#c86419', '#1a7a6c'];
 
     // Arched hood + side curtains tinted per-instance via primaryGeo!
@@ -275,9 +275,9 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     );
   } else if (type === 'easybike') {
     wheelRadius = 0.28;
-    halfLength = 1.48;
-    halfWidth = 0.72;
-    radius = 1.24;
+    halfLength = 1.22;
+    halfWidth = 0.66;
+    radius = 1.18;
     schemeHexes = ['#0f7a8c', '#c92a3e', '#1d5fa7', '#d97b16'];
     primary.box({ x: 0, y: 0.48, z: -0.15 }, { x: 1.32, y: 0.38, z: 2.05 }, '#ffffff');
     primary.box({ x: 0, y: 0.52, z: 0.98 }, { x: 0.88, y: 0.44, z: 0.52 }, '#ffffff');
@@ -303,9 +303,9 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     );
   } else if (type === 'bus') {
     wheelRadius = 0.46;
-    halfLength = 3.85;
-    halfWidth = 1.22;
-    radius = 2.75;
+    halfLength = 3.73;
+    halfWidth = 1.19;
+    radius = 2.65;
     schemeHexes = ['#b7282e', '#165a8a', '#1e6f50', '#8a2b52'];
     primary.box({ x: 0, y: 0.92, z: 0 }, { x: 2.38, y: 0.96, z: 7.42 }, '#ffffff');
     primary.box({ x: 0, y: 2.78, z: 0 }, { x: 2.22, y: 0.18, z: 7.12 }, '#ffffff');
@@ -341,9 +341,9 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
   } else if (type === 'truck') {
     wheelRadius = 0.45;
     glossyPrimary = false;
-    halfLength = 3.25;
-    halfWidth = 1.15;
-    radius = 2.4;
+    halfLength = 3.05;
+    halfWidth = 1.07;
+    radius = 2.3;
     schemeHexes = ['#d97724', '#1d6fa5', '#2a8c55', '#b83232'];
     primary.box({ x: 0, y: 1.38, z: 1.98 }, { x: 2.14, y: 1.48, z: 1.86 }, '#ffffff');
 
@@ -370,9 +370,9 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
   } else if (type === 'van') {
     wheelRadius = 0.33;
     glossyPrimary = false;
-    halfLength = 2.15;
-    halfWidth = 0.92;
-    radius = 1.68;
+    halfLength = 2.00;
+    halfWidth = 0.88;
+    radius = 1.62;
     schemeHexes = ['#f2f4f7', '#1d6fa5', '#e8a829', '#2b8a62'];
     primary.box({ x: 0, y: 0.62, z: 0.98 }, { x: 1.68, y: 0.62, z: 1.72 }, '#ffffff');
     primary.box({ x: 0, y: 1.24, z: 0.78 }, { x: 1.60, y: 0.68, z: 1.18 }, '#ffffff');
@@ -393,9 +393,9 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
   } else if (type === 'motorbike') {
     wheelRadius = 0.29;
     spokedWheels = true;
-    halfLength = 1.02;
-    halfWidth = 0.38;
-    radius = 0.76;
+    halfLength = 0.94;
+    halfWidth = 0.25;
+    radius = 0.72;
     schemeHexes = ['#d62828', '#1d3557', '#2a9d8f', '#f77f00'];
     primary.box({ x: 0, y: 0.74, z: 0.18 }, { x: 0.28, y: 0.22, z: 0.48 }, '#ffffff', { x: -0.12 });
     primary.cylinder({ x: 0, y: 1.40, z: 0.02 }, 0.12, 0.22, '#ffffff');
@@ -416,9 +416,9 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
   } else {
     // Dhaka Private Sedan (Toyota Premio / Corolla Allion street staple!)
     wheelRadius = 0.32;
-    halfLength = 2.08;
-    halfWidth = 0.88;
-    radius = 1.62;
+    halfLength = 2.04;
+    halfWidth = 0.86;
+    radius = 1.58;
     schemeHexes = ['#e8ecef', '#25323f', '#8a2020', '#1e4e79', '#d6cfc2'];
     primary.box({ x: 0, y: 0.54, z: 0 }, { x: 1.72, y: 0.48, z: 4.02 }, '#ffffff');
     primary.box({ x: 0, y: 0.38, z: 1.98 }, { x: 1.74, y: 0.24, z: 0.22 }, '#ffffff');

@@ -3,12 +3,12 @@ name: Build & Release Android APK
 on:
   push:
     branches:
-      - arena/7747f1b0-banglar-tesla
+      - arena/ea8c21f1-banglar-tesla
       - main
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publish APK to GitHub Release v0.4.0'
+        description: 'Publish APK to GitHub Release v0.5.0'
         required: false
         default: 'true'
 
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build Debug Android APK (v0.4.0)
+    name: Build Debug Android APK (v0.5.0)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -67,8 +67,8 @@ jobs:
             --java "$WORK_DIR/gen" \
             --min-sdk-version 24 \
             --target-sdk-version 34 \
-            --version-code 4 \
-            --version-name 0.4.0 \
+            --version-code 5 \
+            --version-name 0.5.0 \
             -0 .ttf -0 .png -0 .jpg -0 .webp -0 .mp3 -0 .ogg -0 .wav \
             --auto-add-overlay \
             "$WORK_DIR/res.zip"
@@ -89,7 +89,7 @@ jobs:
             -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-          OUT_APK="artifacts/banglar-tesla-v0.4.0-debug.apk"
+          OUT_APK="artifacts/banglar-tesla-v0.5.0-debug.apk"
           STABLE_APK="artifacts/Banglar-Tesla.apk"
           "$BUILD_TOOLS/apksigner" sign \
             --ks "$KEYSTORE" \
@@ -110,40 +110,40 @@ jobs:
       - name: Upload APK build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: banglar-tesla-v0.4.0-android-apk
+          name: banglar-tesla-v0.5.0-android-apk
           path: |
-            artifacts/banglar-tesla-v0.4.0-debug.apk
+            artifacts/banglar-tesla-v0.5.0-debug.apk
             artifacts/Banglar-Tesla.apk
           if-no-files-found: error
 
-      - name: Publish APK assets to GitHub Release v0.4.0
-        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.4.0]')
+      - name: Publish APK assets to GitHub Release v0.5.0
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.5.0]')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v0.4.0"
-          APK="artifacts/banglar-tesla-v0.4.0-debug.apk"
+          TAG="v0.5.0"
+          APK="artifacts/banglar-tesla-v0.5.0-debug.apk"
           STABLE="artifacts/Banglar-Tesla.apk"
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
           SIZE="$(stat -c%s "$APK")"
           NOTES=$(cat <<EOF
-          ## Banglar Tesla — বাংলার টেসলা (\`v0.4.0\`)
+          ## Banglar Tesla — বাংলার টেসলা (\`v0.5.0\`)
 
-          Major gameplay, authentic Dhaka audio/soundscape, Bangla road-rage encounter, breakable street props, and \`টান\` speed-boost upgrade for **Banglar Tesla**, built Android-first and tuned for smooth **Samsung Galaxy M21** (\`Exynos 9611 / Mali-G72 MP3\`) performance while preserving all \`v0.3.0\` GPU/CPU optimizations.
+          Major arcade street-progression, physics & OBB hitbox overhaul, hold-to-boost \`টার্বো\`, **Rickshaw Blacklist (#10 → #1)**, **5-Heat Police Pursuit & Roadblocks**, **Dynamic In-Game Clock**, and authentic Bengali speech upgrade for **Banglar Tesla**, built Android-first and verified against the \`v0.4.0\` performance baseline on **Samsung Galaxy M21** (\`Exynos 9611 / Mali-G72 MP3\`) budgets.
 
-          ### What's New in \`v0.4.0\`
-          - **Repaired & Upgraded Dhaka Audio Engine + Original Soundtrack:** Reliable gesture/autoplay unlock (\`Tap to enable sound\` indicator), smooth menu/driving/pause music crossfades with dialogue ducking, visibility/background recovery, Master/Music/SFX volume sliders + Music/SFX/Calm-Ambience toggles, capped concurrent voices, and 15 original bundled offline \`.wav\` tracks & cues (\`1.92 MB\` total).
-          - **Spatialized Mohammadpur Soundscape:** Location-aware Town Hall Bazaar chatter, roadside tea-stall kettle/cup clinks, Bangla street-hawker calls, distant construction taps, traffic horns & cycle-rickshaw bells, classic pedal chain rattle, electric motor hum, and monsoon rain/wet-tire spray.
-          - **Bangla Road-Rage Encounters (Private Cars Only):** High-impact collisions with private passenger cars (\`car\`) pull the sedan over with flashing hazards, spawn an exiting pursuing driver, trigger **\`ROAD RAGE!\`** alert + restrained camera shake, speak and subtitle exact Bangla lines (\`ওই হারামজাদা, দাঁড়া!\` and \`মাফ করে দেন ভাই, ভুলে লেগে গেছে!\`) via native Android \`TextToSpeech\` (\`bn-BD\`/\`bn\`), browser \`bn-*\` SpeechSynthesis, or bundled offline vocal clips, and run an uninterrupted 5-second distance escape countdown (\`পালাতে পেরেছেন!\`) or catch confrontation modal (\`১০০ টাকা দিয়ে মিটমাট করুন\` vs \`দেব না\` slapstick scuffle).
-          - **Breakable Street Lamps & Roadside Stalls:** Speed-thresholded one-shot destruction of street lamps and roadside vendor stalls with immediate collider disable, sub-range VBO vertex collapse, night-lamp culling, and pooled zero-shadow debris & dust that despawn cleanly.
-          - **\`টান\` Speed Boost, Pedal Stamina & Roadside Tea Rest:** HUD \`টান\` toggle (\`~1.95×\` top speed, pooled radial motion streaks & FOV kick), 0–100 pedal stamina drain/regeneration + auto-stop on Classic Rickshaw, accelerated battery drain on Banglar Bidyut Electric Rickshaw, \`৳10\` roadside tea-stall stamina recovery, and subtle monsoon wet-road braking.
+          ### What's New in \`v0.5.0\`
+          - **Calibrated Rickshaw Physics & Tight OBB Hitboxes:** Overhauled 60 Hz cycle/electric rickshaw handling (~20 km/h classic cruise, ~39 km/h \`টান\` boost, speed-sensitive steering, separate longitudinal/lateral grip, progressive braking, weight transfer, slope grounding) and exact 2-circle capsule vs rotated OBB colliders for buildings, props, traffic, rivals, police SUVs, and roadblocks — zero phantom air hits and zero \`0 km/h\` stuck soft-locks.
+          - **Hold-to-Boost \`টার্বো\` + Exaggerated Arcade VFX:** Distinct hold-only \`টার্বো\` boost (~60 km/h peak, instant stop on release/pause/menu/empty, auto-recharge + near-miss/clean-driving/checkpoint/escape rewards), pooled twin rear exhaust flames, camera acceleration lag & FOV surge, and fast-recovery tiered crash bursts (\`minor\` / \`medium\` / \`major\`).
+          - **Rickshaw Blacklist (#10 → #1), Skippable Intro Cinematic & 7 Event Types:** Original Mohammadpur rival roster (#10 → #1), once-only skippable 18s first-entry intro cinematic, 7 street event types (street race, sprint, circuit, time trial, checkpoint rush, traffic weave, pursuit escape), REP + টাকা progression, \`turboCap\`/\`turboRecharge\` upgrades, and \`v0.4.0 → v0.5.0\` save migration.
+          - **5-Heat Police Pursuit & Smashable Roadblocks:** Serious 5-Heat police chase FSM (pursuit, line-of-sight break, cooldown, evade, bust), narrow-\`gali\` rickshaw maneuverability advantage, and pooled road-graph-aware roadblocks with guaranteed rickshaw gaps and smashable sawhorse barricades.
+          - **Dynamic In-Game Time System & Authentic Bangla Speech:** Accelerated 24-hour HUD clock (\`07:30 AM\` / \`06:45 PM\` in both Bangla & English modes, synced with \`morning\`/\`noon\`/\`golden\`/\`blue\`/\`night\`, paused in menus/modals, persisted in saves, zero per-frame DOM churn) and strict Bengali voice verification (\`bn-BD\`/\`bn-IN\`/\`bn\`) with intelligible offline phonetic WAV fallback (26 bundled \`.wav\` assets, \`3.08 MB\` total).
 
           ### APK Details
           - **Direct Download (Stable Latest URL):** \`Banglar-Tesla.apk\` (\`$SIZE\` bytes)
-          - **Versioned Asset:** \`banglar-tesla-v0.4.0-debug.apk\` (\`$SIZE\` bytes)
+          - **Versioned Asset:** \`banglar-tesla-v0.5.0-debug.apk\` (\`$SIZE\` bytes)
           - **App Name:** \`Banglar Tesla\`
           - **Application ID:** \`com.shostalab.banglartesla\`
-          - **Version:** \`0.4.0\` (\`versionCode: 4\`)
+          - **Version:** \`0.5.0\` (\`versionCode: 5\`)
           - **Android Compatibility:** Android 7.0+ (\`minSdkVersion 24\`, \`targetSdkVersion 34\`)
           - **Permissions Requested:** None (\`0\` \`<uses-permission>\` entries; runs 100% offline)
           - **Signing:** Android debug signature (\`APK Signature Scheme v1 + v2 + v3\`)
@@ -152,11 +152,11 @@ jobs:
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" "$STABLE" --clobber
-            gh release edit "$TAG" --latest --title "Banglar Tesla v0.4.0 — Dhaka Soundscape, Bangla Road-Rage & টান Upgrade" --notes "$NOTES"
+            gh release edit "$TAG" --latest --title "Banglar Tesla v0.5.0 — Rickshaw Blacklist, Hold-to-Boost টার্বো, Police Pursuit & Dynamic Time" --notes "$NOTES"
           else
             gh release create "$TAG" "$APK" "$STABLE" \
               --latest \
               --target "${{ github.sha }}" \
-              --title "Banglar Tesla v0.4.0 — Dhaka Soundscape, Bangla Road-Rage & টান Upgrade" \
+              --title "Banglar Tesla v0.5.0 — Rickshaw Blacklist, Hold-to-Boost টার্বো, Police Pursuit & Dynamic Time" \
               --notes "$NOTES"
           fi
