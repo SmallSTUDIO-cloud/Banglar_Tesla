@@ -90,15 +90,35 @@ async function main() {
     const preGestureState = await page.evaluate(() => {
       const g = window.__banglarTesla;
       const unlockBtn = document.getElementById('menu-sound-unlock');
+      const apkBtn = document.getElementById('install-apk-btn');
+      const apkNote = document.getElementById('install-apk-note');
       return {
         hasUnlockBtn: !!unlockBtn,
         initialUnlocked: g.debugSnapshot().audioUnlocked,
+        apkVisible: !!apkBtn && apkBtn.offsetWidth > 0 && apkBtn.offsetHeight > 0,
+        apkHref: apkBtn?.getAttribute('href') ?? '',
+        apkHasPhoneIcon: !!apkBtn?.querySelector('svg'),
+        apkHasNotice: (apkNote?.textContent ?? '').length > 8,
       };
     });
     check(
       'Audio unlock pill exists on main menu before/until user gesture',
       preGestureState.hasUnlockBtn,
-      JSON.stringify(preGestureState),
+      JSON.stringify({ hasUnlockBtn: preGestureState.hasUnlockBtn, initialUnlocked: preGestureState.initialUnlocked }),
+    );
+    check(
+      'Web main menu displays Install APK button with phone icon, stable latest APK URL, and install approval note',
+      preGestureState.apkVisible &&
+        preGestureState.apkHref ===
+          'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/latest/download/Banglar-Tesla.apk' &&
+        preGestureState.apkHasPhoneIcon &&
+        preGestureState.apkHasNotice,
+      JSON.stringify({
+        apkVisible: preGestureState.apkVisible,
+        apkHref: preGestureState.apkHref,
+        apkHasPhoneIcon: preGestureState.apkHasPhoneIcon,
+        apkHasNotice: preGestureState.apkHasNotice,
+      }),
     );
 
     // Real Puppeteer mouse click on skip/unlock button triggers trusted user gesture
@@ -528,6 +548,28 @@ async function main() {
         persistedAudioSettings.reduceNoisyAmbience === true &&
         persistedAudioSettings.breakableResetCleanly,
       JSON.stringify(persistedAudioSettings),
+    );
+
+    // Milestone 5: Verify Install APK button is hidden inside Android WebView shell
+    const androidPage = await browser.newPage();
+    await androidPage.evaluateOnNewDocument(() => {
+      window.__btAndroidTts = {
+        isBengaliAvailable: () => true,
+        speak: () => true,
+        stop: () => undefined,
+      };
+    });
+    await androidPage.goto(BASE, { waitUntil: 'networkidle2', timeout: 60000 });
+    await androidPage.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
+    const androidShellCheck = await androidPage.evaluate(() => ({
+      isAndroidApp: window.__banglarTesla.isAndroidApp(),
+      hasInstallApkBtn: !!document.getElementById('install-apk-btn'),
+    }));
+    await androidPage.close();
+    check(
+      'Install APK button is hidden when running inside the Android APK WebView',
+      androidShellCheck.isAndroidApp && !androidShellCheck.hasInstallApkBtn,
+      JSON.stringify(androidShellCheck),
     );
 
     check('Zero page errors across full Master Upgrade v2 E2E run', pageErrors.length === 0, pageErrors.join('; '));

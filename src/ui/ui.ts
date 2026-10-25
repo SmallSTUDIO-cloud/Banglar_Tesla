@@ -86,7 +86,7 @@ export interface UIBridge {
 }
 
 /** Enabled in Milestone 5 once the stable release APK asset URL is published and verified. */
-export const ENABLE_WEB_INSTALL_APK_BUTTON = false;
+export const ENABLE_WEB_INSTALL_APK_BUTTON = true;
 export const STABLE_APK_DOWNLOAD_URL =
   'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/latest/download/Banglar-Tesla.apk';
 
