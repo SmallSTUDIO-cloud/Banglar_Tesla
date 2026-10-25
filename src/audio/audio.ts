@@ -1,628 +1,1133 @@
 /**
- * Original, fully synthesised audio: no recordings, no copyright risk.
+ * Banglar Tesla Audio Engine (v0.4 — Bundled Dhaka Soundscape + WebAudio Synthesis).
  *
- * Buses: music / ambience / traffic / vehicle / dialogue / ui, all routed to a
- * master with a limiter. Music is a small scheduled sequencer with three
- * original loops; SFX are built from oscillators and noise buffers.
+ * Architecture:
+ *  - Loads real bundled offline RIFF PCM .wav assets from `public/audio/` using
+ *    Vite `import.meta.env.BASE_URL` so paths work identically in Android APK
+ *    (`assets/public/audio/...`), local dev/preview (`./audio/...`), and GitHub
+ *    Pages (`/Banglar_Tesla/audio/...`).
+ *  - Separates Master, Music, SFX, Ambience, Traffic, Vehicle, Dialogue, and UI
+ *    gain buses with persisted Music/SFX/Mute/Calm-Ambience controls.
+ *  - Handles browser/WebView autoplay unlock cleanly with an observable unlock
+ *    state (`unlocked`, `onUnlockChange`) and full `visibilitychange` suspend/resume
+ *    recovery (never stacking notes or leaking AudioBufferSourceNodes).
+ *  - Enforces a strict active one-shot cap (`MAX_ONE_SHOTS = 8`) for Samsung
+ *    Galaxy M21 CPU/mixer stability.
  */
 
-export type BusName = 'music' | 'ambience' | 'traffic' | 'vehicle' | 'dialogue' | 'ui';
+import { clamp, clamp01 } from '../core/mathx';
+import { PLACES } from '../world/layout';
 
-export interface AudioVolumes {
+export interface VolumeState {
+  master: number;
   music: number;
+  sfx: number;
   ambience: number;
   traffic: number;
   vehicle: number;
   dialogue: number;
   ui: number;
   muted: boolean;
+  musicEnabled: boolean;
+  sfxEnabled: boolean;
+  reduceNoisyAmbience: boolean;
 }
 
-const TRACKS = ['cassette', 'radio', 'brishti'] as const;
-export type TrackId = (typeof TRACKS)[number];
+export type MusicSceneMode = 'menu' | 'driving' | 'paused';
+export type TapeId = 'cassette' | 'radio' | 'brishti';
 
-/* ------------------------------------------------------------------ helpers */
-
-function midiToFreq(note: number): number {
-  return 440 * Math.pow(2, (note - 69) / 12);
+export interface SpatialVendorSpot {
+  x: number;
+  z: number;
+  kind: 'fuchka' | 'jhalmuri' | 'tea' | 'market';
+  broken?: boolean;
 }
 
-/* ------------------------------------------------------------------- engine */
+type AssetKey =
+  | 'musicMenu'
+  | 'musicDrive'
+  | 'musicBrishti'
+  | 'ambStreet'
+  | 'ambBazaar'
+  | 'ambTea'
+  | 'ambHawker1'
+  | 'ambHawker2'
+  | 'ambConstruction'
+  | 'sfxChain'
+  | 'sfxTan'
+  | 'sfxLampCrash'
+  | 'sfxStallCrash'
+  | 'dlgDriver'
+  | 'dlgPlayer';
+
+const ASSET_PATHS: Record<AssetKey, string> = {
+  musicMenu: 'audio/music/menu-dhaka-sondhya.wav',
+  musicDrive: 'audio/music/drive-asad-groove.wav',
+  musicBrishti: 'audio/music/drive-brishti-dusk.wav',
+  ambStreet: 'audio/ambience/dhaka-street-bed.wav',
+  ambBazaar: 'audio/ambience/bazaar-crowd-loop.wav',
+  ambTea: 'audio/ambience/tea-stall-clink.wav',
+  ambHawker1: 'audio/ambience/hawker-call-1.wav',
+  ambHawker2: 'audio/ambience/hawker-call-2.wav',
+  ambConstruction: 'audio/ambience/construction-tap.wav',
+  sfxChain: 'audio/sfx/rickshaw-chain-loop.wav',
+  sfxTan: 'audio/sfx/tan-boost.wav',
+  sfxLampCrash: 'audio/sfx/lamp-crash.wav',
+  sfxStallCrash: 'audio/sfx/stall-crash.wav',
+  dlgDriver: 'audio/dialogue/roadrage-driver-cue.wav',
+  dlgPlayer: 'audio/dialogue/roadrage-player-cue.wav',
+};
+
+const CONSTRUCTION_SPOTS = [
+  { x: -36, z: 44 },  // Salimullah Rd mid-rise site
+  { x: 74, z: -52 },  // Shahjahan Rd site
+] as const;
+
+const MAX_ONE_SHOTS = 8;
+
+function resolveAudioAssetUrl(relPath: string): string {
+  const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? './';
+  const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+  const cleanRel = relPath.startsWith('/') ? relPath.slice(1) : relPath;
+  return `${normalizedBase}${cleanRel}`;
+}
+
+interface LoopChannel {
+  key: AssetKey;
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+}
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
-  private master!: GainNode;
-  private buses: Partial<Record<BusName, GainNode>> = {};
+  private masterGain!: GainNode;
+  private musicBus!: GainNode;
+  private musicDuckGain!: GainNode;
+  private ambienceBus!: GainNode;
+  private trafficBus!: GainNode;
+  private vehicleBus!: GainNode;
+  private dialogueBus!: GainNode;
+  private uiBus!: GainNode;
   private noiseBuffer: AudioBuffer | null = null;
-  private started = false;
-  private volumes: AudioVolumes = {
+
+  private buffers = new Map<AssetKey, AudioBuffer>();
+  private loadingPromise: Promise<void> | null = null;
+  private assetsLoaded = false;
+
+  // Music crossfade state
+  private sceneMode: MusicSceneMode = 'menu';
+  private currentTrack: TapeId = 'cassette';
+  private activeMusic: LoopChannel | null = null;
+  private fadingMusic: LoopChannel | null = null;
+  private dialogueDucked = false;
+
+  // Continuous ambience & vehicle loops
+  private streetLoop: LoopChannel | null = null;
+  private bazaarLoop: LoopChannel | null = null;
+  private chainLoop: LoopChannel | null = null;
+  private rainFilter: BiquadFilterNode | null = null;
+  private rainGain: GainNode | null = null;
+  private rainSource: AudioBufferSourceNode | null = null;
+  private eMotorOsc: OscillatorNode | null = null;
+  private eMotorGain: GainNode | null = null;
+
+  // State parameters
+  private speed = 0;
+  private throttle = 0;
+  private rainAmount = 0;
+  private wetness = 0;
+  private crowdAmount = 0.25;
+  private bazaarProximity = 0;
+  private electricMode = false;
+  private tanBoostActive = false;
+
+  // Spatial Dhaka street spots & non-spam cooldowns
+  private vendorSpots: SpatialVendorSpot[] = [];
+  private teaTimer = 2.4;
+  private hawkerTimer = 4.2;
+  private constructionTimer = 6.0;
+  private crowTimer = 7.5;
+  private pedShoutCooldown = 0;
+  private hornBurstCooldown = 0;
+
+  // Active node tracking for Galaxy M21 budget
+  private activeOneShots = 0;
+  private activeDialogueSource: AudioBufferSourceNode | null = null;
+  private unlockListeners = new Set<(unlocked: boolean) => void>();
+  private globalListenersBound = false;
+  private suspendedByVisibility = false;
+
+  private volumes: VolumeState = {
+    master: 0.85,
     music: 0.62,
+    sfx: 0.8,
     ambience: 0.7,
     traffic: 0.6,
     vehicle: 0.75,
     dialogue: 0.85,
     ui: 0.7,
     muted: false,
+    musicEnabled: true,
+    sfxEnabled: true,
+    reduceNoisyAmbience: false,
   };
 
-  // music state
-  private track: TrackId = 'cassette';
-  private musicGain!: GainNode;
-  private nextNoteTime = 0;
-  private step = 0;
-  private tempo = 84;
-  private musicEnabled = true;
-  private trackVolume = 0.34;
+  constructor() {
+    this.bindGlobalLifecycle();
+  }
 
-  // continuous loops
-  private crowdGain: GainNode | null = null;
-  private rainGain: GainNode | null = null;
-  private engineGain: GainNode | null = null;
-  private engineOsc: OscillatorNode | null = null;
-  private engineFilter: BiquadFilterNode | null = null;
-  private hornTimer = 0;
-  private crowTimer = 6;
-  private vendorTimer = 4.5;
-  private vehicleSpeed = 0;
-  private electricDrive = false;
+  get currentSceneMode(): MusicSceneMode {
+    return this.sceneMode;
+  }
 
   get ready(): boolean {
-    return this.started;
+    return this.ctx !== null && this.ctx.state === 'running';
   }
 
-  /** Must be called from a user gesture (tap / key press). */
-  async init(): Promise<void> {
-    if (this.started) {
-      if (this.ctx?.state === 'suspended') await this.ctx.resume();
-      return;
-    }
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctor) return;
-    const ctx = new Ctor();
-    this.ctx = ctx;
-    this.master = ctx.createGain();
-    this.master.gain.value = 0.9;
-    const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -8;
-    limiter.ratio.value = 8;
-    limiter.attack.value = 0.004;
-    limiter.release.value = 0.18;
-    this.master.connect(limiter);
-    limiter.connect(ctx.destination);
-
-    for (const name of ['music', 'ambience', 'traffic', 'vehicle', 'dialogue', 'ui'] as BusName[]) {
-      const gain = ctx.createGain();
-      gain.gain.value = 1;
-      gain.connect(this.master);
-      this.buses[name] = gain;
-    }
-    this.musicGain = this.ctx!.createGain();
-    this.musicGain.gain.value = this.trackVolume;
-    this.musicGain.connect(this.buses.music!);
-
-    this.noiseBuffer = this.makeNoise(2.0);
-    this.startAmbience();
-    this.started = true;
-    this.applyVolumes();
-    await ctx.resume();
-    this.nextNoteTime = ctx.currentTime + 0.1;
+  get unlocked(): boolean {
+    return this.ctx !== null && this.ctx.state === 'running';
   }
 
-  private makeNoise(seconds: number): AudioBuffer {
-    const ctx = this.ctx!;
-    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate);
+  get hasLoadedAssets(): boolean {
+    return this.assetsLoaded;
+  }
+
+  get loadedAssetCount(): number {
+    return this.buffers.size;
+  }
+
+  /** Total active WebAudio source nodes (loops + active one-shots) for profiling. */
+  get activeSourceCount(): number {
+    let loops = 0;
+    if (this.activeMusic) loops++;
+    if (this.fadingMusic) loops++;
+    if (this.streetLoop) loops++;
+    if (this.bazaarLoop) loops++;
+    if (this.chainLoop) loops++;
+    if (this.rainSource) loops++;
+    if (this.eMotorOsc) loops++;
+    if (this.activeDialogueSource) loops++;
+    return loops + this.activeOneShots;
+  }
+
+  onUnlockChange(fn: (unlocked: boolean) => void): () => void {
+    this.unlockListeners.add(fn);
+    return () => this.unlockListeners.delete(fn);
+  }
+
+  private notifyUnlockState(): void {
+    const isRun = this.unlocked;
+    for (const fn of this.unlockListeners) fn(isRun);
+  }
+
+  private bindGlobalLifecycle(): void {
+    if (this.globalListenersBound || typeof window === 'undefined' || typeof document === 'undefined') return;
+    this.globalListenersBound = true;
+
+    const unlockHandler = (): void => {
+      void this.init();
+    };
+    window.addEventListener('pointerdown', unlockHandler, { capture: true, passive: true });
+    window.addEventListener('touchstart', unlockHandler, { capture: true, passive: true });
+    window.addEventListener('keydown', unlockHandler, { capture: true, passive: true });
+
+    document.addEventListener('visibilitychange', () => {
+      if (!this.ctx) return;
+      if (document.hidden) {
+        if (this.ctx.state === 'running') {
+          this.suspendedByVisibility = true;
+          this.stopDialogueClip();
+          void this.ctx.suspend().catch(() => {});
+        }
+      } else if (this.suspendedByVisibility) {
+        this.suspendedByVisibility = false;
+        if (!this.volumes.muted) {
+          void this.ctx.resume().then(() => {
+            this.syncBuses();
+            this.syncMusicTrack();
+            this.notifyUnlockState();
+          }).catch(() => {});
+        }
+      }
+    });
+  }
+
+  setVendorSpots(spots: SpatialVendorSpot[]): void {
+    this.vendorSpots = spots;
+  }
+
+  /** Idempotent: creates/resumes AudioContext on user gesture and loads bundled WAVs. */
+  async init(): Promise<boolean> {
+    if (typeof window === 'undefined') return false;
+    if (!this.ctx) {
+      const Ctor =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return false;
+      try {
+        const ctx = new Ctor();
+        this.ctx = ctx;
+        ctx.addEventListener('statechange', () => {
+          this.notifyUnlockState();
+        });
+        this.setupGraph(ctx);
+      } catch (err) {
+        console.warn('[audio] failed to construct AudioContext', err);
+        this.ctx = null;
+        return false;
+      }
+    }
+
+    if (this.ctx.state === 'suspended' && (typeof document === 'undefined' || !document.hidden)) {
+      try {
+        await this.ctx.resume();
+      } catch {
+        /* still waiting for trusted user gesture */
+      }
+    }
+
+    void this.ensureAssetsLoaded();
+    this.syncBuses();
+    this.syncMusicTrack();
+    this.notifyUnlockState();
+    return this.ctx.state === 'running';
+  }
+
+  private setupGraph(ctx: AudioContext): void {
+    this.masterGain = ctx.createGain();
+    this.masterGain.connect(ctx.destination);
+
+    this.musicDuckGain = ctx.createGain();
+    this.musicDuckGain.gain.value = 1;
+    this.musicBus = ctx.createGain();
+    this.musicBus.connect(this.musicDuckGain);
+    this.musicDuckGain.connect(this.masterGain);
+
+    this.ambienceBus = ctx.createGain();
+    this.trafficBus = ctx.createGain();
+    this.vehicleBus = ctx.createGain();
+    this.dialogueBus = ctx.createGain();
+    this.uiBus = ctx.createGain();
+
+    this.ambienceBus.connect(this.masterGain);
+    this.trafficBus.connect(this.masterGain);
+    this.vehicleBus.connect(this.masterGain);
+    this.dialogueBus.connect(this.masterGain);
+    this.uiBus.connect(this.masterGain);
+
+    this.noiseBuffer = this.makeNoise(ctx, 2.0);
+    this.startProceduralContinuousBeds(ctx);
+  }
+
+  private makeNoise(ctx: AudioContext, seconds: number): AudioBuffer {
+    const len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
     const data = buf.getChannelData(0);
-    let last = 0;
-    for (let i = 0; i < data.length; i++) {
+    let b0 = 0;
+    let b1 = 0;
+    let b2 = 0;
+    for (let i = 0; i < len; i++) {
       const white = Math.random() * 2 - 1;
-      last = (last + 0.02 * white) / 1.02;
-      data[i] = last * 3.2;
+      b0 = 0.99765 * b0 + white * 0.099046;
+      b1 = 0.963 * b1 + white * 0.2965164;
+      b2 = 0.57 * b2 + white * 1.0526913;
+      data[i] = clamp((b0 + b1 + b2 + white * 0.1848) * 0.16, -1, 1);
     }
     return buf;
   }
 
-  applyVolumes(): void {
-    if (!this.ctx) return;
-    const v = this.volumes;
-    const set = (bus: BusName, value: number): void => {
-      const node = this.buses[bus];
-      if (node) node.gain.value = v.muted ? 0 : Math.max(0, Math.min(1, value));
-    };
-    set('music', v.music);
-    set('ambience', v.ambience);
-    set('traffic', v.traffic);
-    set('vehicle', v.vehicle);
-    set('dialogue', v.dialogue);
-    set('ui', v.ui);
-  }
-
-  setVolumes(patch: Partial<AudioVolumes>): void {
-    this.volumes = { ...this.volumes, ...patch };
-    this.applyVolumes();
-  }
-
-  suspend(): void {
-    void this.ctx?.suspend();
-  }
-
-  resume(): void {
-    void this.ctx?.resume();
-  }
-
-  /* --------------------------------------------------------------- ambience */
-
-  private startAmbience(): void {
-    const ctx = this.ctx!;
+  private startProceduralContinuousBeds(ctx: AudioContext): void {
     if (!this.noiseBuffer) return;
-    // low city rumble
-    const rumble = ctx.createBufferSource();
-    rumble.buffer = this.noiseBuffer;
-    rumble.loop = true;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 220;
-    const g = ctx.createGain();
-    g.gain.value = 0.35;
-    rumble.connect(lp).connect(g).connect(this.buses.ambience!);
-    rumble.start();
 
-    // crowd murmur
-    const crowd = ctx.createBufferSource();
-    crowd.buffer = this.noiseBuffer;
-    crowd.loop = true;
-    crowd.playbackRate.value = 0.7;
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = 620;
-    bp.Q.value = 0.9;
-    this.crowdGain = ctx.createGain();
-    this.crowdGain.gain.value = 0.14;
-    crowd.connect(bp).connect(this.crowdGain).connect(this.buses.ambience!);
-    crowd.start();
+    // Monsoon rain + wet tyre spray bed (0% gain when dry)
+    const rainSrc = ctx.createBufferSource();
+    rainSrc.buffer = this.noiseBuffer;
+    rainSrc.loop = true;
+    const rainFilter = ctx.createBiquadFilter();
+    rainFilter.type = 'bandpass';
+    rainFilter.frequency.value = 1350;
+    rainFilter.Q.value = 0.65;
+    const rainGain = ctx.createGain();
+    rainGain.gain.value = 0;
+    rainSrc.connect(rainFilter).connect(rainGain).connect(this.ambienceBus);
+    rainSrc.start();
+    this.rainSource = rainSrc;
+    this.rainFilter = rainFilter;
+    this.rainGain = rainGain;
 
-    // rain bed (silent until weather turns)
-    const rain = ctx.createBufferSource();
-    rain.buffer = this.noiseBuffer;
-    rain.loop = true;
-    rain.playbackRate.value = 1.6;
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 900;
-    this.rainGain = ctx.createGain();
-    this.rainGain.gain.value = 0;
-    rain.connect(hp).connect(this.rainGain).connect(this.buses.ambience!);
-    rain.start();
-
-    // rickshaw drivetrain hum
-    this.engineOsc = ctx.createOscillator();
-    this.engineOsc.type = 'sawtooth';
-    this.engineOsc.frequency.value = 44;
-    this.engineFilter = ctx.createBiquadFilter();
-    this.engineFilter.type = 'lowpass';
-    this.engineFilter.frequency.value = 220;
-    this.engineGain = ctx.createGain();
-    this.engineGain.gain.value = 0;
-    this.engineOsc.connect(this.engineFilter).connect(this.engineGain).connect(this.buses.vehicle!);
-    this.engineOsc.start();
+    // Subtle electric rickshaw BLDC traction inverter hum (0% gain on pedal rickshaws)
+    const eOsc = ctx.createOscillator();
+    eOsc.type = 'triangle';
+    eOsc.frequency.value = 115;
+    const eFilter = ctx.createBiquadFilter();
+    eFilter.type = 'lowpass';
+    eFilter.frequency.value = 520;
+    const eGain = ctx.createGain();
+    eGain.gain.value = 0;
+    eOsc.connect(eFilter).connect(eGain).connect(this.vehicleBus);
+    eOsc.start();
+    this.eMotorOsc = eOsc;
+    this.eMotorGain = eGain;
   }
 
-  setRain(intensity: number): void {
-    if (!this.ctx || !this.rainGain) return;
-    this.rainGain.gain.setTargetAtTime(Math.max(0, Math.min(0.5, intensity * 0.5)), this.ctx.currentTime, 1.2);
-  }
+  private async ensureAssetsLoaded(): Promise<void> {
+    if (this.assetsLoaded || !this.ctx || typeof fetch !== 'function') return;
+    if (this.loadingPromise) return this.loadingPromise;
 
-  setCrowd(intensity: number): void {
-    if (!this.ctx || !this.crowdGain) return;
-    this.crowdGain.gain.setTargetAtTime(0.06 + intensity * 0.22, this.ctx.currentTime, 0.8);
-  }
-
-  /* ------------------------------------------------------------------- SFX */
-
-  private tone(
-    freq: number,
-    duration: number,
-    opts: {
-      type?: OscillatorType;
-      gain?: number;
-      bus?: BusName;
-      slideTo?: number;
-      delay?: number;
-      filter?: number;
-      detune?: number;
-    } = {},
-  ): void {
-    if (!this.ctx) return;
     const ctx = this.ctx;
-    const t0 = ctx.currentTime + (opts.delay ?? 0);
-    const osc = ctx.createOscillator();
-    osc.type = opts.type ?? 'sine';
-    osc.frequency.setValueAtTime(freq, t0);
-    if (opts.slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(20, opts.slideTo), t0 + duration);
-    if (opts.detune) osc.detune.value = opts.detune;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, opts.gain ?? 0.15), t0 + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
-    let node: AudioNode = osc;
-    if (opts.filter) {
-      const f = ctx.createBiquadFilter();
-      f.type = 'lowpass';
-      f.frequency.value = opts.filter;
-      osc.connect(f);
-      node = f;
-    }
-    node.connect(g);
-    g.connect(this.buses[opts.bus ?? 'ui'] ?? this.master);
-    osc.start(t0);
-    osc.stop(t0 + duration + 0.02);
+    this.loadingPromise = (async () => {
+      const entries = Object.entries(ASSET_PATHS) as [AssetKey, string][];
+      await Promise.all(
+        entries.map(async ([key, rel]) => {
+          if (this.buffers.has(key)) return;
+          try {
+            const res = await fetch(resolveAudioAssetUrl(rel));
+            if (!res.ok) return;
+            const arr = await res.arrayBuffer();
+            const decoded = await ctx.decodeAudioData(arr.slice(0));
+            this.buffers.set(key, decoded);
+          } catch {
+            /* graceful offline/unit-test fallback */
+          }
+        }),
+      );
+      this.assetsLoaded = this.buffers.size > 0;
+      this.startBundledLoops();
+      this.syncMusicTrack();
+    })();
+    return this.loadingPromise;
   }
 
-  private noiseBurst(duration: number, freq: number, gain: number, bus: BusName, type: BiquadFilterType = 'bandpass'): void {
-    if (!this.ctx || !this.noiseBuffer) return;
+  private startBundledLoops(): void {
     const ctx = this.ctx;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noiseBuffer;
-    src.playbackRate.value = 1;
-    const f = ctx.createBiquadFilter();
-    f.type = type;
-    f.frequency.value = freq;
-    f.Q.value = 1.1;
-    const g = ctx.createGain();
-    const t0 = ctx.currentTime;
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
-    src.connect(f).connect(g).connect(this.buses[bus] ?? this.master);
-    src.start(t0);
-    src.stop(t0 + duration + 0.02);
-  }
+    if (!ctx) return;
 
-  /** The classic rickshaw bell: bright metallic টুং-টাং pings (plus brass & melody variants). */
-  bell(variant = 'classic'): void {
-    if (!this.ctx) return;
-    if (variant === 'melody' || variant === 'bell-melody') {
-      this.metalPing(1568, 0.0, 0.18);
-      this.metalPing(1975, 0.09, 0.18);
-      this.metalPing(2349, 0.18, 0.22);
-      return;
+    if (!this.streetLoop && this.buffers.has('ambStreet')) {
+      this.streetLoop = this.createLoop('ambStreet', this.ambienceBus, 0.24);
     }
-    if (variant === 'double' || variant === 'bell-double') {
-      this.metalPing(1760, 0.0, 0.22);
-      this.metalPing(1760, 0.11, 0.2);
-      this.metalPing(2340, 0.22, 0.16);
-      return;
+    if (!this.bazaarLoop && this.buffers.has('ambBazaar')) {
+      this.bazaarLoop = this.createLoop('ambBazaar', this.ambienceBus, 0.0);
     }
-    const base = variant === 'brass' || variant === 'bell-brass' ? 1480 : 1760;
-    this.metalPing(base, 0, 0.24);
-    this.metalPing(base * 1.03, 0.13, 0.2);
-  }
-
-  /** Expressive vocal-formant alert cue when a pedestrian scolds a close rickshaw! */
-  pedestrianShout(): void {
-    this.tone(310, 0.13, { type: 'sawtooth', gain: 0.055, bus: 'dialogue', slideTo: 420, filter: 1450 });
-    this.tone(380, 0.16, { type: 'triangle', gain: 0.05, bus: 'dialogue', slideTo: 270, delay: 0.12, filter: 1300 });
-  }
-
-  /** Subtle Bangladeshi street-vendor spoon/muri-tin/tea-glass clink around Fuchka & Jhalmuri stalls! */
-  vendorSound(kind: 'fuchka' | 'jhalmuri' | 'tea' | 'market' = 'jhalmuri'): void {
-    if (kind === 'jhalmuri') {
-      // Rhythmic steel spoon tapping muri tin (`ঠং ঠং`)
-      this.metalPing(2650, 0, 0.06);
-      this.metalPing(2820, 0.09, 0.05);
-      this.noiseBurst(0.14, 3400, 0.025, 'ambience', 'bandpass');
-    } else if (kind === 'fuchka') {
-      this.metalPing(2120, 0, 0.07);
-      this.metalPing(2480, 0.11, 0.07);
-    } else {
-      this.teaClink();
+    if (!this.chainLoop && this.buffers.has('sfxChain')) {
+      this.chainLoop = this.createLoop('sfxChain', this.vehicleBus, 0.0);
     }
   }
 
-  private metalPing(freq: number, delay: number, duration: number): void {
-    if (!this.ctx) return;
+  private createLoop(key: AssetKey, dest: AudioNode, initialGain: number): LoopChannel | null {
     const ctx = this.ctx;
-    const t0 = ctx.currentTime + delay;
-    const carrier = ctx.createOscillator();
-    const modulator = ctx.createOscillator();
-    const modGain = ctx.createGain();
-    carrier.type = 'sine';
-    modulator.type = 'sine';
-    carrier.frequency.value = freq;
-    modulator.frequency.value = freq * 2.7;
-    modGain.gain.value = freq * 0.7;
-    modulator.connect(modGain).connect(carrier.frequency);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(0.22, t0 + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
-    carrier.connect(g).connect(this.buses.vehicle!);
-    carrier.start(t0);
-    modulator.start(t0);
-    carrier.stop(t0 + duration + 0.05);
-    modulator.stop(t0 + duration + 0.05);
+    const buf = this.buffers.get(key);
+    if (!ctx || !buf) return null;
+    const source = ctx.createBufferSource();
+    source.buffer = buf;
+    source.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = initialGain;
+    source.connect(gain).connect(dest);
+    source.start();
+    return { key, source, gain };
   }
 
-  bump(strength: number): void {
-    const s = Math.min(1, Math.max(0.1, strength / 2.5));
-    this.noiseBurst(0.16, 160, 0.25 * s, 'vehicle', 'lowpass');
-    this.tone(70, 0.16, { type: 'sine', gain: 0.28 * s, bus: 'vehicle', slideTo: 40 });
-    this.tone(220, 0.09, { type: 'square', gain: 0.05 * s, bus: 'vehicle', slideTo: 120, filter: 800 });
+  // --------------------------------------------------------- music & crossfade
+  setSceneMode(mode: MusicSceneMode): void {
+    if (this.sceneMode === mode) return;
+    this.sceneMode = mode;
+    this.syncBuses();
+    this.syncMusicTrack();
   }
 
-  creak(): void {
-    this.noiseBurst(0.22, 1800, 0.05, 'vehicle', 'bandpass');
-  }
-
-  brakeSqueal(): void {
-    this.tone(920, 0.22, { type: 'triangle', gain: 0.05, bus: 'vehicle', slideTo: 640, filter: 2400 });
-  }
-
-  coin(): void {
-    this.tone(880, 0.12, { gain: 0.12, bus: 'ui' });
-    this.tone(1320, 0.16, { gain: 0.1, bus: 'ui', delay: 0.07 });
-    this.tone(1760, 0.22, { gain: 0.08, bus: 'ui', delay: 0.14 });
-  }
-
-  uiTap(): void {
-    this.tone(620, 0.05, { type: 'triangle', gain: 0.06, bus: 'ui', slideTo: 720 });
-  }
-
-  uiConfirm(): void {
-    this.tone(520, 0.1, { gain: 0.09, bus: 'ui' });
-    this.tone(780, 0.16, { gain: 0.08, bus: 'ui', delay: 0.08 });
-  }
-
-  uiError(): void {
-    this.tone(220, 0.16, { type: 'square', gain: 0.06, bus: 'ui', slideTo: 160, filter: 900 });
-  }
-
-  /** Mission complete stinger — brief, toggleable bass hit + bell. */
-  successStinger(): void {
-    this.tone(98, 0.5, { type: 'sine', gain: 0.22, bus: 'ui', slideTo: 62 });
-    this.tone(392, 0.28, { type: 'triangle', gain: 0.09, bus: 'ui', delay: 0.06 });
-    this.tone(523, 0.32, { type: 'triangle', gain: 0.08, bus: 'ui', delay: 0.18 });
-    this.metalPing(1760, 0.28, 0.3);
-  }
-
-  failStinger(): void {
-    this.tone(220, 0.4, { type: 'sine', gain: 0.14, bus: 'ui', slideTo: 110 });
-  }
-
-  /** Traffic horn or NPC rickshaw bell, panned by distance so it never dominates. */
-  trafficHorn(x: number, z: number, kind: string): void {
-    if (!this.ctx) return;
-    if (kind === 'rickshaw' || kind === 'easybike') {
-      this.metalPing(kind === 'easybike' ? 1320 : 1680, 0, 0.14);
-      this.metalPing(kind === 'easybike' ? 1350 : 1720, 0.11, 0.12);
-      return;
-    }
-    const ctx = this.ctx;
-    const base = kind === 'bus' || kind === 'truck' ? 190 : kind === 'motorbike' ? 410 : 320;
-    const osc = ctx.createOscillator();
-    osc.type = 'square';
-    osc.frequency.value = base;
-    const osc2 = ctx.createOscillator();
-    osc2.type = 'sawtooth';
-    osc2.frequency.value = base * 1.5;
-    const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.value = 1400;
-    const g = ctx.createGain();
-    const t0 = ctx.currentTime;
-    const dur = 0.22 + Math.random() * 0.18;
-    const vol = 0.05 + Math.min(0.06, Math.hypot(x, z) / 2400);
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    const pan = ctx.createStereoPanner();
-    pan.pan.value = Math.max(-0.7, Math.min(0.7, x / 60));
-    osc.connect(f);
-    osc2.connect(f);
-    f.connect(g).connect(pan).connect(this.buses.traffic!);
-    osc.start(t0);
-    osc2.start(t0);
-    osc.stop(t0 + dur + 0.02);
-    osc2.stop(t0 + dur + 0.02);
-  }
-
-  crow(): void {
-    this.tone(680, 0.1, { type: 'sawtooth', gain: 0.035, bus: 'ambience', slideTo: 420, filter: 1800 });
-    this.tone(520, 0.08, { type: 'sawtooth', gain: 0.03, bus: 'ambience', slideTo: 380, filter: 1600, delay: 0.12 });
-  }
-
-  teaClink(): void {
-    this.metalPing(2400, 0, 0.08);
-  }
-
-  /* ------------------------------------------------------------------ music */
-
-  setTrack(track: TrackId): void {
-    this.track = track;
-    this.step = 0;
-    this.tempo = track === 'radio' ? 104 : track === 'brishti' ? 76 : 84;
-    if (this.ctx) this.nextNoteTime = this.ctx.currentTime + 0.05;
+  setTrack(track: TapeId): void {
+    if (this.currentTrack === track) return;
+    this.currentTrack = track;
+    this.syncMusicTrack();
   }
 
   setMusicEnabled(enabled: boolean): void {
-    this.musicEnabled = enabled;
-    if (this.ctx) this.musicGain.gain.setTargetAtTime(enabled ? this.trackVolume : 0, this.ctx.currentTime, 0.4);
+    this.volumes.musicEnabled = enabled;
+    this.syncBuses();
+    this.syncMusicTrack();
   }
 
-  setElectricMode(electric: boolean): void {
-    this.electricDrive = electric;
-    if (this.engineOsc) {
-      this.engineOsc.type = electric ? 'sine' : 'triangle';
+  setDialogueDuck(active: boolean): void {
+    this.dialogueDucked = active;
+    if (!this.ctx || !this.musicDuckGain) return;
+    const now = this.ctx.currentTime;
+    const target = active ? 0.24 : this.sceneMode === 'paused' ? 0.42 : 1.0;
+    this.musicDuckGain.gain.cancelScheduledValues(now);
+    this.musicDuckGain.gain.setTargetAtTime(target, now, 0.09);
+  }
+
+  private desiredMusicAsset(): AssetKey | null {
+    if (this.volumes.muted || !this.volumes.musicEnabled || this.volumes.music <= 0.005) {
+      return null;
     }
+    if (this.sceneMode === 'menu') return 'musicMenu';
+    return this.currentTrack === 'brishti' ? 'musicBrishti' : 'musicDrive';
+  }
+
+  private syncMusicTrack(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+
+    const desired = this.desiredMusicAsset();
+    const now = ctx.currentTime;
+
+    // Update pause/dialogue ducking envelope
+    const duckTarget = this.dialogueDucked ? 0.24 : this.sceneMode === 'paused' ? 0.42 : 1.0;
+    this.musicDuckGain.gain.setTargetAtTime(duckTarget, now, 0.1);
+
+    if (!desired || !this.buffers.has(desired)) {
+      if (this.activeMusic) {
+        const prev = this.activeMusic;
+        this.activeMusic = null;
+        prev.gain.gain.setTargetAtTime(0, now, 0.12);
+        window.setTimeout(() => {
+          try {
+            prev.source.stop();
+            prev.source.disconnect();
+            prev.gain.disconnect();
+          } catch {
+            /* already stopped */
+          }
+        }, 420);
+      }
+      return;
+    }
+
+    if (this.activeMusic && this.activeMusic.key === desired) {
+      this.activeMusic.gain.gain.setTargetAtTime(0.76, now, 0.16);
+      return;
+    }
+
+    // Crossfade previous music loop out cleanly
+    if (this.fadingMusic) {
+      try {
+        this.fadingMusic.source.stop();
+        this.fadingMusic.source.disconnect();
+        this.fadingMusic.gain.disconnect();
+      } catch {
+        /* ignore */
+      }
+      this.fadingMusic = null;
+    }
+    if (this.activeMusic) {
+      const outgoing = this.activeMusic;
+      this.fadingMusic = outgoing;
+      outgoing.gain.gain.cancelScheduledValues(now);
+      outgoing.gain.gain.setTargetAtTime(0, now, 0.16);
+      window.setTimeout(() => {
+        if (this.fadingMusic === outgoing) this.fadingMusic = null;
+        try {
+          outgoing.source.stop();
+          outgoing.source.disconnect();
+          outgoing.gain.disconnect();
+        } catch {
+          /* ignore */
+        }
+      }, 650);
+    }
+
+    const incoming = this.createLoop(desired, this.musicBus, 0.001);
+    if (incoming) {
+      incoming.gain.gain.setValueAtTime(0.001, now);
+      incoming.gain.gain.linearRampToValueAtTime(0.76, now + 0.45);
+      this.activeMusic = incoming;
+    }
+  }
+
+  // --------------------------------------------------------------- volume buses
+  setVolumes(partial: Partial<VolumeState>): void {
+    Object.assign(this.volumes, partial);
+    this.syncBuses();
+    this.syncMusicTrack();
+  }
+
+  private syncBuses(): void {
+    if (!this.ctx) return;
+    const v = this.volumes;
+    const now = this.ctx.currentTime;
+    const master = v.muted ? 0 : clamp01(v.master);
+    const sfxMaster = v.sfxEnabled ? clamp01(v.sfx) : 0;
+    const calmScale = v.reduceNoisyAmbience ? 0.42 : 1.0;
+    const pausedAmbScale = this.sceneMode === 'paused' ? 0.15 : this.sceneMode === 'menu' ? 0.45 : 1.0;
+
+    this.masterGain.gain.setTargetAtTime(master, now, 0.04);
+    this.musicBus.gain.setTargetAtTime(v.musicEnabled ? clamp01(v.music) : 0, now, 0.06);
+    this.ambienceBus.gain.setTargetAtTime(clamp01(v.ambience) * sfxMaster * calmScale * pausedAmbScale, now, 0.08);
+    this.trafficBus.gain.setTargetAtTime(clamp01(v.traffic) * sfxMaster * calmScale * pausedAmbScale, now, 0.08);
+    this.vehicleBus.gain.setTargetAtTime(
+      clamp01(v.vehicle) * sfxMaster * (this.sceneMode === 'driving' ? 1 : 0),
+      now,
+      0.06,
+    );
+    this.dialogueBus.gain.setTargetAtTime(clamp01(v.dialogue) * (v.sfxEnabled ? 1 : 0), now, 0.05);
+    this.uiBus.gain.setTargetAtTime(clamp01(v.ui) * sfxMaster, now, 0.04);
+  }
+
+  // ----------------------------------------------------- continuous modulation
+  setElectricMode(electric: boolean): void {
+    this.electricMode = electric;
+  }
+
+  setTanBoost(active: boolean): void {
+    this.tanBoostActive = active;
   }
 
   setVehicleSpeed(speed: number, throttle: number): void {
-    this.vehicleSpeed = speed;
-    if (!this.ctx || !this.engineGain || !this.engineOsc || !this.engineFilter) return;
-    const t = this.ctx.currentTime;
-    const absSpd = Math.abs(speed);
-    if (this.electricDrive) {
-      // Smooth brushless DC electric rickshaw inverter whine
-      const target = Math.min(0.085, absSpd * 0.011 + Math.abs(throttle) * 0.018);
-      this.engineGain.gain.setTargetAtTime(target, t, 0.18);
-      this.engineOsc.frequency.setTargetAtTime(115 + absSpd * 24, t, 0.16);
-      this.engineFilter.frequency.setTargetAtTime(420 + absSpd * 85, t, 0.2);
-    } else {
-      const target = Math.min(0.09, absSpd * 0.012 + Math.abs(throttle) * 0.02);
-      this.engineGain.gain.setTargetAtTime(target, t, 0.25);
-      this.engineOsc.frequency.setTargetAtTime(38 + absSpd * 6.2, t, 0.2);
-      this.engineFilter.frequency.setTargetAtTime(180 + absSpd * 42, t, 0.25);
+    this.speed = Math.abs(speed);
+    this.throttle = clamp01(throttle);
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const sNorm = clamp01(this.speed / 12.5);
+
+    if (this.chainLoop) {
+      if (this.electricMode || this.sceneMode !== 'driving') {
+        this.chainLoop.gain.gain.setTargetAtTime(0, now, 0.08);
+      } else {
+        const boostFactor = this.tanBoostActive ? 1.32 : 1.0;
+        const rate = clamp((0.68 + sNorm * 1.15 + this.throttle * 0.16) * boostFactor, 0.55, 2.25);
+        const gain = this.speed < 0.18 ? 0 : clamp(0.08 + sNorm * 0.28 + this.throttle * 0.07, 0, 0.42);
+        this.chainLoop.source.playbackRate.setTargetAtTime(rate, now, 0.07);
+        this.chainLoop.gain.gain.setTargetAtTime(gain, now, 0.07);
+      }
+    }
+
+    if (this.eMotorOsc && this.eMotorGain) {
+      if (!this.electricMode || this.sceneMode !== 'driving' || this.speed < 0.12) {
+        this.eMotorGain.gain.setTargetAtTime(0, now, 0.08);
+      } else {
+        const freq = 95 + this.speed * (this.tanBoostActive ? 29 : 23) + this.throttle * 26;
+        const gain = clamp(0.025 + sNorm * 0.075 + (this.tanBoostActive ? 0.025 : 0), 0, 0.13);
+        this.eMotorOsc.frequency.setTargetAtTime(freq, now, 0.06);
+        this.eMotorGain.gain.setTargetAtTime(gain, now, 0.07);
+      }
     }
   }
 
-  /** Called every frame so music keeps its look-ahead schedule. */
+  setRain(amount: number, wetness = amount): void {
+    this.rainAmount = clamp01(amount);
+    this.wetness = clamp01(wetness);
+    if (!this.ctx || !this.rainGain || !this.rainFilter) return;
+    const now = this.ctx.currentTime;
+    const wetTyreHiss = this.sceneMode === 'driving' ? clamp01(this.speed / 9) * this.wetness * 0.09 : 0;
+    this.rainGain.gain.setTargetAtTime(this.rainAmount * 0.24 + wetTyreHiss, now, 0.25);
+    this.rainFilter.frequency.setTargetAtTime(1250 + this.speed * 55 * this.wetness, now, 0.2);
+  }
+
+  setCrowd(amount: number): void {
+    this.crowdAmount = clamp01(amount);
+  }
+
+  /** Spatial Dhaka ambience tick — updates zone loops & triggers distance-attenuated street life. */
   update(dt: number, playerX = 0, playerZ = 0): void {
-    if (!this.ctx) return;
-    if (this.musicEnabled) this.scheduleMusic();
-    this.hornTimer -= dt;
-    if (this.hornTimer <= 0) {
-      this.hornTimer = 6 + Math.random() * 11;
-      if (Math.random() < 0.65) {
-        const roll = Math.random();
-        const kind = roll < 0.36 ? 'rickshaw' : roll < 0.65 ? 'car' : 'bus';
-        this.trafficHorn(playerX + (Math.random() - 0.5) * 50, playerZ + (Math.random() - 0.5) * 50, kind);
+    this.pedShoutCooldown = Math.max(0, this.pedShoutCooldown - dt);
+    this.hornBurstCooldown = Math.max(0, this.hornBurstCooldown - dt);
+    if (!this.ctx || this.ctx.state !== 'running' || this.volumes.muted) return;
+
+    const now = this.ctx.currentTime;
+
+    // 1. Compute proximity to lively Dhaka hubs (Town Hall Bazaar, Bus Stand, Shia Mosque)
+    let bestHubDist = 999;
+    for (let i = 0; i < PLACES.length; i++) {
+      const p = PLACES[i];
+      if (p.id === 'bazaar' || p.id === 'stand' || p.id === 'shia') {
+        const d = Math.hypot(p.x - playerX, p.z - playerZ);
+        if (d < bestHubDist) bestHubDist = d;
       }
     }
-    this.vendorTimer -= dt;
-    if (this.vendorTimer <= 0) {
-      this.vendorTimer = 7 + Math.random() * 11;
-      const kinds: ('fuchka' | 'jhalmuri' | 'tea')[] = ['jhalmuri', 'fuchka', 'tea'];
-      this.vendorSound(kinds[Math.floor(Math.random() * kinds.length)]);
+    const hubFactor = clamp01(1 - (bestHubDist - 12) / 68);
+    this.bazaarProximity = clamp01(Math.max(hubFactor, this.crowdAmount * 0.72));
+
+    if (this.streetLoop) {
+      const targetStreet = this.sceneMode === 'menu' ? 0.16 : 0.22 + this.crowdAmount * 0.1;
+      this.streetLoop.gain.gain.setTargetAtTime(targetStreet, now, 0.25);
     }
+    if (this.bazaarLoop) {
+      const targetBazaar = this.sceneMode === 'driving' ? this.bazaarProximity * 0.34 : 0.06;
+      this.bazaarLoop.gain.gain.setTargetAtTime(targetBazaar, now, 0.3);
+    }
+
+    if (this.sceneMode !== 'driving' || this.volumes.reduceNoisyAmbience) return;
+
+    // 2. Nearby roadside tea stall clinks & kettle hiss
+    this.teaTimer -= dt;
+    if (this.teaTimer <= 0) {
+      this.teaTimer = 4.2 + Math.random() * 5.2;
+      const spot = this.nearestVendor(playerX, playerZ, 'tea', 24);
+      if (spot) {
+        this.playSpatialBuffer('ambTea', this.ambienceBus, spot.dx, spot.dist, 24, 0.36, 0.96 + Math.random() * 0.08);
+      }
+    }
+
+    // 3. Nearby street hawkers (fuchka bell / jhalmuri tin shake)
+    this.hawkerTimer -= dt;
+    if (this.hawkerTimer <= 0) {
+      this.hawkerTimer = 5.5 + Math.random() * 6.5;
+      const fuchka = this.nearestVendor(playerX, playerZ, 'fuchka', 28);
+      const jhal = this.nearestVendor(playerX, playerZ, 'jhalmuri', 28);
+      if (fuchka && (!jhal || fuchka.dist <= jhal.dist)) {
+        this.playSpatialBuffer('ambHawker1', this.ambienceBus, fuchka.dx, fuchka.dist, 28, 0.34, 0.97 + Math.random() * 0.06);
+      } else if (jhal) {
+        this.playSpatialBuffer('ambHawker2', this.ambienceBus, jhal.dx, jhal.dist, 28, 0.32, 0.96 + Math.random() * 0.08);
+      }
+    }
+
+    // 4. Localized Mohammadpur construction tap
+    this.constructionTimer -= dt;
+    if (this.constructionTimer <= 0) {
+      this.constructionTimer = 6.5 + Math.random() * 7.5;
+      for (let i = 0; i < CONSTRUCTION_SPOTS.length; i++) {
+        const c = CONSTRUCTION_SPOTS[i];
+        const dx = c.x - playerX;
+        const dz = c.z - playerZ;
+        const dist = Math.hypot(dx, dz);
+        if (dist < 44) {
+          this.playSpatialBuffer('ambConstruction', this.ambienceBus, dx, dist, 44, 0.28, 0.95 + Math.random() * 0.1);
+          break;
+        }
+      }
+    }
+
+    // 5. Occasional Dhaka crow overhead when dry
     this.crowTimer -= dt;
-    if (this.crowTimer <= 0) {
-      this.crowTimer = 9 + Math.random() * 16;
+    if (this.crowTimer <= 0 && this.rainAmount < 0.5) {
+      this.crowTimer = 9 + Math.random() * 12;
       this.crow();
     }
   }
 
-  private scheduleMusic(): void {
-    const ctx = this.ctx!;
-    const spb = 60 / this.tempo / 2; // eighth notes
-    while (this.nextNoteTime < ctx.currentTime + 0.25) {
-      this.playStep(this.step, this.nextNoteTime);
-      this.step = (this.step + 1) % 64;
-      this.nextNoteTime += spb;
+  private nearestVendor(
+    px: number,
+    pz: number,
+    kind: SpatialVendorSpot['kind'],
+    maxDist: number,
+  ): { dx: number; dist: number } | null {
+    let bestDist = maxDist;
+    let bestDx = 0;
+    let found = false;
+    for (let i = 0; i < this.vendorSpots.length; i++) {
+      const s = this.vendorSpots[i];
+      if (s.broken || s.kind !== kind) continue;
+      const dx = s.x - px;
+      const dz = s.z - pz;
+      const d = Math.hypot(dx, dz);
+      if (d < bestDist) {
+        bestDist = d;
+        bestDx = dx;
+        found = true;
+      }
+    }
+    return found ? { dx: bestDx, dist: bestDist } : null;
+  }
+
+  private playOneShotBuffer(
+    key: AssetKey,
+    dest: AudioNode,
+    gainValue: number,
+    rate = 1,
+    pan = 0,
+  ): boolean {
+    if (!this.ctx || this.ctx.state !== 'running' || this.volumes.muted || !this.volumes.sfxEnabled) return false;
+    if (this.activeOneShots >= MAX_ONE_SHOTS) return false;
+    const buf = this.buffers.get(key);
+    if (!buf) return false;
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = this.ctx.createGain();
+    g.gain.value = clamp(gainValue, 0, 1.2);
+
+    if (pan !== 0 && typeof this.ctx.createStereoPanner === 'function') {
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.value = clamp(pan, -0.85, 0.85);
+      src.connect(g).connect(panner).connect(dest);
+    } else {
+      src.connect(g).connect(dest);
+    }
+
+    this.activeOneShots++;
+    src.onended = () => {
+      this.activeOneShots = Math.max(0, this.activeOneShots - 1);
+      try {
+        src.disconnect();
+        g.disconnect();
+      } catch {
+        /* ignore */
+      }
+    };
+    src.start();
+    return true;
+  }
+
+  private playSpatialBuffer(
+    key: AssetKey,
+    dest: AudioNode,
+    dx: number,
+    dist: number,
+    maxDist: number,
+    baseGain: number,
+    rate = 1,
+  ): void {
+    const atten = clamp01(1 - dist / maxDist);
+    if (atten <= 0.04) return;
+    this.playOneShotBuffer(key, dest, baseGain * atten * atten, rate, clamp(dx / 18, -0.75, 0.75));
+  }
+
+  // ------------------------------------------------------------- one-shot SFX
+  bell(variant: string = 'classic'): void {
+    if (!this.ctx || this.volumes.muted || !this.volumes.sfxEnabled) return;
+    if (this.activeOneShots >= MAX_ONE_SHOTS) return;
+    const now = this.ctx.currentTime;
+    const base = variant === 'brass' ? 1480 : 1760;
+    const ringOnce = (t0: number, amp: number): void => {
+      const partials = [1, 2.72, 4.18];
+      for (let i = 0; i < partials.length; i++) {
+        const osc = this.ctx!.createOscillator();
+        const g = this.ctx!.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = base * partials[i];
+        const peak = (amp / (i * 1.4 + 1)) * 0.24;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(peak, t0 + 0.004);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.52 / (i * 0.55 + 1));
+        osc.connect(g).connect(this.vehicleBus);
+        osc.start(t0);
+        osc.stop(t0 + 0.56);
+      }
+    };
+    this.trackSynthOneShot(0.6);
+    ringOnce(now, 1);
+    if (variant === 'double') ringOnce(now + 0.11, 0.85);
+    else ringOnce(now + 0.085, 0.55);
+  }
+
+  playTanBoost(): void {
+    if (this.activeOneShots >= MAX_ONE_SHOTS) return;
+    if (this.playOneShotBuffer('sfxTan', this.vehicleBus, 0.62, 1.0)) return;
+    if (!this.ctx || this.volumes.muted || !this.volumes.sfxEnabled) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(210, now);
+    osc.frequency.exponentialRampToValueAtTime(520, now + 0.28);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.18, now + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+    osc.connect(g).connect(this.vehicleBus);
+    osc.start(now);
+    osc.stop(now + 0.36);
+    this.trackSynthOneShot(0.36);
+  }
+
+  playTeaSip(): void {
+    if (this.playOneShotBuffer('ambTea', this.uiBus, 0.72, 1.02)) return;
+    this.uiConfirm();
+  }
+
+  teaClink(): void {
+    this.playTeaSip();
+  }
+
+  successStinger(): void {
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    for (let i = 0; i < notes.length; i++) {
+      this.uiTone(notes[i], 0.22, 0.12, i * 0.075);
     }
   }
 
-  /** Three original 8-bar loops. */
-  private playStep(step: number, time: number): void {
-    const ctx = this.ctx!;
-    const bar = Math.floor(step / 8) % 8;
-    const beat = step % 8;
-    const schedule = (
-      freq: number,
-      duration: number,
-      type: OscillatorType,
-      gain: number,
-      filter?: number,
-    ): void => {
-      const osc = ctx.createOscillator();
-      osc.type = type;
-      osc.frequency.value = freq;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, time);
-      g.gain.exponentialRampToValueAtTime(gain, time + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
-      let node: AudioNode = osc;
-      if (filter) {
-        const f = ctx.createBiquadFilter();
-        f.type = 'lowpass';
-        f.frequency.value = filter;
-        osc.connect(f);
-        node = f;
-      }
-      node.connect(g).connect(this.musicGain);
-      osc.start(time);
-      osc.stop(time + duration + 0.03);
-    };
-    const drum = (freq: number, gain: number, duration = 0.12): void => {
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, time);
-      osc.frequency.exponentialRampToValueAtTime(freq * 0.45, time + duration);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(gain, time);
-      g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
-      osc.connect(g).connect(this.musicGain);
-      osc.start(time);
-      osc.stop(time + duration + 0.02);
-    };
-    const brush = (gain: number): void => {
-      if (!this.noiseBuffer) return;
-      const src = ctx.createBufferSource();
-      src.buffer = this.noiseBuffer;
-      src.playbackRate.value = 1.4;
-      const f = ctx.createBiquadFilter();
-      f.type = 'highpass';
-      f.frequency.value = 3200;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(gain, time);
-      g.gain.exponentialRampToValueAtTime(0.0001, time + 0.09);
-      src.connect(f).connect(g).connect(this.musicGain);
-      src.start(time);
-      src.stop(time + 0.1);
-    };
-
-    if (this.track === 'cassette') {
-      // Dmaj7 / Bm7 / Gmaj7 / A7, warm electric-piano-ish plucks
-      const chords = [
-        [50, 54, 57, 61],
-        [47, 50, 54, 57],
-        [43, 47, 50, 54],
-        [45, 49, 52, 55],
-      ];
-      const chord = chords[bar % 4];
-      if (beat === 0) {
-        drum(80, 0.16, 0.22);
-        for (const n of chord) schedule(midiToFreq(n), 0.9, 'triangle', 0.035, 2200);
-      }
-      if (beat === 3) schedule(midiToFreq(chord[2] + 12), 0.5, 'sine', 0.03, 1800);
-      if (beat === 6) schedule(midiToFreq(chord[3]), 0.35, 'triangle', 0.028, 2000);
-      if (beat === 4) drum(64, 0.1, 0.16);
-      if (beat === 2 || beat === 7) brush(0.02);
-      if (beat === 5 && bar % 2 === 0) schedule(midiToFreq(74), 0.3, 'sine', 0.026, 2600);
-    } else if (this.track === 'radio') {
-      // Am / F / C / G, plucky bass + pentatonic melody
-      const roots = [45, 41, 48, 43];
-      const melody = [69, 72, 76, 72, 74, 69, 67, 72];
-      const root = roots[bar % 4];
-      if (beat % 2 === 0) schedule(midiToFreq(root), 0.32, 'square', 0.03, 500);
-      if (beat === 0 || beat === 4) drum(110, 0.1, 0.16);
-      if (beat === 2 || beat === 6) drum(320, 0.05, 0.08);
-      if (beat === 1 || beat === 3 || beat === 5) brush(0.018);
-      if (beat % 2 === 1) {
-        const note = melody[(bar * 3 + beat) % melody.length];
-        schedule(midiToFreq(note + (bar % 2 ? 0 : 0)), 0.26, 'triangle', 0.028, 3400);
-      }
-    } else {
-      // Em / Cmaj7 / G / D, airy pad with a flute line
-      const pad = [
-        [40, 47, 52],
-        [36, 43, 48],
-        [43, 47, 50],
-        [38, 45, 50],
-      ][bar % 4];
-      if (beat === 0) {
-        for (const n of pad) schedule(midiToFreq(n), 2.2, 'sine', 0.026, 1200);
-        drum(58, 0.08, 0.3);
-      }
-      if (beat === 3) schedule(midiToFreq(67 + (bar % 3)), 0.5, 'triangle', 0.022, 2400);
-      if (beat === 6 && bar % 2 === 1) schedule(midiToFreq(71), 0.6, 'sine', 0.02, 2200);
-      if (beat === 5) brush(0.012);
+  failStinger(): void {
+    const notes = [392.0, 349.23, 311.13];
+    for (let i = 0; i < notes.length; i++) {
+      this.uiTone(notes[i], 0.24, 0.12, i * 0.095);
     }
-    void this.vehicleSpeed;
+  }
+
+  playBreakableCrash(kind: 'lamp' | 'stall'): void {
+    if (this.activeOneShots >= MAX_ONE_SHOTS) return;
+    const key: AssetKey = kind === 'lamp' ? 'sfxLampCrash' : 'sfxStallCrash';
+    if (this.playOneShotBuffer(key, this.vehicleBus, 0.78, 0.94 + Math.random() * 0.12)) return;
+    this.bump(1.6);
+  }
+
+  playRoadRageAlert(): void {
+    if (!this.ctx || this.volumes.muted || !this.volumes.sfxEnabled) return;
+    if (this.activeOneShots >= MAX_ONE_SHOTS) return;
+    const now = this.ctx.currentTime;
+    // Urgent angry car dual-tone horn blast!
+    for (const freq of [392, 494]) {
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now);
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 1450;
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(0.16, now + 0.02);
+      g.gain.setValueAtTime(0.15, now + 0.36);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.48);
+      osc.connect(lp).connect(g).connect(this.trafficBus);
+      osc.start(now);
+      osc.stop(now + 0.5);
+    }
+    this.trackSynthOneShot(0.5);
+  }
+
+  playScuffle(): void {
+    if (!this.ctx || this.volumes.muted || !this.volumes.sfxEnabled) return;
+    if (this.activeOneShots >= MAX_ONE_SHOTS) return;
+    const now = this.ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const t0 = now + i * 0.24;
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(155 - i * 18, t0);
+      osc.frequency.exponentialRampToValueAtTime(48, t0 + 0.15);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.24, t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+      osc.connect(g).connect(this.vehicleBus);
+      osc.start(t0);
+      osc.stop(t0 + 0.2);
+    }
+    this.trackSynthOneShot(0.75);
+  }
+
+  /** Plays bundled fallback vocal cadence clip when native/browser Bengali TTS is unavailable. */
+  playDialogueClip(speaker: 'driver' | 'player', onEnded?: () => void): boolean {
+    this.stopDialogueClip();
+    if (!this.ctx || this.ctx.state !== 'running' || this.volumes.muted || !this.volumes.sfxEnabled) {
+      return false;
+    }
+    const key: AssetKey = speaker === 'driver' ? 'dlgDriver' : 'dlgPlayer';
+    const buf = this.buffers.get(key);
+    if (!buf) return false;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.88;
+    src.connect(g).connect(this.dialogueBus);
+    this.activeDialogueSource = src;
+    this.setDialogueDuck(true);
+    src.onended = () => {
+      if (this.activeDialogueSource === src) {
+        this.activeDialogueSource = null;
+        this.setDialogueDuck(false);
+      }
+      try {
+        src.disconnect();
+        g.disconnect();
+      } catch {
+        /* ignore */
+      }
+      onEnded?.();
+    };
+    src.start();
+    return true;
+  }
+
+  stopDialogueClip(): void {
+    if (this.activeDialogueSource) {
+      const s = this.activeDialogueSource;
+      this.activeDialogueSource = null;
+      try {
+        s.onended = null;
+        s.stop();
+        s.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.setDialogueDuck(false);
+  }
+
+  bump(intensity: number): void {
+    if (!this.ctx || !this.noiseBuffer || this.volumes.muted || !this.volumes.sfxEnabled) return;
+    if (this.activeOneShots >= MAX_ONE_SHOTS) return;
+    const now = this.ctx.currentTime;
+    const amt = clamp(intensity, 0.1, 2.2);
+
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(118, now);
+    osc.frequency.exponentialRampToValueAtTime(38, now + 0.18);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.28 * amt, now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    osc.connect(g).connect(this.vehicleBus);
+    osc.start(now);
+    osc.stop(now + 0.26);
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1150;
+    const rg = this.ctx.createGain();
+    rg.gain.setValueAtTime(0.0001, now);
+    rg.gain.exponentialRampToValueAtTime(0.14 * amt, now + 0.015);
+    rg.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+    src.connect(bp).connect(rg).connect(this.vehicleBus);
+    src.start(now);
+    src.stop(now + 0.22);
+    this.trackSynthOneShot(0.26);
+  }
+
+  uiTap(): void {
+    this.uiTone(520, 0.045, 0.08);
+  }
+
+  uiConfirm(): void {
+    this.uiTone(523.25, 0.07, 0.1);
+    this.uiTone(659.25, 0.09, 0.1, 0.055);
+  }
+
+  uiError(): void {
+    this.uiTone(220, 0.09, 0.1);
+    this.uiTone(185, 0.12, 0.1, 0.07);
+  }
+
+  coin(): void {
+    this.uiTone(988, 0.08, 0.11);
+    this.uiTone(1319, 0.16, 0.11, 0.06);
+  }
+
+  private uiTone(freq: number, dur: number, gain: number, delay = 0): void {
+    if (!this.ctx || this.volumes.muted || !this.volumes.sfxEnabled) return;
+    if (this.activeOneShots >= MAX_ONE_SHOTS) return;
+    const t0 = this.ctx.currentTime + delay;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g).connect(this.uiBus);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+    this.trackSynthOneShot(delay + dur + 0.02);
+  }
+
+  /**
+   * Distance-attenuated & stereo-panned Dhaka traffic horn.
+   * `dx` and `dz` are relative to the player (`hornWorld - playerWorld`) so
+   * close vehicles sound crisp and distant vehicles attenuate smoothly to 0.
+   */
+  trafficHorn(
+    dx: number,
+    dz: number,
+    kind = 'cng',
+  ): void {
+    if (!this.ctx || this.volumes.muted || !this.volumes.sfxEnabled) return;
+    if (this.volumes.reduceNoisyAmbience && Math.random() < 0.65) return;
+    if (this.hornBurstCooldown > 0 || this.activeOneShots >= MAX_ONE_SHOTS) return;
+
+    const dist = Math.hypot(dx, dz);
+    const maxDist = kind === 'bus' ? 54 : 42;
+    if (dist > maxDist) return;
+    const atten = clamp01(1 - dist / maxDist);
+    if (atten <= 0.05) return;
+
+    this.hornBurstCooldown = 0.28;
+    if (kind === 'rickshaw') {
+      this.bell('classic');
+      return;
+    }
+
+    const now = this.ctx.currentTime;
+    const freq = kind === 'bus' ? 196 : kind === 'car' ? 415 : kind === 'motorbike' ? 520 : 345;
+    const dur = kind === 'bus' ? 0.36 : 0.2;
+    const osc = this.ctx.createOscillator();
+    osc.type = kind === 'car' || kind === 'motorbike' ? 'triangle' : 'sawtooth';
+    osc.frequency.setValueAtTime(freq, now);
+    osc.frequency.setValueAtTime(freq * 1.03, now + dur * 0.45);
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = kind === 'bus' ? 860 : 1380;
+    const g = this.ctx.createGain();
+    const peak = (0.04 + 0.13 * atten * atten) * (kind === 'bus' ? 1.15 : 0.9);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(peak, now + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    if (typeof this.ctx.createStereoPanner === 'function') {
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.value = clamp(dx / 18, -0.8, 0.8);
+      osc.connect(filter).connect(g).connect(panner).connect(this.trafficBus);
+    } else {
+      osc.connect(filter).connect(g).connect(this.trafficBus);
+    }
+    osc.start(now);
+    osc.stop(now + dur + 0.02);
+    this.trackSynthOneShot(dur + 0.02);
+  }
+
+  pedestrianShout(): void {
+    if (!this.ctx || this.volumes.muted || !this.volumes.sfxEnabled) return;
+    if (this.pedShoutCooldown > 0 || this.activeOneShots >= MAX_ONE_SHOTS) return;
+    this.pedShoutCooldown = 0.45;
+    const now = this.ctx.currentTime;
+    const base = 240 + Math.random() * 95;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(base, now);
+    osc.frequency.linearRampToValueAtTime(base * 1.24, now + 0.08);
+    osc.frequency.linearRampToValueAtTime(base * 0.92, now + 0.22);
+    const f1 = this.ctx.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.frequency.value = 780;
+    f1.Q.value = 3.2;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    osc.connect(f1).connect(g).connect(this.dialogueBus);
+    osc.start(now);
+    osc.stop(now + 0.26);
+    this.trackSynthOneShot(0.26);
+  }
+
+  private crow(): void {
+    if (!this.ctx || this.activeOneShots >= MAX_ONE_SHOTS) return;
+    const now = this.ctx.currentTime;
+    for (let c = 0; c < 2; c++) {
+      const t0 = now + c * 0.24;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(640, t0);
+      osc.frequency.linearRampToValueAtTime(500, t0 + 0.16);
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1280;
+      bp.Q.value = 2.4;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.032, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+      osc.connect(bp).connect(g).connect(this.ambienceBus);
+      osc.start(t0);
+      osc.stop(t0 + 0.2);
+    }
+    this.trackSynthOneShot(0.45);
+  }
+
+  private trackSynthOneShot(durationSec: number): void {
+    this.activeOneShots++;
+    window.setTimeout(() => {
+      this.activeOneShots = Math.max(0, this.activeOneShots - 1);
+    }, Math.max(40, Math.round(durationSec * 1000)));
   }
 
   dispose(): void {
-    void this.ctx?.close();
-    this.ctx = null;
-    this.started = false;
+    this.stopDialogueClip();
+    if (this.ctx) {
+      void this.ctx.close();
+      this.ctx = null;
+    }
   }
 }
 

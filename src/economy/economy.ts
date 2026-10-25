@@ -163,7 +163,7 @@ export function deriveVehicle(
 
   const brakeDecel =
     (RIDE.brakeDecel + (vehicle.brakeBonus ?? 0) + brakes * 0.75) *
-    (1 - wetGripLoss * 0.45);
+    (1 - wetGripLoss * 0.72);
 
   const steerMaxLow = RIDE.maxSteerLow + steering * 0.045;
   const steerMaxHigh = RIDE.maxSteerHigh + steering * 0.018;

@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import type { QualitySettings } from '../core/config';
 import { WORLD } from '../core/config';
 import { clamp, mulberry32 } from '../core/mathx';
+import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import {
   GRAPH_NODES,
@@ -46,6 +47,8 @@ export interface Collider {
   height: number;
   cameraBlocking: boolean;
   kind: 'building' | 'prop' | 'wall';
+  disabled?: boolean;
+  breakableId?: number;
 }
 
 export interface SpeedHump {
@@ -70,6 +73,7 @@ interface SurfaceBump {
 export interface CityResult {
   group: THREE.Group;
   colliders: Collider[];
+  breakableLamps: BreakableProp[];
   humps: SpeedHump[];
   heightAt: (x: number, z: number) => number;
   lampPositions: THREE.Vector3[];
@@ -111,6 +115,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const group = new THREE.Group();
   group.name = 'mohammadpur-city';
   const colliders: Collider[] = [];
+  const breakableLamps: BreakableProp[] = [];
   const humps: SpeedHump[] = [];
   const microBumps: SurfaceBump[] = [];
   const lampPositions: THREE.Vector3[] = [];
@@ -425,7 +430,11 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       const armYaw = Math.atan2(inX, inZ);
 
       // Galvanized streetlamp column + concrete plinth + overhanging cobra-head LED luminaire
+      // Plinth stays anchored on sidewalk; column + arm + cobra-head + bulb are breakable on high-speed impact!
+      const lampBreakId = lampPositions.length;
       bWalk.cylinder({ x: lx, y: 0.22, z: lz }, 0.19, 0.44, '#7d786e');
+      bMetal.setTag(lampBreakId);
+      bGlow.setTag(lampBreakId);
       bMetal.cylinder({ x: lx, y: 3.1, z: lz }, 0.075, 5.8, '#535a62');
       bMetal.box(
         { x: lx + inX * 0.62, y: 5.92, z: lz + inZ * 0.62 },
@@ -437,7 +446,30 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       const headZ = lz + inZ * 1.18;
       bMetal.box({ x: headX, y: 5.98, z: headZ }, { x: 0.26, y: 0.08, z: 0.46 }, '#363c42', { y: armYaw });
       bGlow.box({ x: headX, y: 5.93, z: headZ }, { x: 0.22, y: 0.03, z: 0.38 }, '#ffe0a6', { y: armYaw });
+      bMetal.setTag(-1);
+      bGlow.setTag(-1);
       lampPositions.push(new THREE.Vector3(headX, 5.9, headZ));
+      const lampCollider: Collider = {
+        minX: lx - 0.24,
+        maxX: lx + 0.24,
+        minZ: lz - 0.24,
+        maxZ: lz + 0.24,
+        height: 5.5,
+        cameraBlocking: false,
+        kind: 'prop',
+        breakableId: lampBreakId,
+      };
+      colliders.push(lampCollider);
+      breakableLamps.push({
+        id: lampBreakId,
+        kind: 'lamp',
+        x: lx,
+        z: lz,
+        yaw: armYaw,
+        collider: lampCollider,
+        slices: [],
+        lampIndex: lampBreakId,
+      });
 
       // Concrete DESCO utility pole + transformer crossbar on opposite/same sidewalk for overhead wires
       const poleSide: 1 | -1 = -side as 1 | -1;
@@ -791,6 +823,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   nightGroup.visible = false;
   group.add(nightGroup);
 
+  const metalSlices = bMetal.getTagSlices();
+  const glowSlices = bGlow.getTagSlices();
+  for (let i = 0; i < breakableLamps.length; i++) {
+    const bl = breakableLamps[i];
+    const mList = metalSlices.get(bl.id);
+    const gList = glowSlices.get(bl.id);
+    if (mList) bl.slices.push(...mList);
+    if (gList) bl.slices.push(...gList);
+  }
+
   const registerShadowCasters = (root: THREE.Object3D): void => {
     root.traverse((obj) => {
       if (obj instanceof THREE.Mesh && obj.castShadow) {
@@ -938,6 +980,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   return {
     group,
     colliders,
+    breakableLamps,
     humps,
     heightAt,
     lampPositions,

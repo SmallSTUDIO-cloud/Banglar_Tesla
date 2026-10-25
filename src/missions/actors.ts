@@ -247,6 +247,48 @@ export class PassengerActor {
     this.group.visible = visible;
   }
 
+  /** Zero-allocation sprint step toward `(tx, tz)` for the road-rage NPC driver. */
+  chaseTowards(tx: number, tz: number, runSpeed: number, groundY: number, dt: number): number {
+    const dx = tx - this.group.position.x;
+    const dz = tz - this.group.position.z;
+    const dist = Math.hypot(dx, dz);
+    this.group.position.y = groundY;
+    if (dist > 0.05) {
+      const step = Math.min(dist, runSpeed * dt);
+      this.group.position.x += (dx / dist) * step;
+      this.group.position.z += (dz / dist) * step;
+      const yaw = Math.atan2(dx, dz);
+      let diff = yaw - this.group.rotation.y;
+      while (diff > Math.PI) diff -= TAU;
+      while (diff < -Math.PI) diff += TAU;
+      this.group.rotation.y += diff * Math.min(1, dt * 11);
+    }
+    this.phase += dt * 16.5;
+    this.legL.rotation.x = Math.sin(this.phase) * 0.78;
+    this.legR.rotation.x = -Math.sin(this.phase) * 0.78;
+    this.torso.position.y = 1.02 + Math.abs(Math.sin(this.phase)) * 0.055;
+    this.head.position.y = 1.47 + Math.abs(Math.sin(this.phase)) * 0.055;
+    this.torso.rotation.x = 0.14;
+    return dist;
+  }
+
+  /** Non-graphic comedic cartoon-style wave/bob during a 1.2s street argument/scuffle. */
+  animateScuffle(dt: number): void {
+    this.phase += dt * 24;
+    this.torso.rotation.z = Math.sin(this.phase) * 0.22;
+    this.torso.rotation.x = 0.1 + Math.cos(this.phase * 1.3) * 0.12;
+    this.legL.rotation.x = Math.sin(this.phase) * 0.45;
+    this.legR.rotation.x = -Math.sin(this.phase) * 0.45;
+  }
+
+  resetPose(): void {
+    this.torso.rotation.set(0, 0, 0);
+    this.legL.rotation.set(0, 0, 0);
+    this.legR.rotation.set(0, 0, 0);
+    this.torso.position.set(0, 1.02, 0);
+    this.head.position.set(0, 1.47, 0);
+  }
+
   dispose(): void {
     this.group.removeFromParent();
   }

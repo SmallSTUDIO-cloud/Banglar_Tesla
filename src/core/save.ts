@@ -26,6 +26,7 @@ export interface Progress {
   ownedCosmetics: string[];
   cosmetics: Record<CosmeticCategory, string>;
   condition: number;
+  stamina: number;
   rides: number;
   totalEarned: number;
   distanceTravelled: number;
@@ -51,6 +52,7 @@ export function createDefaultProgress(now = Date.now()): Progress {
     ownedCosmetics: ['bell.classic'],
     cosmetics: { ...DEFAULT_COSMETICS },
     condition: 86,
+    stamina: 100,
     rides: 0,
     totalEarned: 0,
     distanceTravelled: 0,
@@ -169,6 +171,7 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
     ownedCosmetics,
     cosmetics,
     condition: num(data.condition, def.condition, 5, 100),
+    stamina: num(data.stamina, def.stamina, 0, 100),
     rides: Math.max(0, Math.floor(num(data.rides, 0, 0, 1_000_000))),
     totalEarned: Math.max(0, Math.floor(num(data.totalEarned, 0, 0, 1_000_000_000))),
     distanceTravelled: Math.max(0, num(data.distanceTravelled, 0, 0, 1e9)),

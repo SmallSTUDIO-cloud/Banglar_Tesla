@@ -5,6 +5,7 @@
 .field private static final ENTRY_URL:Ljava/lang/String; = "https://appassets.androidplatform.net/index.html"
 .field private static final IMMERSIVE_FLAGS:I = 0x1706
 .field private webView:Landroid/webkit/WebView;
+.field private ttsBridge:Lcom/shostalab/banglartesla/BanglaTtsBridge;
 
 .method public constructor <init>()V
     .locals 0
@@ -62,6 +63,12 @@
     invoke-direct {v1}, Landroid/webkit/WebChromeClient;-><init>()V
     invoke-virtual {v0, v1}, Landroid/webkit/WebView;->setWebChromeClient(Landroid/webkit/WebChromeClient;)V
 
+    new-instance v1, Lcom/shostalab/banglartesla/BanglaTtsBridge;
+    invoke-direct {v1, p0}, Lcom/shostalab/banglartesla/BanglaTtsBridge;-><init>(Landroid/content/Context;)V
+    iput-object v1, p0, Lcom/shostalab/banglartesla/MainActivity;->ttsBridge:Lcom/shostalab/banglartesla/BanglaTtsBridge;
+    const-string v2, "__btAndroidTts"
+    invoke-virtual {v0, v1, v2}, Landroid/webkit/WebView;->addJavascriptInterface(Ljava/lang/Object;Ljava/lang/String;)V
+
     iput-object v0, p0, Lcom/shostalab/banglartesla/MainActivity;->webView:Landroid/webkit/WebView;
     invoke-virtual {p0, v0}, Lcom/shostalab/banglartesla/MainActivity;->setContentView(Landroid/view/View;)V
 
@@ -118,6 +125,11 @@
 .method protected onPause()V
     .locals 1
 
+    iget-object v0, p0, Lcom/shostalab/banglartesla/MainActivity;->ttsBridge:Lcom/shostalab/banglartesla/BanglaTtsBridge;
+    if-eqz v0, :cond_wv
+    invoke-virtual {v0}, Lcom/shostalab/banglartesla/BanglaTtsBridge;->stop()V
+
+    :cond_wv
     iget-object v0, p0, Lcom/shostalab/banglartesla/MainActivity;->webView:Landroid/webkit/WebView;
     if-eqz v0, :cond_super
     invoke-virtual {v0}, Landroid/webkit/WebView;->onPause()V
@@ -144,12 +156,20 @@
 .end method
 
 .method protected onDestroy()V
-    .locals 2
+    .locals 3
 
+    const/4 v1, 0x0
+    iget-object v0, p0, Lcom/shostalab/banglartesla/MainActivity;->ttsBridge:Lcom/shostalab/banglartesla/BanglaTtsBridge;
+    if-eqz v0, :cond_wv
+    invoke-virtual {v0}, Lcom/shostalab/banglartesla/BanglaTtsBridge;->shutdown()V
+    iput-object v1, p0, Lcom/shostalab/banglartesla/MainActivity;->ttsBridge:Lcom/shostalab/banglartesla/BanglaTtsBridge;
+
+    :cond_wv
     iget-object v0, p0, Lcom/shostalab/banglartesla/MainActivity;->webView:Landroid/webkit/WebView;
     if-eqz v0, :cond_super
+    const-string v2, "__btAndroidTts"
+    invoke-virtual {v0, v2}, Landroid/webkit/WebView;->removeJavascriptInterface(Ljava/lang/String;)V
     invoke-virtual {v0}, Landroid/webkit/WebView;->destroy()V
-    const/4 v1, 0x0
     iput-object v1, p0, Lcom/shostalab/banglartesla/MainActivity;->webView:Landroid/webkit/WebView;
 
     :cond_super

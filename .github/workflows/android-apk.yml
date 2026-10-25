@@ -3,12 +3,12 @@ name: Build & Release Android APK
 on:
   push:
     branches:
-      - arena/7873a750-banglar-tesla
+      - arena/7747f1b0-banglar-tesla
       - main
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publish APK to GitHub Release v0.3.0-android-test'
+        description: 'Publish APK to GitHub Release v0.4.0'
         required: false
         default: 'true'
 
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build Debug Android APK (v0.3.0-android-test)
+    name: Build Debug Android APK (v0.4.0)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -55,8 +55,9 @@ jobs:
           mkdir -p "$WORK_DIR/classes" "$WORK_DIR/dex" android/app/src/main/assets/public artifacts
           rm -rf android/app/src/main/assets/public/*
           cp -r dist/* android/app/src/main/assets/public/
+          find android/app/src/main/assets/public -name ".*" -type f -delete
 
-          # 1. Compile resources & link manifest + offline web assets
+          # 1. Compile resources & link manifest + offline web & audio assets
           "$BUILD_TOOLS/aapt2" compile --dir android/app/src/main/res -o "$WORK_DIR/res.zip"
           "$BUILD_TOOLS/aapt2" link \
             -o "$WORK_DIR/unaligned.apk" \
@@ -66,13 +67,13 @@ jobs:
             --java "$WORK_DIR/gen" \
             --min-sdk-version 24 \
             --target-sdk-version 34 \
-            --version-code 3 \
-            --version-name 0.3.0-android-test \
+            --version-code 4 \
+            --version-name 0.4.0 \
             -0 .ttf -0 .png -0 .jpg -0 .webp -0 .mp3 -0 .ogg -0 .wav \
             --auto-add-overlay \
             "$WORK_DIR/res.zip"
 
-          # 2. Compile Java sources -> DEX
+          # 2. Compile Java sources (including BanglaTtsBridge) -> DEX
           find android/app/src/main/java "$WORK_DIR/gen" -name "*.java" > "$WORK_DIR/sources.txt"
           javac --release 11 -classpath "$PLATFORM_JAR" -d "$WORK_DIR/classes" @"$WORK_DIR/sources.txt"
           find "$WORK_DIR/classes" -name "*.class" > "$WORK_DIR/classes.txt"
@@ -88,7 +89,8 @@ jobs:
             -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-          OUT_APK="artifacts/banglar-tesla-v0.3.0-android-test-debug.apk"
+          OUT_APK="artifacts/banglar-tesla-v0.4.0-debug.apk"
+          STABLE_APK="artifacts/Banglar-Tesla.apk"
           "$BUILD_TOOLS/apksigner" sign \
             --ks "$KEYSTORE" \
             --ks-key-alias androiddebugkey \
@@ -100,58 +102,61 @@ jobs:
             --out "$OUT_APK" \
             "$WORK_DIR/aligned.apk"
 
+          cp "$OUT_APK" "$STABLE_APK"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$OUT_APK"
           "$BUILD_TOOLS/aapt2" dump badging "$OUT_APK"
-          ls -lh "$OUT_APK"
+          ls -lh "$OUT_APK" "$STABLE_APK"
 
-      - name: Upload APK build artifact
+      - name: Upload APK build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: banglar-tesla-v0.3.0-android-apk
-          path: artifacts/banglar-tesla-v0.3.0-android-test-debug.apk
+          name: banglar-tesla-v0.4.0-android-apk
+          path: |
+            artifacts/banglar-tesla-v0.4.0-debug.apk
+            artifacts/Banglar-Tesla.apk
           if-no-files-found: error
 
-      - name: Publish APK to GitHub Release v0.3.0-android-test
-        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.3.0]')
+      - name: Publish APK assets to GitHub Release v0.4.0
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.4.0]')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v0.3.0-android-test"
-          APK="artifacts/banglar-tesla-v0.3.0-android-test-debug.apk"
+          TAG="v0.4.0"
+          APK="artifacts/banglar-tesla-v0.4.0-debug.apk"
+          STABLE="artifacts/Banglar-Tesla.apk"
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
           SIZE="$(stat -c%s "$APK")"
           NOTES=$(cat <<EOF
-          ## Banglar Tesla — বাংলার টেসলা (Android Test Build \`v0.3.0-android-test\`)
+          ## Banglar Tesla — বাংলার টেসলা (\`v0.4.0\`)
 
-          Evidence-driven mobile performance optimization release of **Banglar Tesla** targeting the **Samsung Galaxy M21** (\`Exynos 9611 / Mali-G72 MP3\`) and low-to-mid-range Android devices — delivering substantially lower draw calls, eliminated runtime shader compilation stalls, faster CPU simulation, and rock-solid sustained memory stability **with zero visual downgrades**.
+          Major gameplay, authentic Dhaka audio/soundscape, Bangla road-rage encounter, breakable street props, and \`টান\` speed-boost upgrade for **Banglar Tesla**, built Android-first and tuned for smooth **Samsung Galaxy M21** (\`Exynos 9611 / Mali-G72 MP3\`) performance while preserving all \`v0.3.0\` GPU/CPU optimizations.
 
-          ### What's New in \`v0.3.0-android-test\`
-          - **GPU-Instanced Mohammadpur Traffic Fleet (\`InstancedTrafficFleet\`):** Replaced per-vehicle object hierarchies (~200–350 scene nodes) with 20 shared \`THREE.InstancedMesh\` layers covering all 8 vehicle archetypes, spoked/solid wheels, passenger rickshaw hoods, brake lights, and distance-hysteresis LOD (\`76 m / 86 m\`) — cutting gameplay draw calls by **34%–48%** (\`267 → 153\` in normal street driving, \`316 → 164\` on High density).
-          - **Zero Runtime Shader Recompilation Stalls:** Unified directional/hemisphere/ambient light topology across day, dusk, night, and monsoon cycles, plus \`64×64\` boot-time GPU pipeline prewarming across all sector chunks, shadow-depth passes, night glow, rain, mission beacons, and passenger actors (\`1,907 ms → 12.5 ms\` p95 in continuous multi-district drives).
-          - **Baked Vertex Ground/Overhang AO & Tile-GPU-Friendly Material Tiering:** Baked per-vertex ground contact and eave ambient occlusion into static buildings, stalls, sidewalks, and boundary walls; transitioned matte diffuse surfaces (plaster, brick, concrete, cloth, foliage, pedestrians) to single-sided \`MeshLambertMaterial\` while preserving full PBR \`MeshStandardMaterial\` + PMREM reflections on wet asphalt, puddles, metallic shutters, chrome rims, and rickshaw frames.
-          - **80%–84% Shadow-Pass Caster Reduction:** Spatial sector distance shadow culling (\`224 → 44\` active shadow casters in street play), decal/signboard shadow exclusion, and torso-only pedestrian shadow casting while preserving crisp nearby shadows.
-          - **Zero-Blur Mobile Compositor & Pre-Rendered Minimap:** Eliminated costly \`backdrop-filter: blur()\` multi-pass WebView overdraw across HUD/touch controls, pre-rendered the static Mohammadpur street/river/building minimap onto an offscreen \`720×720\` canvas (\`hudMinimap\` CPU cost cut ~70%–79%), and dirty-checked all HUD DOM updates.
-          - **Spatial Hash Queries, Cached Route Invalidation & Pooled Simulation:** O(1) \`28×28\` bump/manhole height grid, congestion-epoch-cached Dijkstra route guidance, zero-allocation obstacle/lane queries, smooth multi-rate pedestrian interpolation, and flat sustained JS heap across 15-minute (\`54,000\`-tick) sessions.
-          - **Full Gameplay & Content Fidelity Preserved:** All 7 NFS:MW-inspired camera modes, fixed steering (\`LEFT → LEFT\`, \`RIGHT → RIGHT\`), flush wheel-ground contact, Cycle + Banglar Bidyut Electric Rickshaw + \`Rickshaw Roadster — COMING SOON\`, Dokan upgrades, OpenStreetMap ODbL Mohammadpur network, Bengali/English localization, and offline saves intact.
+          ### What's New in \`v0.4.0\`
+          - **Repaired & Upgraded Dhaka Audio Engine + Original Soundtrack:** Reliable gesture/autoplay unlock (\`Tap to enable sound\` indicator), smooth menu/driving/pause music crossfades with dialogue ducking, visibility/background recovery, Master/Music/SFX volume sliders + Music/SFX/Calm-Ambience toggles, capped concurrent voices, and 15 original bundled offline \`.wav\` tracks & cues (\`1.92 MB\` total).
+          - **Spatialized Mohammadpur Soundscape:** Location-aware Town Hall Bazaar chatter, roadside tea-stall kettle/cup clinks, Bangla street-hawker calls, distant construction taps, traffic horns & cycle-rickshaw bells, classic pedal chain rattle, electric motor hum, and monsoon rain/wet-tire spray.
+          - **Bangla Road-Rage Encounters (Private Cars Only):** High-impact collisions with private passenger cars (\`car\`) pull the sedan over with flashing hazards, spawn an exiting pursuing driver, trigger **\`ROAD RAGE!\`** alert + restrained camera shake, speak and subtitle exact Bangla lines (\`ওই হারামজাদা, দাঁড়া!\` and \`মাফ করে দেন ভাই, ভুলে লেগে গেছে!\`) via native Android \`TextToSpeech\` (\`bn-BD\`/\`bn\`), browser \`bn-*\` SpeechSynthesis, or bundled offline vocal clips, and run an uninterrupted 5-second distance escape countdown (\`পালাতে পেরেছেন!\`) or catch confrontation modal (\`১০০ টাকা দিয়ে মিটমাট করুন\` vs \`দেব না\` slapstick scuffle).
+          - **Breakable Street Lamps & Roadside Stalls:** Speed-thresholded one-shot destruction of street lamps and roadside vendor stalls with immediate collider disable, sub-range VBO vertex collapse, night-lamp culling, and pooled zero-shadow debris & dust that despawn cleanly.
+          - **\`টান\` Speed Boost, Pedal Stamina & Roadside Tea Rest:** HUD \`টান\` toggle (\`~1.95×\` top speed, pooled radial motion streaks & FOV kick), 0–100 pedal stamina drain/regeneration + auto-stop on Classic Rickshaw, accelerated battery drain on Banglar Bidyut Electric Rickshaw, \`৳10\` roadside tea-stall stamina recovery, and subtle monsoon wet-road braking.
 
           ### APK Details
-          - **File:** \`banglar-tesla-v0.3.0-android-test-debug.apk\` (\`$SIZE\` bytes)
+          - **Direct Download (Stable Latest URL):** \`Banglar-Tesla.apk\` (\`$SIZE\` bytes)
+          - **Versioned Asset:** \`banglar-tesla-v0.4.0-debug.apk\` (\`$SIZE\` bytes)
           - **App Name:** \`Banglar Tesla\`
           - **Application ID:** \`com.shostalab.banglartesla\`
-          - **Version:** \`0.3.0-android-test\` (\`versionCode: 3\`)
+          - **Version:** \`0.4.0\` (\`versionCode: 4\`)
           - **Android Compatibility:** Android 7.0+ (\`minSdkVersion 24\`, \`targetSdkVersion 34\`)
-          - **Permissions Requested:** None (runs 100% offline from bundled APK assets)
+          - **Permissions Requested:** None (\`0\` \`<uses-permission>\` entries; runs 100% offline)
           - **Signing:** Android debug signature (\`APK Signature Scheme v1 + v2 + v3\`)
           - **SHA-256:** \`$SHA\`
-          - **Map Attribution:** Street connectivity & landmarks derived from OpenStreetMap contributors (ODbL 1.0); buildings and street props procedurally generated.
           EOF
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --clobber
-            gh release edit "$TAG" --title "Banglar Tesla v0.3.0 — Mobile Performance Optimization (Android APK)" --notes "$NOTES"
+            gh release upload "$TAG" "$APK" "$STABLE" --clobber
+            gh release edit "$TAG" --latest --title "Banglar Tesla v0.4.0 — Dhaka Soundscape, Bangla Road-Rage & টান Upgrade" --notes "$NOTES"
           else
-            gh release create "$TAG" "$APK" \
+            gh release create "$TAG" "$APK" "$STABLE" \
+              --latest \
               --target "${{ github.sha }}" \
-              --title "Banglar Tesla v0.3.0 — Mobile Performance Optimization (Android APK)" \
+              --title "Banglar Tesla v0.4.0 — Dhaka Soundscape, Bangla Road-Rage & টান Upgrade" \
               --notes "$NOTES"
           fi

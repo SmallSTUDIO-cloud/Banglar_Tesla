@@ -24,16 +24,19 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT / "dist"
 ANDROID_MAIN = ROOT / "android" / "app" / "src" / "main"
 RES_DIR = ANDROID_MAIN / "res"
+JAVA_DIR = ANDROID_MAIN / "java"
 SMALI_DIR = ANDROID_MAIN / "smali"
 ASSETS_DIR = ANDROID_MAIN / "assets"
 PUBLIC_ASSETS_DIR = ASSETS_DIR / "public"
 ARTIFACTS_DIR = ROOT / "artifacts"
-OUT_APK = ARTIFACTS_DIR / "banglar-tesla-v0.3.0-android-test-debug.apk"
+OUT_APK = ARTIFACTS_DIR / "banglar-tesla-v0.4.0-debug.apk"
+STABLE_APK = ARTIFACTS_DIR / "Banglar-Tesla.apk"
 
 TOOLS_DIR = Path("/tmp/android-tools")
 AAPT2 = TOOLS_DIR / "node_modules" / "aaptjs3" / "bin" / "x64" / "linux" / "aapt2"
 APKTOOL_JAR = TOOLS_DIR / "node_modules" / "@postar" / "apktool-node" / "lib" / "apktool.jar"
 APKSIGNER_JAR = TOOLS_DIR / "node_modules" / "@postar" / "apktool-node" / "lib" / "apksigner.jar"
+D8_JAR = TOOLS_DIR / "node_modules" / "d8-termux" / "d8.jar"
 ANDROID_JAR = TOOLS_DIR / "android-34.jar"
 DEBUG_KEYSTORE = Path("/tmp/banglar-tesla-debug.keystore")
 
@@ -83,13 +86,60 @@ def sync_web_dist() -> list[Path]:
         shutil.rmtree(PUBLIC_ASSETS_DIR)
     PUBLIC_ASSETS_DIR.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(DIST_DIR, PUBLIC_ASSETS_DIR)
-    files = sorted(p.relative_to(DIST_DIR) for p in DIST_DIR.rglob("*") if p.is_file())
+    for dotfile in list(PUBLIC_ASSETS_DIR.rglob(".*")):
+        if dotfile.is_file():
+            dotfile.unlink()
+    files = sorted(p.relative_to(PUBLIC_ASSETS_DIR) for p in PUBLIC_ASSETS_DIR.rglob("*") if p.is_file())
     print(f"[apk] Synced {len(files)} production web files from dist/ -> assets/public/")
     return files
 
 
-def assemble_smali(java_bin: Path, base_apk: Path, out_dex: Path, work_dir: Path) -> None:
-    """Assembles smali -> classes.dex via apktool's embedded Google Smali 3.0.3."""
+def assemble_or_compile_dex(java_home: Path, gen_dir: Path, base_apk: Path, out_dex: Path, work_dir: Path) -> None:
+    """Uses javac+d8 when full JDK is installed, or Google Smali 3.0.3 when running under JRE."""
+    javac_bin = java_home / "bin" / "javac"
+    java_bin = java_home / "bin" / "java"
+    if javac_bin.exists() and D8_JAR.exists():
+        classes_dir = work_dir / "classes"
+        dex_dir = work_dir / "dex"
+        classes_dir.mkdir(parents=True, exist_ok=True)
+        dex_dir.mkdir(parents=True, exist_ok=True)
+        java_sources = sorted(JAVA_DIR.rglob("*.java"))
+        if gen_dir.exists():
+            java_sources.extend(sorted(gen_dir.rglob("*.java")))
+        subprocess.run(
+            [
+                str(javac_bin),
+                "--release",
+                "11",
+                "-classpath",
+                str(ANDROID_JAR),
+                "-d",
+                str(classes_dir),
+                *[str(p) for p in java_sources],
+            ],
+            check=True,
+        )
+        class_files = sorted(classes_dir.rglob("*.class"))
+        subprocess.run(
+            [
+                str(java_bin),
+                "-cp",
+                str(D8_JAR),
+                "com.android.tools.r8.D8",
+                "--min-api",
+                "24",
+                "--lib",
+                str(ANDROID_JAR),
+                "--output",
+                str(dex_dir),
+                *[str(p) for p in class_files],
+            ],
+            check=True,
+        )
+        shutil.copy2(dex_dir / "classes.dex", out_dex)
+        print(f"[apk] Compiled {len(java_sources)} Java sources -> classes.dex ({out_dex.stat().st_size} bytes)")
+        return
+
     apktool_proj = work_dir / "smali_proj"
     (apktool_proj / "smali").mkdir(parents=True, exist_ok=True)
     for sf in SMALI_DIR.rglob("*.smali"):
@@ -124,7 +174,7 @@ def assemble_smali(java_bin: Path, base_apk: Path, out_dex: Path, work_dir: Path
     )
     with zipfile.ZipFile(temp_apk, "r") as zf:
         out_dex.write_bytes(zf.read("classes.dex"))
-    print(f"[apk] Assembled classes.dex ({out_dex.stat().st_size} bytes)")
+    print(f"[apk] Assembled smali -> classes.dex ({out_dex.stat().st_size} bytes)")
 
 
 def parse_classfile_methods_and_fields(data: bytes) -> tuple[str, str | None, list[str], set[tuple[str, str]], set[tuple[str, str]]]:
@@ -376,6 +426,7 @@ def build_and_verify() -> None:
     assert AAPT2.exists(), f"Missing aapt2 at {AAPT2}"
     assert APKTOOL_JAR.exists(), f"Missing apktool.jar at {APKTOOL_JAR}"
     assert APKSIGNER_JAR.exists(), f"Missing apksigner.jar at {APKSIGNER_JAR}"
+    assert D8_JAR.exists(), f"Missing d8.jar at {D8_JAR}"
     assert ANDROID_JAR.exists(), f"Missing android-34.jar at {ANDROID_JAR}"
 
     java_home = find_java_home()
@@ -390,6 +441,8 @@ def build_and_verify() -> None:
     with tempfile.TemporaryDirectory(prefix="bt-apk-") as tmp:
         work = Path(tmp)
         compiled_res = work / "compiled_res.zip"
+        gen_dir = work / "gen"
+        gen_dir.mkdir(parents=True, exist_ok=True)
         base_apk = work / "base.apk"
         classes_dex = work / "classes.dex"
         unsigned_aligned = work / "unsigned-aligned.apk"
@@ -413,14 +466,16 @@ def build_and_verify() -> None:
                 str(ANDROID_MAIN / "AndroidManifest.xml"),
                 "-A",
                 str(ASSETS_DIR),
+                "--java",
+                str(gen_dir),
                 "--min-sdk-version",
                 "24",
                 "--target-sdk-version",
                 "34",
                 "--version-code",
-                "3",
+                "4",
                 "--version-name",
-                "0.3.0-android-test",
+                "0.4.0",
                 "-0",
                 ".ttf",
                 "-0",
@@ -441,8 +496,8 @@ def build_and_verify() -> None:
             check=True,
         )
 
-        # 3. Assemble & verify classes.dex
-        assemble_smali(java_bin, base_apk, classes_dex, work)
+        # 3. Assemble/compile & verify classes.dex against android-34.jar
+        assemble_or_compile_dex(java_home, gen_dir, base_apk, classes_dex, work)
         verify_dex_against_android_jar(classes_dex)
 
         # 4. Merge & 4-byte align
@@ -483,6 +538,8 @@ def build_and_verify() -> None:
             ],
             check=True,
         )
+
+        shutil.copy2(OUT_APK, STABLE_APK)
 
     # 6. Post-sign verification suite
     verify_zip_alignment(OUT_APK)
@@ -525,7 +582,7 @@ def build_and_verify() -> None:
 
     sha256 = hashlib.sha256(OUT_APK.read_bytes()).hexdigest()
     size_bytes = OUT_APK.stat().st_size
-    print(f"\n[apk] SUCCESS: {OUT_APK}")
+    print(f"\n[apk] SUCCESS: {OUT_APK} + {STABLE_APK}")
     print(f"[apk] Size:    {size_bytes:,} bytes ({size_bytes / (1024 * 1024):.2f} MB)")
     print(f"[apk] SHA256:  {sha256}")
 

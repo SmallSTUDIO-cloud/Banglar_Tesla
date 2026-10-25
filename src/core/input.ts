@@ -51,6 +51,8 @@ export class InputManager {
   onRecover?: () => void;
   onHorn?: () => void;
   onDevPerf?: () => void;
+  onTanToggle?: () => void;
+  onTeaInteract?: () => void;
 
   constructor() {}
 
@@ -69,6 +71,12 @@ export class InputManager {
       }
       if (ev.code === 'KeyC' || ev.code === 'KeyV') this.onCamera?.();
       if (ev.code === 'KeyR') this.onRecover?.();
+      if (ev.code === 'ShiftLeft' || ev.code === 'ShiftRight' || ev.code === 'KeyT') {
+        this.onTanToggle?.();
+      }
+      if (ev.code === 'KeyE') {
+        this.onTeaInteract?.();
+      }
       if (ev.code === 'KeyF' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
         if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
         else void document.documentElement.requestFullscreen?.().catch(() => {});

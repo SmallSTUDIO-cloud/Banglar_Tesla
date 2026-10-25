@@ -14,6 +14,12 @@ export interface UvRect {
   v1: number;
 }
 
+export interface VertexSlice {
+  mesh: THREE.Mesh;
+  startVertex: number;
+  vertexCount: number;
+}
+
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 const UNIT_PLANE = new THREE.PlaneGeometry(1, 1);
 const UNIT_CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1, false);
@@ -30,6 +36,9 @@ const tmpScale = new THREE.Vector3();
 export class Bucket {
   private parts: THREE.BufferGeometry[] = [];
   private partXZ: { x: number; z: number }[] = [];
+  private partTags: number[] = [];
+  private currentTag = -1;
+  private tagSlices = new Map<number, VertexSlice[]>();
   private material: THREE.Material;
   private bakeGroundAO: boolean;
   readonly name: string;
@@ -38,6 +47,18 @@ export class Bucket {
     this.name = name;
     this.material = material;
     this.bakeGroundAO = bakeGroundAO;
+  }
+
+  setTag(tag: number): void {
+    this.currentTag = tag;
+  }
+
+  get currentTagId(): number {
+    return this.currentTag;
+  }
+
+  getTagSlices(): Map<number, VertexSlice[]> {
+    return this.tagSlices;
   }
 
   get count(): number {
@@ -115,6 +136,7 @@ export class Bucket {
     }
     this.parts.push(geo);
     this.partXZ.push({ x: px, z: pz });
+    this.partTags.push(this.currentTag);
   }
 
   box(
@@ -181,10 +203,13 @@ export class Bucket {
     autoUpdate = false,
   ): THREE.Mesh | null {
     if (this.parts.length === 0) return null;
+    const partVertCounts = this.parts.map((g) => (g.getAttribute('position') as THREE.BufferAttribute).count);
+    const savedTags = this.partTags.slice();
     const merged = mergeGeometries(this.parts, false);
     for (const p of this.parts) p.dispose();
     this.parts = [];
     this.partXZ = [];
+    this.partTags = [];
     if (!merged) {
       console.warn(`[geo] merge failed for bucket ${this.name}`);
       return null;
@@ -197,6 +222,25 @@ export class Bucket {
     mesh.receiveShadow = shadows.receive;
     mesh.matrixAutoUpdate = autoUpdate;
     if (!autoUpdate) mesh.updateMatrix();
+    let runningVert = 0;
+    for (let p = 0; p < partVertCounts.length; p++) {
+      const tag = savedTags[p];
+      const vc = partVertCounts[p];
+      if (tag >= 0 && vc > 0) {
+        let list = this.tagSlices.get(tag);
+        if (!list) {
+          list = [];
+          this.tagSlices.set(tag, list);
+        }
+        const prev = list[list.length - 1];
+        if (prev && prev.mesh === mesh && prev.startVertex + prev.vertexCount === runningVert) {
+          prev.vertexCount += vc;
+        } else {
+          list.push({ mesh, startVertex: runningVert, vertexCount: vc });
+        }
+      }
+      runningVert += vc;
+    }
     return mesh;
   }
 
@@ -213,15 +257,19 @@ export class Bucket {
     if (this.parts.length === 0) return [];
     const span = (halfExtent * 2) / cols;
     const cells: THREE.BufferGeometry[][] = Array.from({ length: cols * cols }, () => []);
+    const cellTags: number[][] = Array.from({ length: cols * cols }, () => []);
     for (let i = 0; i < this.parts.length; i++) {
       const xz = this.partXZ[i];
       const cx = Math.max(0, Math.min(cols - 1, Math.floor((xz.x + halfExtent) / span)));
       const cz = Math.max(0, Math.min(cols - 1, Math.floor((xz.z + halfExtent) / span)));
-      cells[cz * cols + cx].push(this.parts[i]);
+      const cellIdx = cz * cols + cx;
+      cells[cellIdx].push(this.parts[i]);
+      cellTags[cellIdx].push(this.partTags[i]);
     }
     const out: THREE.Mesh[] = [];
     for (let k = 0; k < cells.length; k++) {
       if (cells[k].length === 0) continue;
+      const partVertCounts = cells[k].map((g) => (g.getAttribute('position') as THREE.BufferAttribute).count);
       const merged = mergeGeometries(cells[k], false);
       for (const p of cells[k]) p.dispose();
       if (!merged) continue;
@@ -233,10 +281,32 @@ export class Bucket {
       mesh.receiveShadow = shadows.receive;
       mesh.matrixAutoUpdate = false;
       mesh.updateMatrix();
+
+      let runningVert = 0;
+      for (let p = 0; p < partVertCounts.length; p++) {
+        const tag = cellTags[k][p];
+        const vc = partVertCounts[p];
+        if (tag >= 0 && vc > 0) {
+          let list = this.tagSlices.get(tag);
+          if (!list) {
+            list = [];
+            this.tagSlices.set(tag, list);
+          }
+          const prev = list[list.length - 1];
+          if (prev && prev.mesh === mesh && prev.startVertex + prev.vertexCount === runningVert) {
+            prev.vertexCount += vc;
+          } else {
+            list.push({ mesh, startVertex: runningVert, vertexCount: vc });
+          }
+        }
+        runningVert += vc;
+      }
+
       out.push(mesh);
     }
     this.parts = [];
     this.partXZ = [];
+    this.partTags = [];
     return out;
   }
 
@@ -244,6 +314,7 @@ export class Bucket {
     for (const p of this.parts) p.dispose();
     this.parts = [];
     this.partXZ = [];
+    this.partTags = [];
   }
 }
 

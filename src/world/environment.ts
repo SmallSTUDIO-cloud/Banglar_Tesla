@@ -440,6 +440,7 @@ export class EnvironmentSystem {
           this.nearestLampDist[j] = Infinity;
         }
         for (let i = 0; i < this.lampPositions.length; i++) {
+          if (this.lampPositions[i].y < -100) continue;
           const d = this.lampPositions[i].distanceToSquared(focus);
           if (d >= this.nearestLampDist[k - 1]) continue;
           let ins = k - 1;

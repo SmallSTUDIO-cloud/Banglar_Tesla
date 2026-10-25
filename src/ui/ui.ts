@@ -46,6 +46,9 @@ export interface HudState {
   cameraMode?: CameraMode;
   isElectric?: boolean;
   battery?: number;
+  stamina?: number;
+  tanActive?: boolean;
+  teaAvailable?: boolean;
   routePoints?: { x: number; z: number }[] | null;
   jammedSegments?: string[];
   detourActive?: boolean;
@@ -71,11 +74,21 @@ export interface UIBridge {
   setTrack(track: 'cassette' | 'radio' | 'brishti'): void;
   setCameraMode(mode: CameraMode): void;
   toggleCamera(): void;
+  toggleTanBoost(): void;
+  buyRoadsideTea(): void;
+  settleRoadRagePay(): void;
+  refuseRoadRagePay(): void;
+  isAndroidApp(): boolean;
   applySettings(): void;
   dailyAvailable(): boolean;
   installPrompt?(): void;
   hasSave(): boolean;
 }
+
+/** Enabled in Milestone 5 once the stable release APK asset URL is published and verified. */
+export const ENABLE_WEB_INSTALL_APK_BUTTON = false;
+export const STABLE_APK_DOWNLOAD_URL =
+  'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/latest/download/Banglar-Tesla.apk';
 
 export class AppUI {
   private root: HTMLElement;
@@ -130,6 +143,9 @@ export class AppUI {
     this.state.on('toast', (payload) => {
       this.toast(t(payload.key, payload.params), payload.tone);
     });
+    this.bridge.audio.onUnlockChange(() => {
+      this.syncSoundUnlockPrompts();
+    });
 
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
@@ -153,6 +169,10 @@ export class AppUI {
 
   /** Handles Android hardware back / browser back navigation. Returns true if consumed. */
   handleBackAction(): boolean {
+    if (this.roadRageModalEl) {
+      // Cannot bypass active road-rage confrontation via hardware back
+      return true;
+    }
     switch (this.current) {
       case 'hud':
         this.bridge.pauseGame();
@@ -236,7 +256,54 @@ export class AppUI {
       ),
     );
 
-    const top = h('div', { class: 'menu-top' }, brand, money);
+    const soundUnlockMenu = h('button', {
+      class: 'sound-unlock-pill hidden',
+      attrs: { id: 'menu-sound-unlock', type: 'button' },
+      on: {
+        click: () => {
+          void this.bridge.audio.init().then(() => {
+            this.bridge.audio.uiTap();
+            this.syncSoundUnlockPrompts();
+          });
+        },
+      },
+    },
+      h('span', { html: ICONS.speaker }),
+      h('span', { text: t('audio.tapToUnlock') }),
+    );
+    this.menuSoundUnlockEl = soundUnlockMenu;
+
+    const topRightRow = h('div', { class: 'menu-top-row' }, soundUnlockMenu, money);
+    const topRight = h('div', { class: 'menu-top-right' }, topRightRow);
+    if (ENABLE_WEB_INSTALL_APK_BUTTON && !this.bridge.isAndroidApp()) {
+      const apkLink = h('a', {
+        class: 'install-apk-btn',
+        attrs: {
+          id: 'install-apk-btn',
+          href: STABLE_APK_DOWNLOAD_URL,
+          download: 'Banglar-Tesla.apk',
+          rel: 'noopener noreferrer',
+          title: t('menu.installApkSub'),
+        },
+        on: {
+          click: () => {
+            this.bridge.audio.uiConfirm();
+            this.toast(t('toast.apkDownload'), 'good');
+          },
+        },
+      },
+        h('span', { html: ICONS.smartphone }),
+        h('span', { text: t('menu.installApk') }),
+      );
+      const apkNote = h('div', {
+        class: 'install-apk-note',
+        attrs: { id: 'install-apk-note' },
+        text: t('menu.installApkSub'),
+      });
+      topRight.append(apkLink, apkNote);
+    }
+
+    const top = h('div', { class: 'menu-top' }, brand, topRight);
 
     const modeRow = h('div', { class: 'menu-modes' });
     const modes: { id: 'duty' | 'free' | 'daily'; icon: string; title: string; desc: string }[] = [
@@ -290,7 +357,7 @@ export class AppUI {
     );
 
     const meta = h('div', { class: 'menu-meta' },
-      h('span', { text: `v0.3.0` }),
+      h('span', { text: `v0.4.0` }),
       h('span', { text: '·' }),
       h('span', { text: t('menu.district') }),
       h('span', { text: '·' }),
@@ -328,6 +395,14 @@ export class AppUI {
       const level = this.state.level;
       meta.setAttribute('data-level', String(level));
     }
+    this.syncSoundUnlockPrompts();
+  }
+
+  syncSoundUnlockPrompts(): void {
+    const s = this.settingsStore.get();
+    const needsUnlock = !s.muted && !this.bridge.audio.unlocked;
+    this.menuSoundUnlockEl?.classList.toggle('hidden', !needsUnlock);
+    this.hudSoundUnlockEl?.classList.toggle('hidden', !needsUnlock);
   }
 
   private startModePrompt(): void {
@@ -350,6 +425,30 @@ export class AppUI {
 
     const wallet = h('div', { class: 'wallet' }, h('span', { class: 'menu-money-icon', html: ICONS.coin }), h('span', { text: formatTaka(this.state.balance) }));
     const batteryPill = h('div', { class: 'battery-pill hidden', attrs: { id: 'hud-battery' } }, h('span', { text: '⚡ 100%' }));
+    const staminaFill = h('i');
+    const staminaText = h('span', { text: `${t('hud.stamina')} 100%` });
+    const staminaPill = h(
+      'div',
+      { class: 'stamina-pill', attrs: { id: 'hud-stamina' } },
+      staminaText,
+      h('span', { class: 'stamina-track' }, staminaFill),
+    );
+    const hudSoundUnlock = h('button', {
+      class: 'sound-unlock-pill hidden',
+      attrs: { id: 'hud-sound-unlock', type: 'button' },
+      on: {
+        click: () => {
+          void this.bridge.audio.init().then(() => {
+            this.bridge.audio.uiTap();
+            this.syncSoundUnlockPrompts();
+          });
+        },
+      },
+    },
+      h('span', { html: ICONS.speaker }),
+      h('span', { text: t('audio.tapToUnlock') }),
+    );
+    this.hudSoundUnlockEl = hudSoundUnlock;
     const pauseBtn = h('button', {
       class: 'icon-btn',
       attrs: { type: 'button', 'aria-label': 'pause', 'data-action': 'pause' },
@@ -371,8 +470,45 @@ export class AppUI {
 
     const top = h('div', { class: 'hud-top' },
       objective,
-      h('div', { class: 'hud-topright' }, h('div', { class: 'row' }, pauseBtn, camBtn), wallet, batteryPill, mini, moodRow),
+      h(
+        'div',
+        { class: 'hud-topright' },
+        h('div', { class: 'row' }, hudSoundUnlock, pauseBtn, camBtn),
+        wallet,
+        batteryPill,
+        staminaPill,
+        mini,
+        moodRow,
+      ),
     );
+
+    const roadRageHead = h('div', { class: 'rr-head', text: 'ROAD RAGE!' });
+    const roadRageSub = h('div', { class: 'rr-sub', text: '' });
+    const roadRageBanner = h(
+      'div',
+      { class: 'roadrage-banner hidden', attrs: { id: 'roadrage-banner' } },
+      roadRageHead,
+      roadRageSub,
+    );
+    this.roadRageBannerEl = roadRageBanner;
+    this.roadRageHeadEl = roadRageHead;
+    this.roadRageSubEl = roadRageSub;
+
+    const teaBtn = h('button', {
+      class: 'tea-prompt-btn hidden',
+      attrs: { id: 'hud-tea-btn', type: 'button' },
+      text: t('hud.teaPrompt'),
+      on: {
+        click: () => {
+          void this.bridge.audio.init();
+          this.bridge.buyRoadsideTea();
+        },
+      },
+    });
+    this.hudTeaBtn = teaBtn;
+    this.hudStaminaPill = staminaPill;
+    this.hudStaminaText = staminaText;
+    this.hudStaminaFill = staminaFill;
 
     const dialogue = h('div', { class: 'hud-dialogue' });
     this.dialogueEl = dialogue;
@@ -469,13 +605,28 @@ export class AppUI {
     });
 
     const speedo = h('div', { class: 'speedo' }, h('b', { text: '0' }), h('span', { text: 'km/h' }));
+    const tanBtn = h(
+      'button',
+      {
+        class: 'touch-btn tan',
+        attrs: { id: 'hud-tan-btn', type: 'button', 'aria-label': 'টান' },
+      },
+      h('span', { html: ICONS.bolt }),
+      h('span', { text: 'টান' }),
+    );
+    tanBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      void this.bridge.audio.init();
+      this.bridge.toggleTanBoost();
+    });
+    this.hudTanBtn = tanBtn;
 
     const left = h('div', { class: 'drive-left' }, steerPad);
     const right = h('div', { class: 'drive-right' }, horn, speedo, brake, pedal);
     right.id = 'drive-right';
     const bottom = h('div', { class: 'hud-bottom' }, left, right);
 
-    el.append(top, dialogue, pedCallout, hint, bottom, wheel.el);
+    el.append(top, roadRageBanner, dialogue, pedCallout, hint, teaBtn, tanBtn, bottom, wheel.el);
     this.hud = this.register('hud', el);
     this.hudHint = hint;
     this.hudSpeedo = speedo;
@@ -508,6 +659,17 @@ export class AppUI {
   private hudLeft!: HTMLElement;
   private hudCamChip!: HTMLElement;
   private hudBattery!: HTMLElement;
+  private hudStaminaPill!: HTMLElement;
+  private hudStaminaText!: HTMLElement;
+  private hudStaminaFill!: HTMLElement;
+  private hudTanBtn!: HTMLElement;
+  private hudTeaBtn!: HTMLElement;
+  private menuSoundUnlockEl: HTMLElement | null = null;
+  private hudSoundUnlockEl: HTMLElement | null = null;
+  private roadRageBannerEl!: HTMLElement;
+  private roadRageHeadEl!: HTMLElement;
+  private roadRageSubEl!: HTMLElement;
+  private roadRageModalEl: HTMLElement | null = null;
   private pedCalloutEl!: HTMLElement;
   private pedCalloutTimer = 0;
 
@@ -528,6 +690,10 @@ export class AppUI {
   private prevCamMode = '';
   private prevElectric: boolean | null = null;
   private prevBattery = -1;
+  private prevStamina = -1;
+  private prevTanActive: boolean | null = null;
+  private prevTanExhausted: boolean | null = null;
+  private prevTeaAvail: boolean | null = null;
   private prevMarkerText = '';
 
   private buildWheel(): { el: HTMLElement } {
@@ -600,9 +766,10 @@ export class AppUI {
     bottom.style.flexDirection = leftFirst ? 'row' : 'row-reverse';
     const rightCluster = this.hudPedal.parentElement as HTMLElement | null;
     if (rightCluster) rightCluster.style.flexDirection = leftFirst ? 'row' : 'row-reverse';
-    // mirror the wheel to the opposite corner when left-handed
+    // mirror the wheel & টান boost button to the opposite corner when left-handed
     this.hudWheel.style.left = settings.handedness === 'right' ? 'calc(var(--safe-l) + 1.1rem)' : 'auto';
     this.hudWheel.style.right = settings.handedness === 'right' ? 'auto' : 'calc(var(--safe-r) + 1.1rem)';
+    this.hudTanBtn?.classList.toggle('left-handed', settings.handedness === 'left');
   }
 
   updateCameraBadge(mode: CameraMode): void {
@@ -685,15 +852,45 @@ export class AppUI {
       if (this.prevElectric !== true) {
         this.prevElectric = true;
         this.hudBattery.classList.remove('hidden');
+        this.hudStaminaPill.classList.add('hidden');
       }
       if (bat !== this.prevBattery) {
         this.prevBattery = bat;
         this.hudBattery.classList.toggle('low', bat < 22);
         this.hudBattery.firstElementChild!.textContent = `⚡ ${bat}%`;
       }
-    } else if (this.prevElectric !== false) {
-      this.prevElectric = false;
-      this.hudBattery.classList.add('hidden');
+    } else {
+      if (this.prevElectric !== false) {
+        this.prevElectric = false;
+        this.hudBattery.classList.add('hidden');
+        this.hudStaminaPill.classList.remove('hidden');
+      }
+      const stam = Math.round(clamp(state.stamina ?? 100, 0, 100));
+      if (stam !== this.prevStamina) {
+        this.prevStamina = stam;
+        this.hudStaminaPill.classList.toggle('low', stam < 20);
+        this.hudStaminaText.textContent = `${t('hud.stamina')} ${stam}%`;
+        this.hudStaminaFill.style.width = `${stam}%`;
+      }
+    }
+
+    const tanOn = !!state.tanActive;
+    if (tanOn !== this.prevTanActive) {
+      this.prevTanActive = tanOn;
+      this.hudTanBtn.classList.toggle('engaged', tanOn);
+      this.hudTanBtn.setAttribute('aria-pressed', tanOn ? 'true' : 'false');
+    }
+    const exhausted = state.isElectric ? (state.battery ?? 100) <= 2.5 : (state.stamina ?? 100) < 12;
+    if (exhausted !== this.prevTanExhausted) {
+      this.prevTanExhausted = exhausted;
+      this.hudTanBtn.classList.toggle('exhausted', exhausted);
+    }
+
+    const teaAvail = !!state.teaAvailable;
+    if (teaAvail !== this.prevTeaAvail) {
+      this.prevTeaAvail = teaAvail;
+      this.hudTeaBtn.textContent = t('hud.teaPrompt');
+      this.hudTeaBtn.classList.toggle('hidden', !teaAvail);
     }
 
     if (state.hint) {
@@ -886,6 +1083,102 @@ export class AppUI {
 
   hideDialogue(): void {
     this.dialogueEl.classList.remove('show');
+  }
+
+  /** Show exact Bangla Unicode road-rage subtitle cleanly regardless of current locale. */
+  showRoadRageSubtitle(speakerKey: string, banglaLine: string): void {
+    clear(this.dialogueEl);
+    this.dialogueEl.append(
+      h('span', { class: 'who', text: t(speakerKey) }),
+      h('span', { text: banglaLine }),
+    );
+    this.dialogueEl.classList.add('show');
+    if (this.dialogueTimer) window.clearTimeout(this.dialogueTimer);
+    this.dialogueTimer = window.setTimeout(() => this.dialogueEl.classList.remove('show'), 3600);
+  }
+
+  setRoadRageBanner(headline: string | null, subKey?: string, escapingSec?: number | null): void {
+    if (!headline) {
+      this.roadRageBannerEl?.classList.add('hidden');
+      return;
+    }
+    this.roadRageHeadEl.textContent = headline;
+    if (subKey === 'roadrage.escaping' && typeof escapingSec === 'number') {
+      this.roadRageSubEl.textContent = t('roadrage.escaping', { s: escapingSec.toFixed(1) });
+    } else if (subKey) {
+      this.roadRageSubEl.textContent = t(subKey);
+    } else {
+      this.roadRageSubEl.textContent = '';
+    }
+    this.roadRageBannerEl.classList.remove('hidden');
+  }
+
+  openRoadRageConfrontation(): void {
+    this.closeRoadRageConfrontation();
+    this.releaseTouchInputs();
+    const canPay = this.state.balance >= 100;
+
+    const payBtn = h(
+      'button',
+      {
+        class: `btn primary wide${canPay ? '' : ' disabled'}`,
+        attrs: {
+          id: 'roadrage-pay-btn',
+          type: 'button',
+          ...(canPay ? {} : { disabled: 'true', 'aria-disabled': 'true' }),
+        },
+        on: {
+          click: () => {
+            if (this.state.balance < 100) return;
+            this.bridge.settleRoadRagePay();
+          },
+        },
+      },
+      h('span', { text: t('roadrage.choice.pay') }),
+    );
+
+    const refuseBtn = h(
+      'button',
+      {
+        class: 'btn danger wide',
+        attrs: { id: 'roadrage-refuse-btn', type: 'button' },
+        on: {
+          click: () => {
+            this.bridge.refuseRoadRagePay();
+          },
+        },
+      },
+      h('span', { text: t('roadrage.choice.refuse') }),
+    );
+
+    const card = h(
+      'div',
+      { class: 'roadrage-modal', attrs: { id: 'roadrage-modal' } },
+      h('div', { class: 'screentag', text: 'ROAD RAGE!' }),
+      h('h3', { text: t('roadrage.modal.title') }),
+      h('p', { text: t('roadrage.modal.desc') }),
+      ...(canPay
+        ? []
+        : [
+            h('div', {
+              class: 'roadrage-shortage',
+              attrs: { id: 'roadrage-shortage' },
+              text: t('roadrage.noMoney'),
+            }),
+          ]),
+      h('div', { class: 'btn-stack' }, payBtn, refuseBtn),
+    );
+
+    const wrap = h('div', { class: 'roadrage-modal-wrap', attrs: { id: 'roadrage-modal-wrap' } }, card);
+    this.roadRageModalEl = wrap;
+    this.root.append(wrap);
+  }
+
+  closeRoadRageConfrontation(): void {
+    if (this.roadRageModalEl) {
+      this.roadRageModalEl.remove();
+      this.roadRageModalEl = null;
+    }
   }
 
   // ---------------------------------------------------------------- pause
@@ -1496,13 +1789,37 @@ export class AppUI {
 
     // audio
     body.append(h('div', { class: 'divider' }), h('h3', { text: t('settings.audio') }));
-    body.append(toggle({ label: t('settings.mute'), value: s.muted, onChange: (v) => patch({ muted: v }) }));
+    body.append(toggle({
+      label: t('settings.mute'),
+      value: s.muted,
+      onChange: (v) => {
+        patch({ muted: v });
+        this.syncSoundUnlockPrompts();
+      },
+    }));
+    body.append(slider({ label: t('settings.master'), value: s.master, onInput: (v) => patch({ master: v }) }));
+    body.append(toggle({
+      label: t('settings.musicToggle'),
+      value: s.musicEnabled,
+      onChange: (v) => patch({ musicEnabled: v }),
+    }));
     body.append(slider({ label: t('settings.music'), value: s.music, onInput: (v) => patch({ music: v }) }));
+    body.append(toggle({
+      label: t('settings.sfxToggle'),
+      value: s.sfxEnabled,
+      onChange: (v) => patch({ sfxEnabled: v }),
+    }));
+    body.append(slider({ label: t('settings.sfx'), value: s.sfx, onInput: (v) => patch({ sfx: v }) }));
     body.append(slider({ label: t('settings.ambience'), value: s.ambience, onInput: (v) => patch({ ambience: v }) }));
     body.append(slider({ label: t('settings.traffic'), value: s.traffic, onInput: (v) => patch({ traffic: v }) }));
     body.append(slider({ label: t('settings.vehicle'), value: s.vehicle, onInput: (v) => patch({ vehicle: v }) }));
     body.append(slider({ label: t('settings.dialogue'), value: s.dialogue, onInput: (v) => patch({ dialogue: v }) }));
     body.append(slider({ label: t('settings.ui'), value: s.ui, onInput: (v) => patch({ ui: v }) }));
+    body.append(toggle({
+      label: t('settings.calmAmbience'),
+      value: s.reduceNoisyAmbience,
+      onChange: (v) => patch({ reduceNoisyAmbience: v }),
+    }));
     body.append(segmented<'both' | 'music' | 'street'>({
       label: t('settings.radioMode'),
       value: s.radioMode,
@@ -1822,6 +2139,8 @@ export class AppUI {
     this.prevObjTitle = '';
     this.prevObjSub = '';
     this.prevMoney = -1;
+    this.prevStamina = -1;
+    this.prevTeaAvail = null;
   }
 
   /** Keep UI text in sync when the language changes mid-session. */
