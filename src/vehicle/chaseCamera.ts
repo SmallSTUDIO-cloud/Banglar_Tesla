@@ -180,9 +180,23 @@ export class ChaseCamera {
   }
 
   private boostFovKick = 0;
+  private turboFovKick = 0;
+  private accelLag = 0;
+  private cameraRoll = 0;
+  private rollQuat = new THREE.Quaternion();
+  private zAxis = new THREE.Vector3(0, 0, 1);
 
   setBoostAmount(amount: number): void {
     this.boostFovKick = clamp01(amount);
+  }
+
+  setTurboAmount(amount: number): void {
+    this.turboFovKick = clamp01(amount);
+  }
+
+  setLongitudinalAccel(accel: number, dt: number): void {
+    const target = this.reduceMotion ? 0 : clamp(accel * 0.045, -0.26, 0.38);
+    this.accelLag = damp(this.accelLag, target, 6.5, dt);
   }
 
   /** Kick the trauma accumulator (0..1) on collision or curb hop. */
@@ -279,7 +293,12 @@ export class ChaseCamera {
       sideOffset = preset.sideOffset * this.sideSign;
     }
 
-    const backDist = preset.backDist + preset.speedPullback * speedNorm * (this.reduceMotion ? 0.35 : 1);
+    const motionScale = this.reduceMotion ? 0.35 : 1;
+    const turboPull = this.mode === 'front' ? -0.55 * this.turboFovKick : 1.05 * this.turboFovKick;
+    const backDist =
+      preset.backDist +
+      (preset.speedPullback * speedNorm + turboPull + (this.mode === 'front' ? -this.accelLag : this.accelLag)) *
+        motionScale;
     const height = preset.height + (this.mode === 'wide' || this.mode === 'chase' ? speedNorm * 0.16 : 0);
 
     if (this.mode === 'cockpit') {
@@ -322,27 +341,39 @@ export class ChaseCamera {
       this.currentLook.lerp(this.desiredLook, 1 - Math.exp(-(preset.posDamp + 2.5) * dt));
     }
 
-    // Dynamic FOV (NFS MW speed surge + টান boost kick, calmed when Reduce Effects is enabled)
+    // Dynamic FOV (speed + টান boost + টার্বো surge, calmed when Reduce Effects is enabled)
     const fovTarget =
       preset.baseFov +
-      (this.reduceMotion ? 0 : preset.speedFovBoost * speedNorm + this.boostFovKick * 4.4);
-    this.fov = damp(this.fov, fovTarget, 5.2, dt);
+      (this.reduceMotion
+        ? 0
+        : preset.speedFovBoost * speedNorm + this.boostFovKick * 4.2 + this.turboFovKick * 10.5);
+    this.fov = damp(this.fov, fovTarget, 6.2, dt);
     if (Math.abs(this.fov - this.appliedFov) > 0.04) {
       this.camera.fov = this.fov;
       this.appliedFov = this.fov;
       this.camera.updateProjectionMatrix();
     }
 
-    // Bounded camera shake
-    this.trauma = Math.max(0, this.trauma - dt * 1.65);
-    const shake = Math.min(0.11, this.trauma * this.trauma * 0.14);
+    // Bounded camera shake + subtle cornering bank
+    this.trauma = Math.max(0, this.trauma - dt * 1.75);
+    const shake = Math.min(0.13, this.trauma * this.trauma * 0.16);
     const now = performance.now() * 0.018;
     const sx = shake > 0.0005 ? (Math.sin(now * 2.3) + Math.cos(now * 3.7)) * shake : 0;
     const sy = shake > 0.0005 ? Math.sin(now * 3.1) * shake * 0.65 : 0;
 
+    const wantRoll =
+      this.reduceMotion || (this.mode !== 'chase' && this.mode !== 'close' && this.mode !== 'low')
+        ? 0
+        : clamp(-this.lookOffset * 0.026, -0.028, 0.028);
+    this.cameraRoll = damp(this.cameraRoll, wantRoll, 7.0, dt);
+
     this.camera.position.set(this.currentPos.x + sx, this.currentPos.y + sy, this.currentPos.z);
     this.lookMat.lookAt(this.camera.position, this.currentLook, this.upVec);
     this.targetQuat.setFromRotationMatrix(this.lookMat);
+    if (Math.abs(this.cameraRoll) > 0.0004) {
+      this.rollQuat.setFromAxisAngle(this.zAxis, this.cameraRoll);
+      this.targetQuat.multiply(this.rollQuat);
+    }
     const rotAlpha = this.mode === 'cockpit' ? 1 - Math.exp(-24 * dt) : 1 - Math.exp(-14 * dt);
     this.currentQuat.slerp(this.targetQuat, rotAlpha);
     this.camera.quaternion.copy(this.currentQuat);
@@ -352,9 +383,20 @@ export class ChaseCamera {
     for (let i = 0; i < colliders.length; i++) {
       const c = colliders[i];
       if (c.disabled || c.height < y - 0.15) continue;
-      if (x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad) {
-        return true;
+      if (x <= c.minX - pad || x >= c.maxX + pad || z <= c.minZ - pad || z >= c.maxZ + pad) {
+        continue;
       }
+      if (c.cx !== undefined && c.cz !== undefined && c.halfX !== undefined && c.halfZ !== undefined) {
+        const yaw = c.yaw ?? 0;
+        const cy = Math.cos(yaw);
+        const sy = Math.sin(yaw);
+        const wx = x - c.cx;
+        const wz = z - c.cz;
+        const lx = Math.abs(wx * cy - wz * sy);
+        const lz = Math.abs(wx * sy + wz * cy);
+        if (lx >= c.halfX + pad || lz >= c.halfZ + pad) continue;
+      }
+      return true;
     }
     return false;
   }

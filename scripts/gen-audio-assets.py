@@ -577,42 +577,236 @@ def gen_sfx_and_dialogue() -> None:
                 stall_buf[st + j] += clatter * amp
     write_wav(AUDIO_DIR / "sfx" / "stall-crash.wav", stall_buf, sr)
 
-    # 5. Dialogue fallback cues (used ONLY when no native Android bn-BD TTS or browser bn-* voice exists)
-    # Angry car driver ("ওই হারামজাদা, দাঁড়া!" - 7 emphatic baritone syllables)
-    driver_cue = synth_formant_phrase(
-        sr,
-        [
-            (0.05, 0.19, 152.0, 500.0, 980.0),   # ওই
-            (0.28, 0.16, 166.0, 740.0, 1280.0),  # হা-
-            (0.45, 0.17, 174.0, 680.0, 1340.0),  # -রাম-
-            (0.63, 0.16, 158.0, 700.0, 1240.0),  # -জা-
-            (0.80, 0.20, 144.0, 720.0, 1180.0),  # -দা,
-            (1.08, 0.22, 178.0, 740.0, 1280.0),  # দাঁ-
-            (1.31, 0.24, 138.0, 680.0, 1150.0),  # -ড়া!
-        ],
-        breath_seed=601,
-    )
-    write_wav(AUDIO_DIR / "dialogue" / "roadrage-driver-cue.wav", driver_cue, sr)
+    # 5. v0.5.0 Turbo, Heavy Crash & Police Siren SFX
+    # 5a. Turbo Ignite: punchy flame ignition + rising turbine spool
+    n_tig = int(sr * 0.72)
+    tig_buf = [0.0] * n_tig
+    lp_tig = 0.0
+    for i in range(n_tig):
+        t = i / sr
+        w = rng.uniform(-1.0, 1.0)
+        cutoff = 0.14 + 0.42 * min(1.0, t / 0.22)
+        lp_tig += cutoff * (w - lp_tig)
+        env = math.sin(min(1.0, t / 0.045) * math.pi * 0.5) * math.exp(-max(0.0, t - 0.14) * 3.4)
+        spool = (
+            0.30 * math.sin(2 * math.pi * (145.0 + 420.0 * t) * t)
+            + 0.18 * math.sin(2 * math.pi * (290.0 + 840.0 * t) * t)
+        ) * env
+        flame_thump = 0.42 * math.sin(2 * math.pi * (82.0 * math.exp(-t * 11.0) + 42.0) * t) * math.exp(-t * 10.0)
+        tig_buf[i] = lp_tig * 0.62 * env + spool + flame_thump
+    write_wav(AUDIO_DIR / "sfx" / "turbo-ignite.wav", tig_buf, sr)
 
-    # Apologetic player ("মাফ করে দেন ভাই, ভুলে লেগে গেছে!" - faster nervous higher register)
-    player_cue = synth_formant_phrase(
-        sr,
-        [
-            (0.04, 0.17, 210.0, 720.0, 1240.0),  # মাফ
-            (0.23, 0.13, 198.0, 540.0, 1080.0),  # ক-
-            (0.37, 0.14, 206.0, 480.0, 1780.0),  # -রে
-            (0.53, 0.16, 196.0, 520.0, 1720.0),  # দেন
-            (0.71, 0.22, 184.0, 720.0, 1380.0),  # ভাই,
-            (1.00, 0.14, 208.0, 380.0, 960.0),   # ভু-
-            (1.15, 0.14, 198.0, 480.0, 1760.0),  # -লে
-            (1.31, 0.13, 202.0, 490.0, 1800.0),  # লে-
-            (1.45, 0.14, 194.0, 480.0, 1750.0),  # -গে
-            (1.61, 0.15, 190.0, 500.0, 1740.0),  # গে-
-            (1.77, 0.20, 174.0, 480.0, 1680.0),  # -ছে!
-        ],
-        breath_seed=602,
+    # 5b. Turbo Loop: seamless 2.0s fiery jet/turbine rush while टार্বো is held
+    n_tlp = int(sr * 2.0)
+    tlp_buf = [0.0] * n_tlp
+    lp_a = 0.0
+    lp_b = 0.0
+    for i in range(n_tlp):
+        t = i / sr
+        w = rng.uniform(-1.0, 1.0)
+        mod = 0.24 + 0.07 * math.sin(2 * math.pi * 4.0 * t)
+        lp_a += mod * (w - lp_a)
+        lp_b += 0.06 * (lp_a - lp_b)
+        rush = (lp_a - lp_b * 0.55) * 0.62
+        whine = (
+            0.14 * math.sin(2 * math.pi * 360.0 * t + 0.4 * math.sin(2 * math.pi * 2.0 * t))
+            + 0.09 * math.sin(2 * math.pi * 720.0 * t)
+            + 0.11 * math.sin(2 * math.pi * 110.0 * t)
+        )
+        tlp_buf[i] = rush + whine
+    write_wav(AUDIO_DIR / "sfx" / "turbo-loop.wav", tlp_buf, sr, seamless_fade_ms=65.0)
+
+    # 5c. Turbo Release: crisp pressure blow-off flutter
+    n_trel = int(sr * 0.52)
+    trel_buf = [0.0] * n_trel
+    lp_tr = 0.0
+    for i in range(n_trel):
+        t = i / sr
+        w = rng.uniform(-1.0, 1.0)
+        lp_tr += 0.36 * (w - lp_tr)
+        flutter = 0.68 + 0.32 * math.sin(2 * math.pi * 24.0 * t)
+        env = math.sin(min(1.0, t / 0.02) * math.pi * 0.5) * math.exp(-t * 7.2)
+        drop_tone = 0.20 * math.sin(2 * math.pi * max(110.0, 540.0 - 780.0 * t) * t) * env
+        trel_buf[i] = (w - lp_tr * 0.45) * 0.48 * flutter * env + drop_tone
+    write_wav(AUDIO_DIR / "sfx" / "turbo-release.wav", trel_buf, sr)
+
+    # 5d. Heavy Arcade Crash: layered low punch + metallic chassis crunch + spark sizzle
+    n_cr = int(sr * 1.15)
+    cr_buf = [0.0] * n_cr
+    lp_cr = 0.0
+    for i in range(n_cr):
+        t = i / sr
+        w = rng.uniform(-1.0, 1.0)
+        lp_cr += 0.22 * (w - lp_cr)
+        punch = 0.72 * math.sin(2 * math.pi * (108.0 * math.exp(-t * 13.0) + 40.0) * t) * math.exp(-t * 8.5)
+        crunch = lp_cr * 0.78 * math.exp(-t * 14.0)
+        ring = (
+            0.24 * math.sin(2 * math.pi * 512.0 * t) * math.exp(-t * 6.5)
+            + 0.19 * math.sin(2 * math.pi * 1140.0 * t) * math.exp(-t * 9.0)
+            + 0.14 * math.sin(2 * math.pi * 2380.0 * t) * math.exp(-t * 13.0)
+        )
+        sizzle = (w - lp_cr) * 0.28 * math.exp(-max(0.0, t - 0.05) * 7.5)
+        cr_buf[i] = punch + crunch + ring + sizzle
+    write_wav(AUDIO_DIR / "sfx" / "crash-heavy.wav", cr_buf, sr)
+
+    # 5e. Police Patrol Siren Loop: seamless 2.4s dual-harmonic serious patrol wail
+    n_sir = int(sr * 2.4)
+    sir_buf = [0.0] * n_sir
+    phase1 = 0.0
+    phase2 = 0.0
+    for i in range(n_sir):
+        t = i / sr
+        # Smooth sweep 630 Hz <-> 1180 Hz over 2.4s cycle (starts and ends at exact same freq)
+        sweep = 0.5 - 0.5 * math.cos(2 * math.pi * t / 2.4)
+        freq = 630.0 + 550.0 * (sweep ** 0.85)
+        phase1 += 2 * math.pi * freq / sr
+        phase2 += 2 * math.pi * (freq * 2.0) / sr
+        sir_buf[i] = 0.52 * math.sin(phase1) + 0.19 * math.sin(phase2) + 0.07 * math.sin(phase1 * 3.0)
+    write_wav(AUDIO_DIR / "sfx" / "police-siren-loop.wav", sir_buf, sr, seamless_fade_ms=55.0)
+
+    # 6. Authentic Phonetic Bengali (`bn`) & English (`en`) Dialogue Fallback WAVs via libespeak-ng
+    gen_phonetic_dialogue_cues()
+
+
+def gen_phonetic_dialogue_cues() -> None:
+    """
+    Render genuinely intelligible Bengali (`bn`) and English (`en`) fallback speech WAVs
+    offline via `libespeak-ng` (`espeakng_loader`) with warm vocal smoothing and optional
+    police radio band-pass filtering. Used whenever no verified native/browser TTS voice
+    is installed on the target device.
+    """
+    import array
+    import ctypes
+    import espeakng_loader
+
+    lib = ctypes.CDLL(espeakng_loader.get_library_path())
+    lib.espeak_Initialize.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    lib.espeak_Initialize.restype = ctypes.c_int
+    espeak_sr = lib.espeak_Initialize(2, 500, espeakng_loader.get_data_path().encode("utf-8"), 0)
+    if espeak_sr <= 0:
+        raise RuntimeError(f"espeak_Initialize failed: {espeak_sr}")
+
+    SYNTH_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(ctypes.c_short), ctypes.c_int, ctypes.c_void_p)
+    captured = array.array("h")
+
+    @SYNTH_CB
+    def on_synth(wav, numsamples, _events):
+        if wav and numsamples > 0:
+            for idx in range(numsamples):
+                captured.append(wav[idx])
+        return 0
+
+    lib.espeak_SetSynthCallback.argtypes = [SYNTH_CB]
+    lib.espeak_SetSynthCallback(on_synth)
+    lib.espeak_SetVoiceByName.argtypes = [ctypes.c_char_p]
+    lib.espeak_SetParameter.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+    lib.espeak_Synth.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_uint,
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+
+    def render_line(
+        filename: str,
+        voice: str,
+        text: str,
+        rate: int = 152,
+        pitch: int = 48,
+        pitch_range: int = 66,
+        radio_filter: bool = False,
+    ) -> None:
+        del captured[:]
+        if lib.espeak_SetVoiceByName(voice.encode("utf-8")) != 0:
+            lib.espeak_SetVoiceByName(voice.split("+")[0].encode("utf-8"))
+        lib.espeak_SetParameter(1, rate, 0)         # espeakRATE
+        lib.espeak_SetParameter(2, 185, 0)          # espeakVOLUME
+        lib.espeak_SetParameter(3, pitch, 0)        # espeakPITCH
+        lib.espeak_SetParameter(4, pitch_range, 0)  # espeakRANGE
+        payload = text.encode("utf-8")
+        lib.espeak_Synth(payload, len(payload) + 1, 0, 0, 0, 1, None, None)
+
+        raw = [s / 32768.0 for s in captured]
+        # Trim leading/trailing digital silence while keeping natural 35ms pad
+        thr = 0.008
+        first = next((i for i, v in enumerate(raw) if abs(v) > thr), 0)
+        last = len(raw) - 1 - next((i for i, v in enumerate(reversed(raw)) if abs(v) > thr), 0)
+        pad = int(espeak_sr * 0.035)
+        trimmed = [0.0] * pad + raw[max(0, first - pad): min(len(raw), last + pad)] + [0.0] * pad
+
+        # Warm anti-buzz vocal smoothing + soft dynamic compression for clear phone-speaker intelligibility
+        out: list[float] = []
+        lp = 0.0
+        hp = 0.0
+        for v in trimmed:
+            lp += (0.52 if not radio_filter else 0.38) * (v - lp)
+            if radio_filter:
+                hp += 0.065 * (lp - hp)
+                sig = math.tanh((lp - hp) * 2.1)
+            else:
+                hp += 0.008 * (lp - hp)
+                sig = math.tanh((lp - hp) * 1.45)
+            out.append(sig)
+
+        if radio_filter:
+            # Subtle 45ms police walkie-talkie squelch chirp at start & end
+            sq_n = min(len(out), int(espeak_sr * 0.045))
+            for i in range(sq_n):
+                ti = i / espeak_sr
+                out[i] += 0.16 * math.sin(2 * math.pi * 1920.0 * ti) * math.exp(-ti * 55.0)
+                out[-1 - i] += 0.12 * math.sin(2 * math.pi * 1640.0 * ti) * math.exp(-ti * 55.0)
+
+        write_wav(AUDIO_DIR / "dialogue" / filename, out, espeak_sr)
+
+    # Road-rage angry sedan driver (Bangla & English)
+    render_line("roadrage-driver-cue.wav", "bn+m3", "ওই হারামজাদা, দাঁড়া!", rate=148, pitch=38, pitch_range=74)
+    render_line("roadrage-driver-en.wav", "en-us+m3", "Hey maniac, pull right over!", rate=156, pitch=38, pitch_range=72)
+
+    # Road-rage apologetic rickshaw puller (Bangla & English)
+    render_line("roadrage-player-cue.wav", "bn+m7", "মাফ করে দেন ভাই, ভুলে লেগে গেছে!", rate=158, pitch=56, pitch_range=68)
+    render_line("roadrage-player-en.wav", "en-us+m7", "Sorry brother, it was an honest mistake!", rate=164, pitch=54, pitch_range=66)
+
+    # Blacklist rival challenge taunt (Bangla & English)
+    render_line(
+        "rival-taunt-bn.wav",
+        "bn+m4",
+        "মোহাম্মদ্‌পুরের রাস্তা আজ আমার দখলে! পার্‌লে ধরে দেখা!",
+        rate=150,
+        pitch=42,
+        pitch_range=72,
     )
-    write_wav(AUDIO_DIR / "dialogue" / "roadrage-player-cue.wav", player_cue, sr)
+    render_line(
+        "rival-taunt-en.wav",
+        "en-us+m4",
+        "Mohammadpur's streets belong to me tonight! Catch me if you can!",
+        rate=158,
+        pitch=42,
+        pitch_range=70,
+    )
+
+    # Police pursuit dispatch alert (Bangla & English, walkie-talkie filtered)
+    render_line(
+        "police-alert-bn.wav",
+        "bn+m2",
+        "সব পুলিশ ইউনিট শোনো, রিক্‌শাটাকে এখন্‌ই থামাও!",
+        rate=156,
+        pitch=44,
+        pitch_range=62,
+        radio_filter=True,
+    )
+    render_line(
+        "police-alert-en.wav",
+        "en-us+m2",
+        "All police units, intercept that rickshaw immediately!",
+        rate=164,
+        pitch=44,
+        pitch_range=60,
+        radio_filter=True,
+    )
 
 
 def main() -> None:
@@ -624,8 +818,9 @@ def main() -> None:
     gen_tea_stall_clink()
     gen_hawker_and_construction()
     gen_sfx_and_dialogue()
-    total_bytes = sum(p.stat().st_size for p in AUDIO_DIR.rglob("*.wav"))
-    print(f"\n[audio-gen] Generated all 15 original bundled audio assets ({total_bytes / (1024 * 1024):.2f} MB total).")
+    wav_files = sorted(AUDIO_DIR.rglob("*.wav"))
+    total_bytes = sum(p.stat().st_size for p in wav_files)
+    print(f"\n[audio-gen] Generated all {len(wav_files)} bundled audio assets ({total_bytes / (1024 * 1024):.2f} MB total).")
 
 
 if __name__ == "__main__":

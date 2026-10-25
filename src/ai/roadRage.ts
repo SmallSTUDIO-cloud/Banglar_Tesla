@@ -8,6 +8,7 @@
  */
 
 import * as THREE from 'three';
+import { getLocale } from '../core/i18n';
 import { PassengerActor } from '../missions/actors';
 import type { TrafficSystem } from './traffic';
 import type { BanglaSpeechService } from '../audio/speech';
@@ -16,7 +17,9 @@ import type { AudioEngine } from '../audio/audio';
 export type RoadRageState = 'idle' | 'exiting' | 'pursuing' | 'confronting' | 'scuffling';
 
 export const ROADRAGE_DRIVER_LINE = 'ওই হারামজাদা, দাঁড়া!';
+export const ROADRAGE_DRIVER_LINE_EN = 'Hey maniac, pull right over!';
 export const ROADRAGE_PLAYER_LINE = 'মাফ করে দেন ভাই, ভুলে লেগে গেছে!';
+export const ROADRAGE_PLAYER_LINE_EN = 'Sorry brother, it was an honest mistake!';
 export const ROADRAGE_ESCAPED_TEXT = 'পালাতে পেরেছেন!';
 export const ROADRAGE_PAY_LABEL = '১০০ টাকা দিয়ে মিটমাট করুন';
 export const ROADRAGE_REFUSE_LABEL = 'দেব না';
@@ -166,21 +169,30 @@ export class RoadRageSystem {
   private speakDriverThenPlayer(): void {
     if (this.driverSpoken) return;
     this.driverSpoken = true;
+    const loc = getLocale();
+    const driverText = loc === 'en' ? ROADRAGE_DRIVER_LINE_EN : ROADRAGE_DRIVER_LINE;
+    const playerText = loc === 'en' ? ROADRAGE_PLAYER_LINE_EN : ROADRAGE_PLAYER_LINE;
     const dlg = this.cb.getDialogueSettings();
-    this.cb.onSubtitle('roadrage.speaker.driver', ROADRAGE_DRIVER_LINE);
+    this.cb.onSubtitle('roadrage.speaker.driver', driverText);
     this.speech.speak({
       speaker: 'driver',
-      text: ROADRAGE_DRIVER_LINE,
+      text: driverText,
+      locale: loc,
+      priority: 3,
       volume: dlg.volume,
       muted: dlg.muted,
       onEnd: () => {
         if (this.state === 'idle' || this.playerSpoken) return;
         this.playerSpoken = true;
+        const loc2 = getLocale();
+        const pLine = loc2 === 'en' ? ROADRAGE_PLAYER_LINE_EN : playerText;
         const dlg2 = this.cb.getDialogueSettings();
-        this.cb.onSubtitle('roadrage.speaker.player', ROADRAGE_PLAYER_LINE);
+        this.cb.onSubtitle('roadrage.speaker.player', pLine);
         this.speech.speak({
           speaker: 'player',
-          text: ROADRAGE_PLAYER_LINE,
+          text: pLine,
+          locale: loc2,
+          priority: 3,
           volume: dlg2.volume,
           muted: dlg2.muted,
         });

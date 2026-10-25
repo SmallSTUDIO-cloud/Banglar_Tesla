@@ -24,6 +24,8 @@ export interface SampledInput {
   throttle: number;
   brake: number;
   horn: boolean;
+  /** Hold-to-boost `টার্বো`: true ONLY while touch button, KeyX/KeyN/CtrlLeft, or Gamepad bumper is held. */
+  turbo: boolean;
 }
 
 export class InputManager {
@@ -32,10 +34,12 @@ export class InputManager {
   throttle = 0;
   brake = 0;
   hornPressed = false;
+  turboHeld = false;
   private keys = new Set<string>();
   private touchSteer = 0;
   private touchPedal = false;
   private touchBrake = false;
+  private touchTurbo = false;
   private wheelSteer = 0;
   private sensitivity = 0.9;
   private stickThreshold = 0.05;
@@ -44,15 +48,17 @@ export class InputManager {
   private prevGamepadCam = false;
   private prevGamepadPause = false;
   private prevGamepadHorn = false;
-  private out: SampledInput = { steer: 0, throttle: 0, brake: 0, horn: false };
+  private out: SampledInput = { steer: 0, throttle: 0, brake: 0, horn: false, turbo: false };
 
   onPause?: () => void;
   onCamera?: () => void;
   onRecover?: () => void;
   onHorn?: () => void;
   onDevPerf?: () => void;
+  onDevColliders?: () => void;
   onTanToggle?: () => void;
   onTeaInteract?: () => void;
+  onBlacklistOpen?: () => void;
 
   constructor() {}
 
@@ -85,6 +91,13 @@ export class InputManager {
         ev.preventDefault();
         this.onDevPerf?.();
       }
+      if (ev.code === 'F4') {
+        ev.preventDefault();
+        this.onDevColliders?.();
+      }
+      if (ev.code === 'KeyK') {
+        this.onBlacklistOpen?.();
+      }
       if (ev.code === 'Space' || ev.code === 'KeyH' || ev.code === 'KeyB') {
         if (ev.code === 'Space') ev.preventDefault();
         this.hornPressed = true;
@@ -98,15 +111,19 @@ export class InputManager {
       if (ev.code === 'Space' || ev.code === 'KeyH' || ev.code === 'KeyB') this.hornPressed = false;
     };
     const blur = (): void => {
-      this.keys.clear();
-      this.touchPedal = false;
-      this.touchBrake = false;
-      this.touchSteer = 0;
-      this.wheelSteer = 0;
+      this.clearAllHolds();
+    };
+    const visChange = (): void => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        this.clearAllHolds();
+      }
     };
     window.addEventListener('keydown', keydown);
     window.addEventListener('keyup', keyup);
     window.addEventListener('blur', blur);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', visChange);
+    }
     this.listeners.push(
       { type: 'keydown', fn: keydown },
       { type: 'keyup', fn: keyup },
@@ -145,6 +162,23 @@ export class InputManager {
     this.touchBrake = down;
   }
 
+  /** Hold-to-boost `টার্বো`: active ONLY while pressed/held. */
+  setTurbo(down: boolean): void {
+    this.touchTurbo = down;
+  }
+
+  /** Clear all held inputs immediately (pause, menu, modal, blur, touchcancel). */
+  clearAllHolds(): void {
+    this.keys.clear();
+    this.touchPedal = false;
+    this.touchBrake = false;
+    this.touchTurbo = false;
+    this.touchSteer = 0;
+    this.wheelSteer = 0;
+    this.hornPressed = false;
+    this.turboHeld = false;
+  }
+
   ringBell(): void {
     this.hornPressed = true;
     this.onHorn?.();
@@ -162,11 +196,13 @@ export class InputManager {
     const kbSteer = (this.key('KeyD', 'ArrowRight') ? 1 : 0) - (this.key('KeyA', 'ArrowLeft') ? 1 : 0);
     const kbThrottle = this.key('KeyW', 'ArrowUp') ? 1 : 0;
     const kbBrake = this.key('KeyS', 'ArrowDown') ? 1 : 0;
+    const kbTurbo = this.key('KeyX', 'KeyN', 'ControlLeft');
 
     // Optional standard HTML5 Gamepad / steering controller support
     let gpSteer = 0;
     let gpThrottle = 0;
     let gpBrake = 0;
+    let gpTurbo = false;
     if (typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function') {
       const pads = navigator.getGamepads();
       const pad = pads ? pads[0] || pads[1] || pads[2] || pads[3] : null;
@@ -177,6 +213,7 @@ export class InputManager {
         gpSteer = dpadLeft || dpadRight ? dpadLeft + dpadRight : ax0;
         gpThrottle = Math.max(pad.buttons[7]?.value ?? 0, pad.buttons[0]?.pressed ? 1 : 0);
         gpBrake = Math.max(pad.buttons[6]?.value ?? 0, pad.buttons[1]?.pressed ? 1 : 0);
+        gpTurbo = Boolean(pad.buttons[5]?.pressed || pad.buttons[4]?.pressed);
 
         const camBtn = !!pad.buttons[3]?.pressed;
         if (camBtn && !this.prevGamepadCam) this.onCamera?.();
@@ -215,11 +252,13 @@ export class InputManager {
     this.steer = clamp(scaled, -1, 1);
     this.throttle = clamp(Math.max(this.touchPedal ? 1 : 0, kbThrottle, gpThrottle), 0, 1);
     this.brake = clamp(Math.max(this.touchBrake ? 1 : 0, kbBrake, gpBrake), 0, 1);
+    this.turboHeld = Boolean(this.touchTurbo || kbTurbo || gpTurbo);
 
     this.out.steer = this.steer;
     this.out.throttle = this.throttle;
     this.out.brake = this.brake;
     this.out.horn = this.hornPressed;
+    this.out.turbo = this.turboHeld;
     return this.out;
   }
 }

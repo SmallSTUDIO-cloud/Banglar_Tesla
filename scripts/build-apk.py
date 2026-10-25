@@ -29,7 +29,7 @@ SMALI_DIR = ANDROID_MAIN / "smali"
 ASSETS_DIR = ANDROID_MAIN / "assets"
 PUBLIC_ASSETS_DIR = ASSETS_DIR / "public"
 ARTIFACTS_DIR = ROOT / "artifacts"
-OUT_APK = ARTIFACTS_DIR / "banglar-tesla-v0.4.0-debug.apk"
+OUT_APK = ARTIFACTS_DIR / "banglar-tesla-v0.5.0-debug.apk"
 STABLE_APK = ARTIFACTS_DIR / "Banglar-Tesla.apk"
 
 TOOLS_DIR = Path("/tmp/android-tools")
@@ -473,9 +473,9 @@ def build_and_verify() -> None:
                 "--target-sdk-version",
                 "34",
                 "--version-code",
-                "4",
+                "5",
                 "--version-name",
-                "0.4.0",
+                "0.5.0",
                 "-0",
                 ".ttf",
                 "-0",
@@ -568,6 +568,9 @@ def build_and_verify() -> None:
         text=True,
     )
     print(badging.stdout.strip())
+    assert "versionCode='5'" in badging.stdout and "versionName='0.5.0'" in badging.stdout, (
+        "APK badging version mismatch: expected versionCode='5' versionName='0.5.0'"
+    )
 
     # 7. Byte-for-byte asset verification inside signed APK
     with zipfile.ZipFile(OUT_APK, "r") as zf:
