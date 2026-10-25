@@ -1,7 +1,7 @@
 {
   "name": "banglar-tesla",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Banglar Tesla \u2014 a 3D Mohammadpur, Dhaka rickshaw driving simulator.",
   "type": "module",
   "scripts": {
@@ -15,6 +15,8 @@
     "test:e2e": "node tests/e2e/run-e2e.mjs",
     "test:ui": "node tests/e2e/ui-flow.mjs",
     "test:mobile": "node tests/e2e/mobile-check.mjs",
+    "test:spec": "node tests/e2e/verify-spec.mjs",
+    "benchmark": "node tests/e2e/benchmark-suite.mjs",
     "shots": "node tests/e2e/shoot.mjs",
     "perf": "node tests/e2e/perf.mjs"
   },

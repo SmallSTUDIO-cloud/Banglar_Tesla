@@ -214,21 +214,68 @@ export class EnvironmentSystem {
     scene.fog = new THREE.FogExp2(new THREE.Color('#d7ded6').getHex(), 0.006);
     scene.background = new THREE.Color('#8fb4cf');
 
+    this.initRainPool();
     this.setQuality(quality);
     this.setPhase('morning');
   }
 
+  private initRainPool(): void {
+    const maxDrops = 420;
+    const positions = new Float32Array(maxDrops * 6);
+    this.rainDrops = new Float32Array(maxDrops * 3);
+    this.rainVel = new Float32Array(maxDrops);
+    for (let i = 0; i < maxDrops; i++) {
+      const x = (Math.random() - 0.5) * 44;
+      const y = Math.random() * 26;
+      const z = (Math.random() - 0.5) * 44;
+      this.rainDrops[i * 3] = x;
+      this.rainDrops[i * 3 + 1] = y;
+      this.rainDrops[i * 3 + 2] = z;
+      this.rainVel[i] = 17 + Math.random() * 11;
+      positions[i * 6] = x;
+      positions[i * 6 + 1] = y;
+      positions[i * 6 + 2] = z;
+      positions[i * 6 + 3] = x + 0.07;
+      positions[i * 6 + 4] = y - 0.62;
+      positions[i * 6 + 5] = z;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.LineBasicMaterial({
+      color: 0xd8ecf6,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+      fog: true,
+    });
+    const lines = new THREE.LineSegments(geo, mat);
+    lines.frustumCulled = false;
+    lines.renderOrder = 3;
+    lines.visible = false;
+    this.rain = lines as unknown as THREE.Points;
+    this.rainGeo = geo;
+    this.scene.add(lines);
+  }
+
   setLampPositions(positions: THREE.Vector3[]): void {
     this.lampPositions = positions;
+    for (const l of this.lamps) this.scene.remove(l);
+    for (const s of this.glowSprites) {
+      this.scene.remove(s);
+      s.material.dispose();
+    }
     const spriteTex = radialSprite('rgba(255,214,150,0.85)', 'rgba(255,190,90,0)');
     this.lamps = [];
     this.glowSprites = [];
-    const maxLights = this.quality.particles === 'minimal' ? 3 : this.quality.particles === 'moderate' ? 4 : 6;
-    for (let i = 0; i < maxLights; i++) {
-      const light = new THREE.PointLight(0xffcf94, 0, 26, 1.55);
-      light.castShadow = false;
-      this.scene.add(light);
-      this.lamps.push(light);
+    // Constant 1 dynamic street PointLight (+ playerFill = 2 invariant PointLights across all presets!)
+    // paired with 6 warm volumetric halo sprites + ground light pools for rich Dhaka night atmosphere
+    // without forcing 6 per-pixel PointLight BRDF loops on Mali-G72 MP3 during daytime or night.
+    const keyLamp = new THREE.PointLight(0xffcf94, 0, 28, 1.5);
+    keyLamp.castShadow = false;
+    this.scene.add(keyLamp);
+    this.lamps.push(keyLamp);
+
+    for (let i = 0; i < 6; i++) {
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({
           map: spriteTex,
@@ -239,7 +286,8 @@ export class EnvironmentSystem {
           opacity: 0,
         }),
       );
-      sprite.scale.set(2.6, 2.6, 1);
+      sprite.scale.set(2.7, 2.7, 1);
+      sprite.visible = false;
       this.scene.add(sprite);
       this.glowSprites.push(sprite);
     }
@@ -247,6 +295,7 @@ export class EnvironmentSystem {
 
   setQuality(quality: QualitySettings): void {
     this.quality = quality;
+    const prevSize = this.sun.shadow.mapSize.x;
     this.sun.castShadow = quality.shadows;
     this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
     const d = quality.shadowDistance;
@@ -257,7 +306,7 @@ export class EnvironmentSystem {
     cam.bottom = -d;
     cam.far = d * 5;
     cam.updateProjectionMatrix();
-    if (this.sun.shadow.map) {
+    if (this.sun.shadow.map && prevSize !== quality.shadowMapSize) {
       this.sun.shadow.map.dispose();
       this.sun.shadow.map = null;
     }
@@ -326,57 +375,46 @@ export class EnvironmentSystem {
     // the street actually reads as night instead of a grey overcast afternoon.
     this.scene.environmentIntensity =
       this.phase === 'night' ? 0.1 : this.phase === 'blue' ? 0.22 : this.phase === 'golden' ? 0.42 : 0.5;
-    this.sun.position.copy(this.sun.target.position).addScaledVector(dir, 60);
-    this.sun.visible = cfg.sunIntensity > 0.05;
-    this.sun.castShadow = this.quality.shadows && cfg.sunIntensity > 0.3;
-    void this.sun.position;
+    const moonDir = this.tmpSunDir.set(
+      Math.cos(el) * Math.sin(az),
+      Math.max(0.22, Math.sin(el)),
+      Math.cos(el) * Math.cos(az),
+    ).normalize();
+    this.sun.position.copy(this.sun.target.position).addScaledVector(moonDir, 60);
+    // Keep directional light & shadow topology CONSTANT across day/night transitions
+    // so Three.js NEVER recompiles NUM_DIR_LIGHTS / NUM_DIR_LIGHT_SHADOWS mid-drive!
+    this.sun.visible = true;
+    this.sun.castShadow = this.quality.shadows;
   }
 
+  private activeRainDrops = 0;
+
   private rebuildRain(): void {
-    if (this.rain) {
-      this.scene.remove(this.rain);
-      this.rainGeo?.dispose();
-      (this.rain.material as THREE.PointsMaterial).dispose();
-      this.rain = null;
+    if (!this.rain || !this.rainGeo) return;
+    if (this.weather !== 'rain') {
+      this.rain.visible = false;
+      this.activeRainDrops = 0;
+      return;
     }
-    if (this.weather !== 'rain') return;
-    const count = Math.max(90, this.quality.rainParticles);
-    // Two vertices per drop → short bright streaks that read as heavy monsoon
-    // rain even on a tiny phone screen, at the cost of one draw call.
-    const positions = new Float32Array(count * 6);
-    this.rainDrops = new Float32Array(count * 3);
-    this.rainVel = new Float32Array(count);
-    const rng = () => Math.random();
-    for (let i = 0; i < count; i++) {
-      const x = (rng() - 0.5) * 44;
-      const y = rng() * 26;
-      const z = (rng() - 0.5) * 44;
-      this.rainDrops[i * 3] = x;
-      this.rainDrops[i * 3 + 1] = y;
-      this.rainDrops[i * 3 + 2] = z;
-      this.rainVel[i] = 17 + rng() * 11;
-      positions[i * 6] = x;
-      positions[i * 6 + 1] = y;
-      positions[i * 6 + 2] = z;
-      positions[i * 6 + 3] = x + 0.07;
-      positions[i * 6 + 4] = y - 0.62;
-      positions[i * 6 + 5] = z;
+    const maxDrops = this.rainVel.length;
+    const count = Math.min(maxDrops, Math.max(90, this.quality.rainParticles));
+    this.activeRainDrops = count;
+    this.rainGeo.setDrawRange(0, count * 2);
+    this.rain.visible = true;
+  }
+
+  /** Temporarily reveal pooled weather/glow objects so `renderer.compile()` prewarms them at boot. */
+  withPrewarmState(run: () => void): void {
+    const prevRain = this.rain ? this.rain.visible : false;
+    const prevSprite = this.glowSprites[0] ? this.glowSprites[0].visible : false;
+    if (this.rain) this.rain.visible = true;
+    if (this.glowSprites[0]) this.glowSprites[0].visible = true;
+    try {
+      run();
+    } finally {
+      if (this.rain) this.rain.visible = prevRain;
+      if (this.glowSprites[0]) this.glowSprites[0].visible = prevSprite;
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.LineBasicMaterial({
-      color: 0xd8ecf6,
-      transparent: true,
-      opacity: 0.5,
-      depthWrite: false,
-      fog: true,
-    });
-    const lines = new THREE.LineSegments(geo, mat);
-    lines.frustumCulled = false;
-    lines.renderOrder = 3;
-    this.rain = lines as unknown as THREE.Points;
-    this.rainGeo = geo;
-    this.scene.add(lines);
   }
 
   /** Per-frame update: rain follows the player, lamp intensities interpolate. */
@@ -391,14 +429,12 @@ export class EnvironmentSystem {
     const cfg = PHASES[this.phase];
     const lampTarget = cfg.lamps * (this.weather === 'rain' && this.phase !== 'night' ? 0.5 : 1);
 
-    if (this.lampPositions.length > 0 && this.lamps.length > 0) {
+    if (this.lampPositions.length > 0 && this.glowSprites.length > 0) {
       if (lampTarget <= 0.02) {
-        for (let i = 0; i < this.lamps.length; i++) {
-          this.lamps[i].intensity = 0;
-          if (this.glowSprites[i]) this.glowSprites[i].visible = false;
-        }
+        for (let i = 0; i < this.lamps.length; i++) this.lamps[i].intensity = 0;
+        for (let i = 0; i < this.glowSprites.length; i++) this.glowSprites[i].visible = false;
       } else {
-        const k = Math.min(this.lamps.length, 8);
+        const k = Math.min(this.glowSprites.length, 6);
         for (let j = 0; j < k; j++) {
           this.nearestLampIdx[j] = -1;
           this.nearestLampDist[j] = Infinity;
@@ -415,23 +451,25 @@ export class EnvironmentSystem {
           this.nearestLampDist[ins] = d;
           this.nearestLampIdx[ins] = i;
         }
-        for (let idx = 0; idx < this.lamps.length; idx++) {
+        if (this.lamps[0]) {
+          const p0 = this.nearestLampIdx[0];
+          if (p0 >= 0) {
+            this.lamps[0].position.copy(this.lampPositions[p0]);
+            this.lamps[0].intensity = 58 * lampTarget;
+          } else {
+            this.lamps[0].intensity = 0;
+          }
+        }
+        for (let idx = 0; idx < this.glowSprites.length; idx++) {
           const pIdx = idx < k ? this.nearestLampIdx[idx] : -1;
-          const light = this.lamps[idx];
           const sprite = this.glowSprites[idx];
           if (pIdx < 0) {
-            light.intensity = 0;
-            if (sprite) sprite.visible = false;
+            sprite.visible = false;
             continue;
           }
-          const pos = this.lampPositions[pIdx];
-          light.position.copy(pos);
-          light.intensity = 58 * lampTarget;
-          if (sprite) {
-            sprite.position.copy(pos);
-            sprite.material.opacity = lampTarget * 0.75;
-            sprite.visible = lampTarget > 0.03;
-          }
+          sprite.position.copy(this.lampPositions[pIdx]);
+          sprite.material.opacity = lampTarget * 0.75;
+          sprite.visible = lampTarget > 0.03;
         }
       }
     }
@@ -444,15 +482,15 @@ export class EnvironmentSystem {
     this.sun.target.position.set(focus.x, 0, focus.z);
     const el = THREE.MathUtils.degToRad(cfg.elevation);
     const az = THREE.MathUtils.degToRad(cfg.azimuth);
-    this.tmpSunDir.set(Math.cos(el) * Math.sin(az), Math.max(0.05, Math.sin(el)), Math.cos(el) * Math.cos(az)).normalize();
+    this.tmpSunDir.set(Math.cos(el) * Math.sin(az), Math.max(0.22, Math.sin(el)), Math.cos(el) * Math.cos(az)).normalize();
     this.sun.position.set(focus.x, 0, focus.z).addScaledVector(this.tmpSunDir, 55);
     this.sun.target.updateMatrixWorld();
 
-    if (this.rain && this.rainGeo) {
+    if (this.rain && this.rain.visible && this.rainGeo && this.activeRainDrops > 0) {
       const pos = this.rainGeo.getAttribute('position') as THREE.BufferAttribute;
       const arr = pos.array as Float32Array;
       const drops = this.rainDrops;
-      const count = this.rainVel.length;
+      const count = this.activeRainDrops;
       const windX = 2.2 * dt;
       for (let i = 0; i < count; i++) {
         const fx = drops[i * 3] + windX;
@@ -487,8 +525,17 @@ export class EnvironmentSystem {
   dispose(): void {
     this.sky.geometry.dispose();
     (this.sky.material as THREE.Material).dispose();
-    this.rebuildRain();
+    if (this.rain) {
+      this.scene.remove(this.rain);
+      this.rainGeo?.dispose();
+      (this.rain.material as THREE.Material).dispose();
+      this.rain = null;
+    }
     for (const light of this.lamps) this.scene.remove(light);
+    for (const sprite of this.glowSprites) {
+      this.scene.remove(sprite);
+      sprite.material.dispose();
+    }
     this.scene.remove(this.playerFill);
   }
 }

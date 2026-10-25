@@ -96,6 +96,21 @@ const shared = {
   hair: new THREE.SphereGeometry(0.116, 10, 8, 0, TAU, 0, Math.PI / 1.7),
 };
 
+const actorMatCache = new Map<string, THREE.MeshLambertMaterial>();
+function sharedActorMat(color: string, doubleSided = false): THREE.MeshLambertMaterial {
+  const key = `${color}:${doubleSided ? 2 : 1}`;
+  let m = actorMatCache.get(key);
+  if (!m) {
+    m = new THREE.MeshLambertMaterial({
+      color,
+      side: doubleSided ? THREE.DoubleSide : THREE.FrontSide,
+    });
+    actorMatCache.set(key, m);
+  }
+  return m;
+}
+const sharedHairMat = sharedActorMat('#1b1410');
+
 export class PassengerActor {
   readonly group = new THREE.Group();
   readonly def: ArchetypeDef;
@@ -115,18 +130,17 @@ export class PassengerActor {
 
   constructor(def: ArchetypeDef) {
     this.def = def;
-    const shirt = new THREE.MeshStandardMaterial({ color: def.colors.shirt, roughness: 0.9 });
-    const skin = new THREE.MeshStandardMaterial({ color: def.colors.skin, roughness: 0.85 });
-    const lower = new THREE.MeshStandardMaterial({ color: def.colors.lower, roughness: 0.92 });
-    const accent = new THREE.MeshStandardMaterial({ color: def.colors.accent, roughness: 0.85 });
+    const shirt = sharedActorMat(def.colors.shirt);
+    const skin = sharedActorMat(def.colors.skin);
+    const lower = sharedActorMat(def.colors.lower);
+    const accent = sharedActorMat(def.colors.accent, def.skirt > 0);
 
     this.torso = new THREE.Mesh(shared.torso, shirt);
     this.torso.position.y = 1.02;
     this.torso.castShadow = true;
     this.head = new THREE.Mesh(shared.head, skin);
     this.head.position.y = 1.47;
-    this.head.castShadow = true;
-    const hair = new THREE.Mesh(shared.hair, new THREE.MeshStandardMaterial({ color: '#1b1410', roughness: 0.9 }));
+    const hair = new THREE.Mesh(shared.hair, sharedHairMat);
     hair.position.y = 1.47;
     this.legL = new THREE.Mesh(shared.leg, lower);
     this.legR = new THREE.Mesh(shared.leg, lower);
@@ -235,11 +249,5 @@ export class PassengerActor {
 
   dispose(): void {
     this.group.removeFromParent();
-    this.group.traverse((o) => {
-      if (o instanceof THREE.Mesh) {
-        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-        else o.material.dispose();
-      }
-    });
   }
 }

@@ -39,20 +39,17 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
   const vendorSpots: VendorSpot[] = [];
   const rng = mulberry32(90210);
 
-  const solidMat = new THREE.MeshStandardMaterial({
+  const solidMat = new THREE.MeshLambertMaterial({
     vertexColors: true,
-    roughness: 0.72,
-    metalness: 0.12,
   });
   const metalMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
     roughness: 0.32,
     metalness: 0.76,
   });
-  const clothMat = new THREE.MeshStandardMaterial({
+  const clothMat = new THREE.MeshLambertMaterial({
     vertexColors: true,
     map: clothTexture(),
-    roughness: 0.9,
     side: THREE.DoubleSide,
   });
   const glassMat = new THREE.MeshStandardMaterial({
@@ -61,15 +58,15 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     metalness: 0.35,
     transparent: true,
     opacity: 0.58,
+    depthWrite: false,
   });
-  const signMat = new THREE.MeshStandardMaterial({
+  const signMat = new THREE.MeshLambertMaterial({
     map: signAtlas.texture,
-    roughness: 0.65,
   });
 
-  const solid = new Bucket('props.solid', solidMat);
-  const metal = new Bucket('props.metal', metalMat);
-  const cloth = new Bucket('props.cloth', clothMat);
+  const solid = new Bucket('props.solid', solidMat, true);
+  const metal = new Bucket('props.metal', metalMat, true);
+  const cloth = new Bucket('props.cloth', clothMat, true);
   const glass = new Bucket('props.glass', glassMat);
   const signs = new Bucket('props.signs', signMat);
 
@@ -380,7 +377,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     { bucket: glass, cast: false },
     { bucket: signs, cast: false },
   ]) {
-    for (const m of b.bucket.buildChunked(3, 270, { cast: b.cast, receive: true })) group.add(m);
+    for (const m of b.bucket.buildChunked(3, 280, { cast: b.cast, receive: true })) group.add(m);
   }
 
   return { group, colliders, vendorSpots };

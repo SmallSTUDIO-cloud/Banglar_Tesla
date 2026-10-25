@@ -28,7 +28,7 @@ SMALI_DIR = ANDROID_MAIN / "smali"
 ASSETS_DIR = ANDROID_MAIN / "assets"
 PUBLIC_ASSETS_DIR = ASSETS_DIR / "public"
 ARTIFACTS_DIR = ROOT / "artifacts"
-OUT_APK = ARTIFACTS_DIR / "banglar-tesla-v0.2.0-android-test-debug.apk"
+OUT_APK = ARTIFACTS_DIR / "banglar-tesla-v0.3.0-android-test-debug.apk"
 
 TOOLS_DIR = Path("/tmp/android-tools")
 AAPT2 = TOOLS_DIR / "node_modules" / "aaptjs3" / "bin" / "x64" / "linux" / "aapt2"
@@ -418,9 +418,9 @@ def build_and_verify() -> None:
                 "--target-sdk-version",
                 "34",
                 "--version-code",
-                "2",
+                "3",
                 "--version-name",
-                "0.2.0-android-test",
+                "0.3.0-android-test",
                 "-0",
                 ".ttf",
                 "-0",

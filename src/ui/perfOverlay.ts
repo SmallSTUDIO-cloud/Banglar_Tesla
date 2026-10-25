@@ -22,15 +22,27 @@ export interface DevPerfSnapshot {
   activePedestrians: number;
   jammedCorridors: number;
   jsHeapMB: number | null;
+  gpuMs: number | null;
+}
+
+interface DisjointTimerExt {
+  TIME_ELAPSED_EXT: number;
+  GPU_DISJOINT_EXT: number;
 }
 
 export class DevPerfOverlay {
   private el: HTMLDivElement;
   private enabled = false;
   private frameSamples = new Float32Array(90);
+  private sortBuf = new Float32Array(90);
   private sampleIdx = 0;
   private sampleCount = 0;
   private accumTime = 0;
+  private pendingGpuQueries: WebGLQuery[] = [];
+  private activeQuery: WebGLQuery | null = null;
+  private lastGpuMs: number | null = null;
+  private timerExtChecked = false;
+  private timerExt: DisjointTimerExt | null = null;
   private lastSnapshot: DevPerfSnapshot = {
     fps: 60,
     frameMs: 16.6,
@@ -44,6 +56,7 @@ export class DevPerfOverlay {
     activePedestrians: 0,
     jammedCorridors: 0,
     jsHeapMB: null,
+    gpuMs: null,
   };
 
   constructor() {
@@ -84,6 +97,45 @@ export class DevPerfOverlay {
     return { ...this.lastSnapshot };
   }
 
+  /** Optional non-blocking WebGL2 async GPU timer start (no-op unless developer overlay is active!). */
+  beginGpuSample(renderer: THREE.WebGLRenderer): void {
+    if (!this.enabled || this.activeQuery || this.pendingGpuQueries.length >= 4) return;
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    if (!gl || typeof gl.createQuery !== 'function') return;
+    if (!this.timerExtChecked) {
+      this.timerExtChecked = true;
+      this.timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2') as DisjointTimerExt | null;
+    }
+    if (!this.timerExt) return;
+    const q = gl.createQuery();
+    if (!q) return;
+    gl.beginQuery(this.timerExt.TIME_ELAPSED_EXT, q);
+    this.activeQuery = q;
+  }
+
+  /** Optional non-blocking WebGL2 async GPU timer harvest (never calls finish/readPixels!). */
+  endGpuSample(renderer: THREE.WebGLRenderer): void {
+    if (!this.enabled || !this.timerExt) return;
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    if (this.activeQuery) {
+      gl.endQuery(this.timerExt.TIME_ELAPSED_EXT);
+      this.pendingGpuQueries.push(this.activeQuery);
+      this.activeQuery = null;
+    }
+    while (this.pendingGpuQueries.length > 0) {
+      const head = this.pendingGpuQueries[0];
+      const avail = gl.getQueryParameter(head, gl.QUERY_RESULT_AVAILABLE) as boolean;
+      if (!avail) break;
+      this.pendingGpuQueries.shift();
+      const disjoint = gl.getParameter(this.timerExt.GPU_DISJOINT_EXT) as boolean;
+      if (!disjoint) {
+        const ns = gl.getQueryParameter(head, gl.QUERY_RESULT) as number;
+        this.lastGpuMs = Math.round((ns / 1e6) * 100) / 100;
+      }
+      gl.deleteQuery(head);
+    }
+  }
+
   update(
     dt: number,
     renderer: THREE.WebGLRenderer,
@@ -91,6 +143,7 @@ export class DevPerfOverlay {
     activePedestrians: number,
     jammedCorridors: number,
   ): void {
+    if (!this.enabled) return;
     const ms = dt * 1000;
     this.frameSamples[this.sampleIdx] = ms;
     this.sampleIdx = (this.sampleIdx + 1) % this.frameSamples.length;
@@ -101,15 +154,15 @@ export class DevPerfOverlay {
     this.accumTime = 0;
 
     let sum = 0;
-    const sorted: number[] = [];
     for (let i = 0; i < this.sampleCount; i++) {
       const v = this.frameSamples[i];
       sum += v;
-      sorted.push(v);
+      this.sortBuf[i] = v;
     }
-    sorted.sort((a, b) => a - b);
+    const sub = this.sortBuf.subarray(0, this.sampleCount);
+    sub.sort();
     const avgMs = this.sampleCount > 0 ? sum / this.sampleCount : 16.6;
-    const p95Ms = sorted.length > 0 ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] : avgMs;
+    const p95Ms = sub.length > 0 ? sub[Math.min(sub.length - 1, Math.floor(sub.length * 0.95))] : avgMs;
     const fps = avgMs > 0.01 ? 1000 / avgMs : 60;
 
     const info = renderer.info;
@@ -130,12 +183,14 @@ export class DevPerfOverlay {
       activePedestrians,
       jammedCorridors,
       jsHeapMB: heapMB,
+      gpuMs: this.lastGpuMs,
     };
 
-    if (!this.enabled) return;
     this.el.textContent =
       `[DEV PERF]\n` +
-      `FPS: ${this.lastSnapshot.fps.toFixed(1)} (${this.lastSnapshot.frameMs.toFixed(1)}ms | p95 ${this.lastSnapshot.p95Ms.toFixed(1)}ms)\n` +
+      `FPS: ${this.lastSnapshot.fps.toFixed(1)} (${this.lastSnapshot.frameMs.toFixed(1)}ms | p95 ${this.lastSnapshot.p95Ms.toFixed(1)}ms` +
+      (this.lastGpuMs !== null ? ` | GPU ${this.lastGpuMs.toFixed(2)}ms` : '') +
+      `)\n` +
       `Draws: ${this.lastSnapshot.drawCalls} | Tris: ${this.lastSnapshot.triangles.toLocaleString()}\n` +
       `Geoms: ${this.lastSnapshot.geometries} | Tex: ${this.lastSnapshot.textures} | Shaders: ${this.lastSnapshot.programs}\n` +
       `Traffic: ${activeVehicles} (Jams: ${jammedCorridors}) | Peds: ${activePedestrians}` +

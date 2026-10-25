@@ -290,7 +290,7 @@ export class AppUI {
     );
 
     const meta = h('div', { class: 'menu-meta' },
-      h('span', { text: `v0.2.0` }),
+      h('span', { text: `v0.3.0` }),
       h('span', { text: '·' }),
       h('span', { text: t('menu.district') }),
       h('span', { text: '·' }),
@@ -511,6 +511,25 @@ export class AppUI {
   private pedCalloutEl!: HTMLElement;
   private pedCalloutTimer = 0;
 
+  // Cached HUD DOM & pre-rendered minimap layer (zero live querySelector or redundant DOM mutations!)
+  private hudMoodRow: HTMLElement | null = null;
+  private hudMarkerEl: HTMLElement | null = null;
+  private hudRecoverBtn: HTMLElement | null = null;
+  private miniCtx: CanvasRenderingContext2D | null = null;
+  private minimapBase: HTMLCanvasElement | null = null;
+  private prevSpeedKmh = -1;
+  private prevMoney = -1;
+  private prevObjLabel = '';
+  private prevObjTitle = '';
+  private prevObjSub = '';
+  private prevMoodPct = -1;
+  private prevAboard: boolean | null = null;
+  private prevObPct = -1;
+  private prevCamMode = '';
+  private prevElectric: boolean | null = null;
+  private prevBattery = -1;
+  private prevMarkerText = '';
+
   private buildWheel(): { el: HTMLElement } {
     const knob = h('div', {
       style:
@@ -607,29 +626,73 @@ export class AppUI {
     }, 2200);
   }
 
-  /** Called every frame while driving. */
+  /** Called at ~20 Hz while driving; dirty-checked so unchanged values never mutate DOM. */
   updateHud(state: HudState): void {
     if (this.current !== 'hud') return;
-    this.hudSpeedo.firstElementChild!.textContent = String(Math.round(Math.abs(state.speed) * 3.6));
-    this.hudWallet.lastElementChild!.textContent = formatTaka(state.money);
-    this.hudObjectiveLabel.textContent = state.objectiveLabel;
-    this.hudObjectiveTitle.textContent = state.objectiveTitle;
-    this.hudObjectiveSub.textContent = state.objectiveSub;
-    this.hudMoodFill.style.width = `${Math.round(clamp01(state.mood / 100) * 100)}%`;
-    const moodRow = this.hud.querySelector('#hud-mood') as HTMLElement | null;
-    if (moodRow) moodRow.style.display = state.passengerAboard ? 'flex' : 'none';
-    const pct = clamp01(1 - state.distance / 600);
-    this.hudObMeter.style.width = `${Math.round(pct * 100)}%`;
 
-    if (state.cameraMode) {
+    const kmh = Math.round(Math.abs(state.speed) * 3.6);
+    if (kmh !== this.prevSpeedKmh) {
+      this.prevSpeedKmh = kmh;
+      this.hudSpeedo.firstElementChild!.textContent = String(kmh);
+    }
+
+    const moneyInt = Math.round(state.money);
+    if (moneyInt !== this.prevMoney) {
+      this.prevMoney = moneyInt;
+      this.hudWallet.lastElementChild!.textContent = formatTaka(state.money);
+    }
+
+    if (state.objectiveLabel !== this.prevObjLabel) {
+      this.prevObjLabel = state.objectiveLabel;
+      this.hudObjectiveLabel.textContent = state.objectiveLabel;
+    }
+    if (state.objectiveTitle !== this.prevObjTitle) {
+      this.prevObjTitle = state.objectiveTitle;
+      this.hudObjectiveTitle.textContent = state.objectiveTitle;
+    }
+    if (state.objectiveSub !== this.prevObjSub) {
+      this.prevObjSub = state.objectiveSub;
+      this.hudObjectiveSub.textContent = state.objectiveSub;
+    }
+
+    const moodPct = Math.round(clamp01(state.mood / 100) * 100);
+    if (moodPct !== this.prevMoodPct) {
+      this.prevMoodPct = moodPct;
+      this.hudMoodFill.style.width = `${moodPct}%`;
+    }
+
+    if (!this.hudMoodRow) {
+      this.hudMoodRow = this.hud.querySelector('#hud-mood') as HTMLElement | null;
+    }
+    if (this.hudMoodRow && state.passengerAboard !== this.prevAboard) {
+      this.prevAboard = state.passengerAboard;
+      this.hudMoodRow.style.display = state.passengerAboard ? 'flex' : 'none';
+    }
+
+    const obPct = Math.round(clamp01(1 - state.distance / 600) * 100);
+    if (obPct !== this.prevObPct) {
+      this.prevObPct = obPct;
+      this.hudObMeter.style.width = `${obPct}%`;
+    }
+
+    if (state.cameraMode && state.cameraMode !== this.prevCamMode) {
+      this.prevCamMode = state.cameraMode;
       this.updateCameraBadge(state.cameraMode);
     }
+
     if (state.isElectric) {
       const bat = Math.round(state.battery ?? 100);
-      this.hudBattery.classList.remove('hidden');
-      this.hudBattery.classList.toggle('low', bat < 22);
-      this.hudBattery.firstElementChild!.textContent = `⚡ ${bat}%`;
-    } else {
+      if (this.prevElectric !== true) {
+        this.prevElectric = true;
+        this.hudBattery.classList.remove('hidden');
+      }
+      if (bat !== this.prevBattery) {
+        this.prevBattery = bat;
+        this.hudBattery.classList.toggle('low', bat < 22);
+        this.hudBattery.firstElementChild!.textContent = `⚡ ${bat}%`;
+      }
+    } else if (this.prevElectric !== false) {
+      this.prevElectric = false;
       this.hudBattery.classList.add('hidden');
     }
 
@@ -639,24 +702,30 @@ export class AppUI {
         this.hudHint.classList.add('show');
         this.lastHintKey = state.hint;
       }
-    } else if (this.hudHint.classList.contains('show')) {
+    } else if (this.lastHintKey !== null) {
       this.hudHint.classList.remove('show');
       this.lastHintKey = null;
     }
 
-    // marker label follows the world-space marker
-    const existing = this.hud.querySelector('.marker-label');
+    // World-space marker label cached & positioned without node creation/removal churn
     if (state.markerX !== null && state.markerY !== null) {
-      const label = existing ?? h('div', { class: 'marker-label' });
-      label.textContent = `${state.markerLabel ?? ''} ${state.distance > 0 ? formatDistance(state.distance) : ''}`.trim();
-      label.setAttribute('style', `left:${state.markerX}px;top:${state.markerY}px`);
-      if (!existing) this.hud.append(label);
-    } else if (existing) {
-      existing.remove();
+      if (!this.hudMarkerEl) {
+        this.hudMarkerEl = h('div', { class: 'marker-label' });
+        this.hud.append(this.hudMarkerEl);
+      }
+      const nextText = `${state.markerLabel ?? ''} ${state.distance > 0 ? formatDistance(state.distance) : ''}`.trim();
+      if (nextText !== this.prevMarkerText) {
+        this.prevMarkerText = nextText;
+        this.hudMarkerEl.textContent = nextText;
+      }
+      this.hudMarkerEl.style.left = `${Math.round(state.markerX)}px`;
+      this.hudMarkerEl.style.top = `${Math.round(state.markerY)}px`;
+      this.hudMarkerEl.style.display = 'block';
+    } else if (this.hudMarkerEl && this.hudMarkerEl.style.display !== 'none') {
+      this.hudMarkerEl.style.display = 'none';
     }
 
-    const recoverBtn = this.hud.querySelector('#recover-btn') as HTMLElement | null;
-    if (state.stuck && !recoverBtn) {
+    if (state.stuck && !this.hudRecoverBtn) {
       const btn = button(t('hud.recover'), {
         variant: 'gold',
         small: true,
@@ -666,40 +735,68 @@ export class AppUI {
       btn.id = 'recover-btn';
       btn.setAttribute('style', 'position:absolute;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-b) + 12.5rem);');
       this.hud.append(btn);
-    } else if (!state.stuck && recoverBtn) {
-      recoverBtn.remove();
+      this.hudRecoverBtn = btn;
+    } else if (!state.stuck && this.hudRecoverBtn) {
+      this.hudRecoverBtn.remove();
+      this.hudRecoverBtn = null;
     }
 
     this.drawMinimap(state);
   }
 
+  private ensureMinimapBase(scale: number): HTMLCanvasElement {
+    if (this.minimapBase) return this.minimapBase;
+    const size = 720; // covers [-342m .. +342m] @ 1.05 px/m
+    const half = size / 2;
+    const base = document.createElement('canvas');
+    base.width = size;
+    base.height = size;
+    const bctx = base.getContext('2d')!;
+    bctx.fillStyle = '#0e1916';
+    bctx.fillRect(0, 0, size, size);
+    bctx.lineCap = 'round';
+    for (let i = 0; i < ROADS.length; i++) {
+      const seg = ROADS[i];
+      bctx.strokeStyle = seg.kind === 'main' ? '#3d584e' : seg.kind === 'medium' ? '#31463e' : '#253630';
+      bctx.lineWidth = Math.max(2, seg.width * scale * 0.42);
+      bctx.beginPath();
+      bctx.moveTo(half + seg.ax * scale, half + seg.az * scale);
+      bctx.lineTo(half + seg.bx * scale, half + seg.bz * scale);
+      bctx.stroke();
+    }
+    bctx.fillStyle = 'rgba(232,178,90,0.45)';
+    for (let i = 0; i < PLACES.length; i++) {
+      const place = PLACES[i];
+      bctx.beginPath();
+      bctx.arc(half + place.x * scale, half + place.z * scale, 2.3, 0, Math.PI * 2);
+      bctx.fill();
+    }
+    this.minimapBase = base;
+    return base;
+  }
+
   private drawMinimap(state: HudState): void {
     const canvas = this.miniCanvas;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    if (!this.miniCtx) this.miniCtx = canvas.getContext('2d');
+    const ctx = this.miniCtx;
     if (!ctx) return;
     const w = canvas.width;
     const hgt = canvas.height;
-    const scale = 1.05; // pixels per metre across Mohammadpur district
+    const scale = 1.05;
     const cx = w / 2;
     const cy = hgt / 2;
     const px = this.minimapPlayer.x;
     const pz = this.minimapPlayer.z;
-    ctx.clearRect(0, 0, w, hgt);
+
+    // 1. Single fast blit of pre-rendered Mohammadpur street network + landmarks!
+    const base = this.ensureMinimapBase(scale);
+    const halfBase = base.width / 2;
+    const srcX = halfBase + px * scale - cx;
+    const srcY = halfBase + pz * scale - cy;
     ctx.fillStyle = '#0e1916';
     ctx.fillRect(0, 0, w, hgt);
-
-    // 1. Connected Mohammadpur street network
-    ctx.lineCap = 'round';
-    for (let i = 0; i < ROADS.length; i++) {
-      const seg = ROADS[i];
-      ctx.strokeStyle = seg.kind === 'main' ? '#3d584e' : seg.kind === 'medium' ? '#31463e' : '#253630';
-      ctx.lineWidth = Math.max(2, seg.width * scale * 0.42);
-      ctx.beginPath();
-      ctx.moveTo(cx + (seg.ax - px) * scale, cy + (seg.az - pz) * scale);
-      ctx.lineTo(cx + (seg.bx - px) * scale, cy + (seg.bz - pz) * scale);
-      ctx.stroke();
-    }
+    ctx.drawImage(base, srcX, srcY, w, hgt, 0, 0, w, hgt);
 
     // 2. Highlight congested / jammed Dhaka corridors in warm crimson-orange!
     if (state.jammedSegments && state.jammedSegments.length > 0) {
@@ -733,18 +830,7 @@ export class AppUI {
       ctx.restore();
     }
 
-    // 4. Mohammadpur landmarks
-    for (const place of PLACES) {
-      const x = cx + (place.x - px) * scale;
-      const y = cy + (place.z - pz) * scale;
-      if (x < -8 || y < -8 || x > w + 8 || y > hgt + 8) continue;
-      ctx.fillStyle = 'rgba(232,178,90,0.45)';
-      ctx.beginPath();
-      ctx.arc(x, y, 2.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // 5. Active pickup / drop-off marker
+    // 4. Active pickup / drop-off marker
     if (this.minimapMarker) {
       const mx = cx + (this.minimapMarker.x - px) * scale;
       const my = cy + (this.minimapMarker.z - pz) * scale;
@@ -756,7 +842,7 @@ export class AppUI {
       ctx.fill();
     }
 
-    // 6. Player directional arrow
+    // 5. Player directional arrow
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(Math.PI - this.minimapPlayer.yaw);
@@ -1730,11 +1816,19 @@ export class AppUI {
     this.buildMenu();
     this.applyControlLayout();
     this.refreshMenuChrome();
+    this.prevCamMode = '';
+    this.lastHintKey = null;
+    this.prevObjLabel = '';
+    this.prevObjTitle = '';
+    this.prevObjSub = '';
+    this.prevMoney = -1;
   }
 
   /** Keep UI text in sync when the language changes mid-session. */
   refreshLocale(): void {
     setLocale(this.settingsStore.get().language);
+    this.prevCamMode = '';
+    this.lastHintKey = null;
   }
 
   /** Debug helper used by the automated smoke test. */

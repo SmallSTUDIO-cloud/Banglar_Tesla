@@ -200,12 +200,10 @@ body {
 }
 
 .glass {
-  background: linear-gradient(180deg, rgba(13, 30, 26, 0.88), rgba(9, 21, 18, 0.94));
-  border: 1px solid rgba(232, 178, 90, 0.22);
+  background: linear-gradient(180deg, rgba(13, 30, 26, 0.92), rgba(8, 19, 16, 0.96));
+  border: 1px solid rgba(232, 178, 90, 0.24);
   border-radius: 18px;
-  backdrop-filter: blur(9px);
-  -webkit-backdrop-filter: blur(9px);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
 }
 
 .screentag {
@@ -447,8 +445,6 @@ p {
   font-weight: 700;
   color: var(--gold-2);
   font-variant-numeric: tabular-nums;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 .menu-money-icon svg {
   width: 17px;
@@ -465,11 +461,9 @@ p {
   align-self: flex-start;
   padding: 0.75rem;
   border-radius: 20px;
-  background: linear-gradient(180deg, rgba(8, 20, 17, 0.72), rgba(6, 16, 13, 0.85));
-  border: 1px solid rgba(232, 178, 90, 0.18);
-  backdrop-filter: blur(7px);
-  -webkit-backdrop-filter: blur(7px);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  background: linear-gradient(180deg, rgba(8, 22, 18, 0.86), rgba(6, 16, 13, 0.93));
+  border: 1px solid rgba(232, 178, 90, 0.22);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.44);
 }
 .menu-modes {
   display: flex;
@@ -583,10 +577,8 @@ button .icon svg {
   max-width: min(62vw, 340px);
   padding: 0.5rem 0.7rem;
   border-radius: 14px;
-  background: rgba(9, 21, 18, 0.74);
-  border: 1px solid rgba(232, 178, 90, 0.26);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(9, 21, 18, 0.88);
+  border: 1px solid rgba(232, 178, 90, 0.28);
 }
 .objective .ob-label {
   font-size: 0.62rem;
@@ -885,9 +877,7 @@ button .icon svg {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(4, 10, 8, 0.62);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  background: rgba(4, 10, 8, 0.72);
   pointer-events: auto;
   padding: calc(var(--safe-t) + 0.8rem) calc(var(--safe-r) + 0.6rem) calc(var(--safe-b) + 0.6rem)
     calc(var(--safe-l) + 0.6rem);

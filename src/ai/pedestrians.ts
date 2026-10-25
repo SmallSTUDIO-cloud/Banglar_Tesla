@@ -23,6 +23,8 @@ export interface PedPath {
   bz: number;
   ux: number;
   uz: number;
+  fwdYaw: number;
+  revYaw: number;
   /** Outward unit vector pointing AWAY from the road toward buildings (safe dodge direction!). */
   safeX: number;
   safeZ: number;
@@ -61,6 +63,8 @@ function buildSidewalkPaths(): PedPath[] {
         bz,
         ux: seg.ux,
         uz: seg.uz,
+        fwdYaw: Math.atan2(seg.ux, seg.uz),
+        revYaw: Math.atan2(-seg.ux, -seg.uz),
         safeX: seg.leftX * side,
         safeZ: seg.leftZ * side,
         length: len,
@@ -149,16 +153,13 @@ export class PedestrianSystem {
     headGeo.translate(0, 1.5, 0);
     const legGeo = new THREE.BoxGeometry(0.105, 0.52, 0.125);
     legGeo.translate(0, -0.26, 0);
-    const skirtGeo = new THREE.ConeGeometry(0.25, 0.72, 8, 1, true);
+    const skirtGeo = new THREE.ConeGeometry(0.25, 0.72, 8, 1, false);
     skirtGeo.translate(0, 0.72, 0);
     const bagGeo = new THREE.BoxGeometry(0.22, 0.26, 0.12);
 
-    // ONE shared material across all 6 instanced pedestrian parts!
-    const sharedPedMat = new THREE.MeshStandardMaterial({
+    // ONE shared matte Lambertian material with FrontSide backface culling across all 6 instanced parts!
+    const sharedPedMat = new THREE.MeshLambertMaterial({
       color: 0xffffff,
-      roughness: 0.86,
-      metalness: 0.02,
-      side: THREE.DoubleSide,
     });
 
     this.body = new THREE.InstancedMesh(bodyGeo, sharedPedMat, this.maxCapacity);
@@ -171,12 +172,14 @@ export class PedestrianSystem {
     for (const mesh of [this.body, this.head, this.legL, this.legR, this.skirt, this.bag]) {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false;
-      mesh.castShadow = quality.shadows;
+      mesh.castShadow = false;
       this.group.add(mesh);
     }
+    this.body.castShadow = quality.shadows;
 
     // Pre-populate full pool once so quality changes never reallocate GPU buffers
     const cTmp = new THREE.Color();
+    const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
     for (let i = 0; i < this.maxCapacity; i++) {
       const ped = this.createAgent(i);
       this.peds.push(ped);
@@ -191,9 +194,12 @@ export class PedestrianSystem {
       this.skirt.setColorAt(i, cTmp);
       cTmp.set(BAG_COLORS[Math.floor(this.rng() * BAG_COLORS.length)]);
       this.bag.setColorAt(i, cTmp);
+      if (!ped.hasSkirt) this.skirt.setMatrixAt(i, zeroMat);
+      if (!ped.hasBag) this.bag.setMatrixAt(i, zeroMat);
     }
     for (const mesh of [this.body, this.head, this.legL, this.legR, this.skirt, this.bag]) {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.instanceMatrix.needsUpdate = true;
     }
 
     this.setQuality(quality);
@@ -207,8 +213,9 @@ export class PedestrianSystem {
     this.activeCount = clamp(quality.pedestrians, 8, this.maxCapacity);
     for (const mesh of [this.body, this.head, this.legL, this.legR, this.skirt, this.bag]) {
       mesh.count = this.activeCount;
-      mesh.castShadow = quality.shadows;
     }
+    // Only torso capsule casts into shadow map (cuts 5/6ths of pedestrian shadow draw calls!)
+    this.body.castShadow = quality.shadows;
   }
 
   private pickPathIndex(preferBusy: boolean): number {
@@ -305,55 +312,64 @@ export class PedestrianSystem {
         }
       }
 
-      // Distance LOD tick: distant walkers (> 95m) update every ~50ms
+      // Distance LOD tick: distant walkers (> 85m) run AI at ~20 Hz while gliding smoothly
       let stepDt = dt;
-      if (distSq > 95 * 95) {
+      if (distSq > 85 * 85) {
         ped.farAccum += dt;
-        if (ped.farAccum < 0.05) continue;
+        if (ped.farAccum < 0.05) {
+          if (ped.pause <= 0 && distSq <= 135 * 135) {
+            ped.t = clamp(ped.t + ((ped.speed * dt) / path.length) * ped.dir, 0, 1);
+          }
+          continue;
+        }
         stepDt = ped.farAccum;
         ped.farAccum = 0;
       }
 
-      ped.reactCooldown = Math.max(0, ped.reactCooldown - stepDt);
-      ped.stumbleTimer = Math.max(0, ped.stumbleTimer - stepDt);
+      if (ped.reactCooldown > 0) ped.reactCooldown = Math.max(0, ped.reactCooldown - stepDt);
+      if (ped.stumbleTimer > 0) ped.stumbleTimer = Math.max(0, ped.stumbleTimer - stepDt);
 
-      const baseX = path.ax + (path.bx - path.ax) * ped.t + path.safeX * ped.sideJitter;
-      const baseZ = path.az + (path.bz - path.az) * ped.t + path.safeZ * ped.sideJitter;
+      let approachingDanger = false;
+      let dClosest = 999;
 
-      const curX = baseX + path.safeX * ped.evadeAmount;
-      const curZ = baseZ + path.safeZ * ped.evadeAmount;
-      const dNose = Math.hypot(curX - noseX, curZ - noseZ);
-      const dBody = Math.hypot(curX - playerX, curZ - playerZ);
-      const dClosest = Math.min(dNose, dBody);
-      const dPred = Math.hypot(curX - predX, curZ - predZ);
+      // Fast broadphase: only evaluate 3x Math.hypot near-miss/bump math within ~10m of player!
+      if (distSq < 100 || ped.evadeAmount > 0.01 || ped.lookAtPlayer > 0.01 || ped.stumbleTimer > 0) {
+        const baseX = path.ax + (path.bx - path.ax) * ped.t + path.safeX * ped.sideJitter;
+        const baseZ = path.az + (path.bz - path.az) * ped.t + path.safeZ * ped.sideJitter;
+        const curX = baseX + path.safeX * ped.evadeAmount;
+        const curZ = baseZ + path.safeZ * ped.evadeAmount;
+        const dNose = Math.hypot(curX - noseX, curZ - noseZ);
+        const dBody = Math.hypot(curX - playerX, curZ - playerZ);
+        dClosest = Math.min(dNose, dBody);
+        const dPred = Math.hypot(curX - predX, curZ - predZ);
 
-      const approachingDanger = (dPred < 4.2 && absSpeed > 0.7) || dClosest < 3.1;
-      const targetEvade = ped.stumbleTimer > 0 ? 1.15 : approachingDanger ? 0.92 : 0;
-      ped.evadeAmount = damp(ped.evadeAmount, targetEvade, approachingDanger ? 8.5 : 3.2, stepDt);
-      ped.lookAtPlayer = damp(ped.lookAtPlayer, approachingDanger ? 1 : 0, 6, stepDt);
+        approachingDanger = (dPred < 4.2 && absSpeed > 0.7) || dClosest < 3.1;
+        const targetEvade = ped.stumbleTimer > 0 ? 1.15 : approachingDanger ? 0.92 : 0;
+        ped.evadeAmount = damp(ped.evadeAmount, targetEvade, approachingDanger ? 8.5 : 3.2, stepDt);
+        ped.lookAtPlayer = damp(ped.lookAtPlayer, approachingDanger ? 1 : 0, 6, stepDt);
 
-      // Direct gentle non-graphic bump vs close near-miss reaction!
-      if (dClosest < 1.06 && absSpeed > 0.45 && ped.stumbleTimer <= 0) {
-        ped.stumbleTimer = 0.9;
-        ped.pause = 1.4;
-        ped.evadeAmount = 1.15;
-        if (ped.reactCooldown <= 0) {
-          ped.reactCooldown = 7.5;
-          this.globalReactCooldown = 1.6;
+        if (dClosest < 1.06 && absSpeed > 0.45 && ped.stumbleTimer <= 0) {
+          ped.stumbleTimer = 0.9;
+          ped.pause = 1.4;
+          ped.evadeAmount = 1.15;
+          if (ped.reactCooldown <= 0) {
+            ped.reactCooldown = 7.5;
+            this.globalReactCooldown = 1.6;
+            const key = REACTION_KEYS[Math.floor(this.rng() * REACTION_KEYS.length)];
+            this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'bump' });
+          }
+        } else if (
+          dClosest < 2.45 &&
+          absSpeed > 1.85 &&
+          ped.reactCooldown <= 0 &&
+          this.globalReactCooldown <= 0
+        ) {
+          ped.reactCooldown = 8.5;
+          this.globalReactCooldown = 2.6;
+          ped.pause = Math.max(ped.pause, 0.95);
           const key = REACTION_KEYS[Math.floor(this.rng() * REACTION_KEYS.length)];
-          this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'bump' });
+          this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'nearmiss' });
         }
-      } else if (
-        dClosest < 2.45 &&
-        absSpeed > 1.85 &&
-        ped.reactCooldown <= 0 &&
-        this.globalReactCooldown <= 0
-      ) {
-        ped.reactCooldown = 8.5;
-        this.globalReactCooldown = 2.6;
-        ped.pause = Math.max(ped.pause, 0.95);
-        const key = REACTION_KEYS[Math.floor(this.rng() * REACTION_KEYS.length)];
-        this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'nearmiss' });
       }
 
       // Advance sidewalk walk cycle unless paused/evading
@@ -375,8 +391,9 @@ export class PedestrianSystem {
         ped.phase += stepDt * ped.speed * 5.4;
       }
 
-      const wx = path.ax + (path.bx - path.ax) * ped.t + path.safeX * (ped.sideJitter + ped.evadeAmount);
-      const wz = path.az + (path.bz - path.az) * ped.t + path.safeZ * (ped.sideJitter + ped.evadeAmount);
+      const lat = ped.sideJitter + ped.evadeAmount;
+      const wx = path.ax + (path.bx - path.ax) * ped.t + path.safeX * lat;
+      const wz = path.az + (path.bz - path.az) * ped.t + path.safeZ * lat;
       ped.worldX = wx;
       ped.worldZ = wz;
 
@@ -390,14 +407,17 @@ export class PedestrianSystem {
         this.head.setMatrixAt(i, this.matrix);
         this.legL.setMatrixAt(i, this.matrix);
         this.legR.setMatrixAt(i, this.matrix);
-        this.skirt.setMatrixAt(i, this.matrix);
-        this.bag.setMatrixAt(i, this.matrix);
+        if (ped.hasSkirt) this.skirt.setMatrixAt(i, this.matrix);
+        if (ped.hasBag) this.bag.setMatrixAt(i, this.matrix);
         continue;
       }
 
-      const walkYaw = Math.atan2(path.ux * ped.dir, path.uz * ped.dir);
-      const toPlayerYaw = Math.atan2(playerX - wx, playerZ - wz);
-      const yaw = walkYaw + shortAngle(walkYaw, toPlayerYaw) * ped.lookAtPlayer;
+      const walkYaw = ped.dir === 1 ? path.fwdYaw : path.revYaw;
+      let yaw = walkYaw;
+      if (ped.lookAtPlayer > 0.01) {
+        const toPlayerYaw = Math.atan2(playerX - wx, playerZ - wz);
+        yaw = walkYaw + shortAngle(walkYaw, toPlayerYaw) * ped.lookAtPlayer;
+      }
       const stumbleTilt = ped.stumbleTimer > 0 ? Math.sin(ped.stumbleTimer * 12) * 0.24 : 0;
 
       const swing = moving ? Math.sin(ped.phase) * 0.44 : 0;
@@ -406,44 +426,46 @@ export class PedestrianSystem {
       const groundY = 0.09;
 
       // Torso & head (with grounded stumble tilt if bumped)
-      this.euler.set(stumbleTilt, yaw, stumbleTilt * 0.5, 'YXZ');
-      this.quat.setFromEuler(this.euler);
+      if (stumbleTilt !== 0) {
+        this.euler.set(stumbleTilt, yaw, stumbleTilt * 0.5, 'YXZ');
+        this.quat.setFromEuler(this.euler);
+      } else {
+        this.quat.setFromAxisAngle(Y_AXIS, yaw);
+      }
       this.pos.set(wx, groundY + bob, wz);
       this.scale.set(h, h, h);
       this.matrix.compose(this.pos, this.quat, this.scale);
       this.body.setMatrixAt(i, this.matrix);
       this.head.setMatrixAt(i, this.matrix);
 
-      // Saree / Lungi drape
-      this.scale.set(ped.hasSkirt ? h : 0, ped.hasSkirt ? h : 0, ped.hasSkirt ? h : 0);
-      this.matrix.compose(this.pos, this.quat, this.scale);
-      this.skirt.setMatrixAt(i, this.matrix);
-
-      // Carried bazar / shopping bag on right hand!
-      if (ped.hasBag) {
-        const rx = -Math.cos(yaw) * 0.23 * h;
-        const rz = Math.sin(yaw) * 0.23 * h;
-        this.pos.set(wx + rx, groundY + 0.68 * h + bob, wz + rz);
-        this.scale.set(h, h, h);
-      } else {
-        this.scale.set(0, 0, 0);
+      if (ped.hasSkirt) {
+        this.skirt.setMatrixAt(i, this.matrix);
       }
-      this.matrix.compose(this.pos, this.quat, this.scale);
-      this.bag.setMatrixAt(i, this.matrix);
 
-      // Left & right walking legs
-      const hipX = -Math.cos(yaw) * 0.08 * h;
-      const hipZ = Math.sin(yaw) * 0.08 * h;
+      const cosYaw = Math.cos(yaw);
+      const sinYaw = Math.sin(yaw);
 
-      this.euler.set(swing, yaw, 0, 'YXZ');
-      this.quat.setFromEuler(this.euler);
+      if (ped.hasBag) {
+        this.pos.set(wx - cosYaw * 0.23 * h, groundY + 0.68 * h + bob, wz + sinYaw * 0.23 * h);
+        this.matrix.compose(this.pos, this.quat, this.scale);
+        this.bag.setMatrixAt(i, this.matrix);
+      }
+
+      const hipX = -cosYaw * 0.08 * h;
+      const hipZ = sinYaw * 0.08 * h;
+
+      if (swing !== 0) {
+        this.euler.set(swing, yaw, 0, 'YXZ');
+        this.quat.setFromEuler(this.euler);
+      }
       this.pos.set(wx + hipX, groundY + 0.54 * h, wz + hipZ);
-      this.scale.set(h, h, h);
       this.matrix.compose(this.pos, this.quat, this.scale);
       this.legL.setMatrixAt(i, this.matrix);
 
-      this.euler.set(-swing, yaw, 0, 'YXZ');
-      this.quat.setFromEuler(this.euler);
+      if (swing !== 0) {
+        this.euler.set(-swing, yaw, 0, 'YXZ');
+        this.quat.setFromEuler(this.euler);
+      }
       this.pos.set(wx - hipX, groundY + 0.54 * h, wz - hipZ);
       this.matrix.compose(this.pos, this.quat, this.scale);
       this.legR.setMatrixAt(i, this.matrix);
@@ -467,6 +489,8 @@ export class PedestrianSystem {
     this.group.clear();
   }
 }
+
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 function shortAngle(a: number, b: number): number {
   let d = (b - a) % TAU;

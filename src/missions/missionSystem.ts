@@ -122,6 +122,20 @@ export class MissionSystem extends Emitter<MissionEvents> {
     this.host.scene.add(this.markerGroup);
   }
 
+  /** Temporarily reveal marker beacon/ring/sprite + sample passenger actor for boot shader precompilation. */
+  withPrewarmState(run: () => void): void {
+    const prevVis = this.markerGroup.visible;
+    const dummy = new PassengerActor(archetypeById('shopper'));
+    this.markerGroup.visible = true;
+    this.host.scene.add(dummy.group);
+    try {
+      run();
+    } finally {
+      dummy.dispose();
+      this.markerGroup.visible = prevVis;
+    }
+  }
+
   get moodRatio(): number {
     return clamp01(this.mood / 100);
   }

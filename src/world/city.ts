@@ -19,7 +19,7 @@ import * as THREE from 'three';
 import type { QualitySettings } from '../core/config';
 import { WORLD } from '../core/config';
 import { clamp, mulberry32 } from '../core/mathx';
-import { Bucket, tintedMaterial } from './geo';
+import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import {
   GRAPH_NODES,
   PLACES,
@@ -78,6 +78,9 @@ export interface CityResult {
   placeAnchors: Map<string, THREE.Vector3>;
   setWetness: (wet: number) => void;
   setNight: (on: boolean) => void;
+  registerShadowCasters: (root: THREE.Object3D) => void;
+  updateShadowFocus: (x: number, z: number, shadowRadius: number, shadowsEnabled: boolean, force?: boolean) => void;
+  withPrewarmState: (run: () => void) => void;
 }
 
 const PLASTER_TINTS = [
@@ -94,8 +97,9 @@ const PLASTER_TINTS = [
 const AWNING_COLORS = ['#b32821', '#15694d', '#1c5488', '#c87d1a', '#7c2352'];
 
 const SECTOR_GRID = 4;
-const SECTOR_MIN = -280;
-const SECTOR_SPAN = 560;
+const SECTOR_COUNT = SECTOR_GRID * SECTOR_GRID;
+const SECTOR_MIN = -285;
+const SECTOR_SPAN = 570;
 
 function sectorIndex(x: number, z: number): number {
   const sx = clamp(Math.floor(((x - SECTOR_MIN) / SECTOR_SPAN) * SECTOR_GRID), 0, SECTOR_GRID - 1);
@@ -115,7 +119,12 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const wirePairs: [THREE.Vector3, THREE.Vector3][] = [];
   const rng = mulberry32(20261207);
 
-  // Shared world materials
+  // Shared world materials:
+  // Glossy/metallic PBR (`MeshStandardMaterial`) reserved for wet-reactive asphalt,
+  // reflective puddles, corrugated steel shutters & street hardware; matte diffuse
+  // (`MeshLambertMaterial` + baked vertex ground/overhang AO) used for plaster,
+  // concrete sidewalks, brick, foliage & painted shop signs to avoid wasteful
+  // per-pixel GGX + PMREM dual-mip CubeUV shader loops on Mali-G72 MP3.
   const asphalt = asphaltTexture();
   asphalt.map.repeat.set(1, 1);
   const roadMat = new THREE.MeshStandardMaterial({
@@ -127,21 +136,18 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     metalness: 0.05,
   });
   const walkTex = sidewalkTexture();
-  const walkMat = tintedMaterial(walkTex, { roughness: 0.9, metalness: 0.03 });
+  const walkMat = matteMaterial(walkTex);
   const facadeTex = plasterFacadeTexture(0, '#ffffff');
-  const wallMat = tintedMaterial(facadeTex, { roughness: 0.86, metalness: 0.02 });
-  const brickMat = tintedMaterial(brickTexture(), { roughness: 0.9, metalness: 0.02 });
+  const wallMat = matteMaterial(facadeTex);
+  const brickMat = matteMaterial(brickTexture());
   const shutterMat = tintedMaterial(shutterTexture(), { roughness: 0.55, metalness: 0.45 });
   const metalMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
     roughness: 0.42,
     metalness: 0.65,
   });
-  const detailMat = new THREE.MeshStandardMaterial({
+  const detailMat = new THREE.MeshLambertMaterial({
     vertexColors: true,
-    roughness: 0.78,
-    metalness: 0.08,
-    side: THREE.DoubleSide,
   });
   const puddleMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
@@ -149,23 +155,19 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     metalness: 0.82,
     transparent: true,
     opacity: 0.72,
+    depthWrite: false,
   });
-  const signMat = new THREE.MeshStandardMaterial({
+  const signMat = new THREE.MeshLambertMaterial({
     map: signAtlas.texture,
-    roughness: 0.62,
-    metalness: 0.08,
   });
-  const glowMat = new THREE.MeshStandardMaterial({
+  const glowMat = new THREE.MeshBasicMaterial({
     vertexColors: true,
-    emissive: new THREE.Color('#ffdca4'),
-    emissiveIntensity: 1.5,
-    roughness: 0.3,
   });
 
   // Ground base plane beneath everything (urban earth / courtyard compound floor)
   const groundPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(WORLD.groundExtent * 2, WORLD.groundExtent * 2),
-    new THREE.MeshStandardMaterial({ color: 0x6f6c62, roughness: 0.96, metalness: 0.01 }),
+    new THREE.MeshLambertMaterial({ color: 0x6f6c62 }),
   );
   groundPlane.rotation.x = -Math.PI / 2;
   groundPlane.position.y = -0.02;
@@ -176,17 +178,17 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
   // Global buckets for roads, sidewalks, props & night glow
   const bRoad = new Bucket('roads.asphalt', roadMat);
-  const bWalk = new Bucket('roads.sidewalk', walkMat);
-  const bMetal = new Bucket('city.metal', metalMat);
+  const bWalk = new Bucket('roads.sidewalk', walkMat, true);
+  const bMetal = new Bucket('city.metal', metalMat, true);
   const bPuddle = new Bucket('roads.puddles', puddleMat);
   const bGlow = new Bucket('city.nightGlow', glowMat);
 
-  // 4x4 sector-chunked buckets for buildings, foliage & signs (automatic frustum culling!)
-  const sectorWalls = Array.from({ length: 16 }, (_, i) => new Bucket(`sec.${i}.wall`, wallMat));
-  const sectorDetails = Array.from({ length: 16 }, (_, i) => new Bucket(`sec.${i}.detail`, detailMat));
-  const sectorShutters = Array.from({ length: 16 }, (_, i) => new Bucket(`sec.${i}.shutter`, shutterMat));
-  const sectorBricks = Array.from({ length: 16 }, (_, i) => new Bucket(`sec.${i}.brick`, brickMat));
-  const sectorSigns = Array.from({ length: 16 }, (_, i) => new Bucket(`sec.${i}.signs`, signMat));
+  // 6x6 sector-chunked buckets with baked ground/eave AO for buildings, foliage & signs
+  const sectorWalls = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.wall`, wallMat, true));
+  const sectorDetails = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.detail`, detailMat, true));
+  const sectorShutters = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.shutter`, shutterMat, true));
+  const sectorBricks = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.brick`, brickMat, true));
+  const sectorSigns = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.signs`, signMat));
 
   // ---------------- 1. JUNCTION DISCS & CONNECTED ROAD RIBBONS (Section 16)
   for (const node of GRAPH_NODES) {
@@ -703,9 +705,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     }
   }
 
-  // Overhead Dhaka utility cables strung between validated roadside poles (single draw call!)
-  const wireVerts: number[] = [];
+  // Overhead Dhaka utility cables chunked by 6x6 sector so off-screen wires
+  // frustum-cull cleanly and opaque dark charcoal avoids full-city alpha overdraw!
+  const wireBuckets: number[][] = Array.from({ length: SECTOR_COUNT }, () => []);
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x20262b });
   for (const [a, b] of wirePairs) {
+    const sIdx = sectorIndex((a.x + b.x) * 0.5, (a.z + b.z) * 0.5);
+    const dst = wireBuckets[sIdx];
     const segs = 5;
     for (let strand = 0; strand < 2; strand++) {
       const yOff = strand * -0.38;
@@ -714,7 +720,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const t1 = (s + 1) / segs;
         const sag0 = Math.sin(t0 * Math.PI) * 0.68;
         const sag1 = Math.sin(t1 * Math.PI) * 0.68;
-        wireVerts.push(
+        dst.push(
           a.x + (b.x - a.x) * t0,
           a.y + yOff - sag0,
           a.z + (b.z - a.z) * t0,
@@ -725,49 +731,145 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       }
     }
   }
-  if (wireVerts.length > 0) {
+  for (let i = 0; i < SECTOR_COUNT; i++) {
+    const verts = wireBuckets[i];
+    if (verts.length === 0) continue;
     const wireGeo = new THREE.BufferGeometry();
-    wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(wireVerts, 3));
-    const wires = new THREE.LineSegments(
-      wireGeo,
-      new THREE.LineBasicMaterial({ color: 0x1d2226, transparent: true, opacity: 0.78 }),
-    );
+    wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    wireGeo.computeBoundingSphere();
+    const wires = new THREE.LineSegments(wireGeo, wireMat);
+    wires.name = `wires.sec.${i}`;
     wires.matrixAutoUpdate = false;
     wires.updateMatrix();
     group.add(wires);
   }
 
-  // Build spatially chunked road/sidewalk/metal & sector-chunked building meshes
-  const shadowCfg = { cast: quality.shadows, receive: true };
-  for (const chunkedB of [
-    { b: bRoad, sh: { cast: false, receive: true } },
-    { b: bWalk, sh: { cast: false, receive: true } },
-    { b: bMetal, sh: shadowCfg },
-  ]) {
-    for (const m of chunkedB.b.buildChunked(3, 270, chunkedB.sh)) group.add(m);
+  // Track static shadow-caster sector meshes for O(1) distance-based shadow culling
+  interface SectorShadowCaster {
+    mesh: THREE.Mesh;
+    cx: number;
+    cz: number;
+    radius: number;
   }
-  const puddleMesh = bPuddle.build({ cast: false, receive: false });
-  if (puddleMesh) group.add(puddleMesh);
+  const shadowCasters: SectorShadowCaster[] = [];
+  const registerCasterMesh = (m: THREE.Mesh): void => {
+    if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+    const bs = m.geometry.boundingSphere!;
+    shadowCasters.push({ mesh: m, cx: bs.center.x, cz: bs.center.z, radius: bs.radius });
+  };
 
-  for (let i = 0; i < 16; i++) {
-    for (const sb of [sectorWalls[i], sectorDetails[i], sectorShutters[i], sectorBricks[i], sectorSigns[i]]) {
-      const m = sb.build(shadowCfg);
+  // Build 3x3 spatially chunked road/sidewalk/metal & 4x4 sector-chunked building meshes
+  for (const m of bRoad.buildChunked(3, 280, { cast: false, receive: true })) group.add(m);
+  for (const m of bWalk.buildChunked(3, 280, { cast: false, receive: true })) group.add(m);
+  for (const m of bMetal.buildChunked(3, 280, { cast: quality.shadows, receive: true })) {
+    group.add(m);
+    registerCasterMesh(m);
+  }
+  for (const m of bPuddle.buildChunked(3, 280, { cast: false, receive: false })) group.add(m);
+
+  for (let i = 0; i < SECTOR_COUNT; i++) {
+    // 3D architectural mass, awnings/trees & boundary walls cast crisp shadows;
+    // flush 6cm shutters & painted signboards receive shadows without wasting shadow-map tris!
+    for (const sb of [sectorWalls[i], sectorDetails[i], sectorBricks[i]]) {
+      const m = sb.build({ cast: quality.shadows, receive: true });
+      if (m) {
+        group.add(m);
+        registerCasterMesh(m);
+      }
+    }
+    for (const decalBucket of [sectorShutters[i], sectorSigns[i]]) {
+      const m = decalBucket.build({ cast: false, receive: true });
       if (m) group.add(m);
     }
   }
 
   const nightGroup = new THREE.Group();
   nightGroup.name = 'night-glow';
-  const glowMesh = bGlow.build({ cast: false, receive: false });
-  if (glowMesh) nightGroup.add(glowMesh);
+  for (const gm of bGlow.buildChunked(3, 280, { cast: false, receive: false })) {
+    nightGroup.add(gm);
+  }
   nightGroup.visible = false;
   group.add(nightGroup);
+
+  const registerShadowCasters = (root: THREE.Object3D): void => {
+    root.traverse((obj) => {
+      if (obj instanceof THREE.Mesh && obj.castShadow) {
+        registerCasterMesh(obj);
+      }
+    });
+  };
+
+  let lastShadowX = 1e9;
+  let lastShadowZ = 1e9;
+  let lastShadowRad = -1;
+  let lastShadowOn = !quality.shadows;
+  const updateShadowFocus = (
+    x: number,
+    z: number,
+    shadowRadius: number,
+    shadowsEnabled: boolean,
+    force = false,
+  ): void => {
+    if (
+      !force &&
+      shadowsEnabled === lastShadowOn &&
+      shadowRadius === lastShadowRad &&
+      (x - lastShadowX) * (x - lastShadowX) + (z - lastShadowZ) * (z - lastShadowZ) < 36
+    ) {
+      return;
+    }
+    lastShadowX = x;
+    lastShadowZ = z;
+    lastShadowRad = shadowRadius;
+    lastShadowOn = shadowsEnabled;
+    if (!shadowsEnabled) {
+      for (let i = 0; i < shadowCasters.length; i++) shadowCasters[i].mesh.castShadow = false;
+      return;
+    }
+    const maxDist = shadowRadius + 24;
+    for (let i = 0; i < shadowCasters.length; i++) {
+      const sc = shadowCasters[i];
+      const dx = x - sc.cx;
+      const dz = z - sc.cz;
+      const limit = maxDist + sc.radius;
+      sc.mesh.castShadow = dx * dx + dz * dz <= limit * limit;
+    }
+  };
 
   for (const p of PLACES) {
     placeAnchors.set(p.id, new THREE.Vector3(p.x, 0, p.z));
   }
 
-  // Exact ground height query: road/sidewalk + smooth speed humps + flush manhole/pothole relief
+  // O(1) spatial hash grid for speed humps & road surface relief (manholes/potholes)
+  const BUMP_GRID = 28;
+  const BUMP_MIN = -312;
+  const BUMP_CELL = 24;
+  const humpCells: SpeedHump[][] = Array.from({ length: BUMP_GRID * BUMP_GRID }, () => []);
+  const microCells: SurfaceBump[][] = Array.from({ length: BUMP_GRID * BUMP_GRID }, () => []);
+  const toBumpCell = (v: number): number => clamp(Math.floor((v - BUMP_MIN) / BUMP_CELL), 0, BUMP_GRID - 1);
+
+  for (const hp of humps) {
+    const pad = hp.halfWidth + hp.depth + 2;
+    const c0x = toBumpCell(hp.x - pad);
+    const c1x = toBumpCell(hp.x + pad);
+    const c0z = toBumpCell(hp.z - pad);
+    const c1z = toBumpCell(hp.z + pad);
+    for (let cz = c0z; cz <= c1z; cz++) {
+      for (let cx = c0x; cx <= c1x; cx++) humpCells[cz * BUMP_GRID + cx].push(hp);
+    }
+  }
+  for (const mb of microBumps) {
+    const pad = mb.radius + 0.5;
+    const c0x = toBumpCell(mb.x - pad);
+    const c1x = toBumpCell(mb.x + pad);
+    const c0z = toBumpCell(mb.z - pad);
+    const c1z = toBumpCell(mb.z + pad);
+    for (let cz = c0z; cz <= c1z; cz++) {
+      for (let cx = c0x; cx <= c1x; cx++) microCells[cz * BUMP_GRID + cx].push(mb);
+    }
+  }
+
+  // Exact ground height query: road/sidewalk + O(1) speed humps + flush manhole/pothole relief
   const heightAt = (x: number, z: number): number => {
     let h = 0.014;
     const dRoad = distanceToRoadCarriageway(x, z);
@@ -777,8 +879,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       h = 0.014 + kerbT * 0.076;
     }
 
-    for (let i = 0; i < humps.length; i++) {
-      const hp = humps[i];
+    const cell = toBumpCell(z) * BUMP_GRID + toBumpCell(x);
+    const localHumps = humpCells[cell];
+    for (let i = 0; i < localHumps.length; i++) {
+      const hp = localHumps[i];
       const dx = x - hp.x;
       const dz = z - hp.z;
       if (Math.abs(dx) > hp.halfWidth + 2 || Math.abs(dz) > hp.halfWidth + 2) continue;
@@ -790,8 +894,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       }
     }
 
-    for (let i = 0; i < microBumps.length; i++) {
-      const mb = microBumps[i];
+    const localMicro = microCells[cell];
+    for (let i = 0; i < localMicro.length; i++) {
+      const mb = localMicro[i];
       const dx = x - mb.x;
       const dz = z - mb.z;
       const d2 = dx * dx + dz * dz;
@@ -817,6 +922,19 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     nightGroup.visible = on;
   };
 
+  const withPrewarmState = (run: () => void): void => {
+    const prevNight = nightGroup.visible;
+    const prevCast = shadowCasters.map((sc) => sc.mesh.castShadow);
+    nightGroup.visible = true;
+    for (let i = 0; i < shadowCasters.length; i++) shadowCasters[i].mesh.castShadow = true;
+    try {
+      run();
+    } finally {
+      nightGroup.visible = prevNight;
+      for (let i = 0; i < shadowCasters.length; i++) shadowCasters[i].mesh.castShadow = prevCast[i];
+    }
+  };
+
   return {
     group,
     colliders,
@@ -828,5 +946,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     placeAnchors,
     setWetness,
     setNight,
+    registerShadowCasters,
+    updateShadowFocus,
+    withPrewarmState,
   };
 }

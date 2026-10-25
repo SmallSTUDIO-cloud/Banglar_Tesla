@@ -93,8 +93,6 @@ export class Game implements UIBridge {
   private freeRidePoiCooldown = 0;
   private showroomVisible = false;
   private envMap: THREE.Texture | null = null;
-  private lowFpsTimer = 0;
-  private qualityDowngraded = false;
   private hudTick = 0;
   private routeTick = 0;
   private activeRoute: RoutePlan | null = null;
@@ -126,7 +124,7 @@ export class Game implements UIBridge {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.02;
     this.renderer.shadowMap.enabled = initialQuality.shadows && this.settings.get().shadows;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     this.camera = new THREE.PerspectiveCamera(58, 1, 0.15, 360);
     this.scene.add(this.camera);
@@ -141,6 +139,7 @@ export class Game implements UIBridge {
 
     const props = buildProps(this.signAtlas);
     this.scene.add(props.group);
+    this.city.registerShadowCasters(props.group);
     this.city.colliders.push(...props.colliders);
     releaseScratchCanvas();
 
@@ -287,7 +286,52 @@ export class Game implements UIBridge {
         console.warn('[game] environment map unavailable', err);
       }
     }
+    this.prewarmStreetShaders();
     this.ui.hideLoading();
+  }
+
+  /**
+   * Compile and warm all street, instanced-vehicle, pedestrian, mission-beacon,
+   * passenger, night-glow, and monsoon-rain GPU pipelines once behind the boot
+   * loading screen so turning the camera, starting missions, or entering dusk/rain
+   * never stalls gameplay on ARM Mali Bifrost or Vulkan/ANGLE drivers!
+   */
+  private prewarmStreetShaders(): void {
+    try {
+      const culledRestore: THREE.Object3D[] = [];
+      this.scene.traverse((obj) => {
+        if (obj.frustumCulled) {
+          obj.frustumCulled = false;
+          culledRestore.push(obj);
+        }
+      });
+      this.renderer.setSize(64, 64, false);
+      try {
+        this.env.withPrewarmState(() => {
+          this.city.withPrewarmState(() => {
+            this.missions.withPrewarmState(() => {
+              this.traffic.withPrewarmState(() => {
+                this.player.setNightLighting(true);
+                try {
+                  this.renderer.compile(this.scene, this.camera);
+                  this.renderer.render(this.scene, this.camera);
+                } finally {
+                  this.player.setNightLighting(false);
+                }
+              });
+            });
+          });
+        });
+      } finally {
+        for (let i = 0; i < culledRestore.length; i++) {
+          culledRestore[i].frustumCulled = true;
+        }
+        this.resize();
+      }
+    } catch (err) {
+      console.warn('[game] shader prewarm skipped', err);
+      this.resize();
+    }
   }
 
   start(): void {
@@ -334,11 +378,16 @@ export class Game implements UIBridge {
   }
 
   private render(): void {
+    this.devPerf.beginGpuSample(this.renderer);
     if (this.showroomVisible) {
+      const prevExp = this.renderer.toneMappingExposure;
+      this.renderer.toneMappingExposure = 1.18;
       this.renderer.render(this.showroom.scene, this.showroom.camera);
+      this.renderer.toneMappingExposure = prevExp;
     } else {
       this.renderer.render(this.scene, this.camera);
     }
+    this.devPerf.endGpuSample(this.renderer);
   }
 
   private update(dt: number): void {
@@ -346,13 +395,24 @@ export class Game implements UIBridge {
     this.detourToastCooldown = Math.max(0, this.detourToastCooldown - dt);
     const settings = this.settings.get();
 
+    if (this.showroomVisible) {
+      this.showroom.update(dt);
+      return;
+    }
+
+    const q = QUALITY[settings.quality];
     this.audio.update(dt, this.controller.x, this.controller.z);
     this.tmpPlayerVec.set(this.controller.x, 0, this.controller.z);
     this.env.update(dt, this.tmpPlayerVec);
+    this.city.updateShadowFocus(
+      this.controller.x,
+      this.controller.z,
+      q.shadowDistance,
+      settings.shadows && q.shadows,
+    );
     this.traffic.setPlayer(this.controller.x, this.controller.z, this.controller.speed);
     this.traffic.update(dt);
     this.peds.update(dt, this.controller.x, this.controller.z, this.controller.speed, this.controller.yaw);
-    if (this.showroomVisible) this.showroom.update(dt);
 
     if (this.mode === 'menu') {
       if (!this.debugFreeCamera) this.updateMenuCamera(dt);
@@ -498,11 +558,19 @@ export class Game implements UIBridge {
     this.state.progress.distanceTravelled += steppedDistance;
   }
 
+  private lastRouteKey = '';
+
   private recomputeRoute(target: { x: number; z: number } | null): void {
     if (!target) {
       this.activeRoute = null;
+      this.lastRouteKey = '';
       return;
     }
+    const startSnap = snapToNearestRoad(this.controller.x, this.controller.z);
+    const key = `${startSnap.segment.id}|${Math.round(target.x)}|${Math.round(target.z)}|${this.traffic.congestionEpoch}`;
+    if (key === this.lastRouteKey && this.activeRoute) return;
+    this.lastRouteKey = key;
+
     const plan = findRoute(this.controller.x, this.controller.z, target.x, target.z, (segId) =>
       this.traffic.getCongestionMultiplier(segId),
     );
@@ -695,13 +763,15 @@ export class Game implements UIBridge {
     let rx = snapped.x;
     let rz = snapped.z;
     const seg = snapped.segment;
-    const obstacles = this.traffic.obstacles();
-    // Ensure recovery never drops the player inside or immediately behind a traffic vehicle
-    for (const shift of [0, -7, 7, -14, 14]) {
-      const cx = snapped.x + seg.ux * shift;
-      const cz = snapped.z + seg.uz * shift;
-      const blocked = obstacles.some((ob) => Math.hypot(ob.x - cx, ob.z - cz) < ob.radius + 4.5);
-      if (!blocked) {
+    const fx = Math.sin(snapped.yaw);
+    const fz = Math.cos(snapped.yaw);
+    const baseAlong = (snapped.x - seg.ax) * seg.ux + (snapped.z - seg.az) * seg.uz;
+    // Ensure recovery places the player well inside the road segment and clear of traffic
+    for (const shift of [0, -8, 8, -16, 16, -24, 24, -32, 32]) {
+      const along = clamp(baseAlong + shift, Math.min(12, seg.length * 0.3), Math.max(seg.length - 12, seg.length * 0.7));
+      const cx = seg.ax + seg.ux * along;
+      const cz = seg.az + seg.uz * along;
+      if (this.traffic.isClearForRecovery(cx, cz, fx, fz)) {
         rx = cx;
         rz = cz;
         break;
@@ -792,8 +862,24 @@ export class Game implements UIBridge {
     this.audio.setTrack(track);
   }
 
+  private showroomWarmed = false;
+
   private refreshShowroom(): void {
+    if (this.envMap && !this.showroom.scene.environment) {
+      this.showroom.scene.environment = this.envMap;
+      this.showroom.scene.environmentIntensity = 0.85;
+    }
     this.showroom.setRickshaw(this.state.vehicle(), this.currentLook());
+    if (!this.showroomWarmed) {
+      this.showroomWarmed = true;
+      try {
+        this.renderer.setSize(64, 64, false);
+        this.renderer.compile(this.showroom.scene, this.showroom.camera);
+        this.renderer.render(this.showroom.scene, this.showroom.camera);
+      } finally {
+        this.resize();
+      }
+    }
   }
 
   private refreshPlayerLook(): void {
@@ -1044,6 +1130,13 @@ export class Game implements UIBridge {
     setTextureQuality(s.quality === 'high' ? 8 : s.quality === 'balanced' ? 4 : 1);
     if (s.quality === 'low' && this.scene.environment) this.scene.environment = null;
     else if (this.envMap && !this.scene.environment) this.scene.environment = this.envMap;
+    this.city.updateShadowFocus(
+      this.controller.x,
+      this.controller.z,
+      quality.shadowDistance,
+      s.shadows && quality.shadows,
+      true,
+    );
     document.documentElement.style.setProperty('--text-scale', String(s.textScale));
     document.documentElement.style.setProperty('--ui-scale', String(s.hudScale));
     this.ui.applyControlLayout();
@@ -1055,14 +1148,18 @@ export class Game implements UIBridge {
   toggleCamera(): void {
     const next = nextCameraMode(this.settings.get().cameraMode);
     this.settings.set({ cameraMode: next });
-    this.applySettings();
+    this.chase.setMode(next);
+    this.player.setCockpitVisibility(this.mode !== 'menu' && next === 'cockpit');
+    this.ui.updateCameraBadge(next);
     this.audio.uiTap();
     this.ui.toast(t('cam.switched', { mode: t(`cam.mode.${next}`) }));
   }
 
   setCameraMode(mode: CameraMode): void {
     this.settings.set({ cameraMode: mode });
-    this.applySettings();
+    this.chase.setMode(mode);
+    this.player.setCockpitVisibility(this.mode !== 'menu' && mode === 'cockpit');
+    this.ui.updateCameraBadge(mode);
   }
 
   hasSave(): boolean {
@@ -1083,25 +1180,14 @@ export class Game implements UIBridge {
   }
 
   private updatePerf(dt: number): void {
+    if (!this.devPerf.isEnabled()) return;
     this.devPerf.update(
       dt,
       this.renderer,
-      this.traffic.group.children.length,
+      this.traffic.vehicleCount,
       this.peds.activePedestrianCount,
       this.jammedList.length,
     );
-    if (this.frameCount % 30 !== 0) return;
-    const fps = 1 / Math.max(dt, 1e-4);
-    if (!this.qualityDowngraded && this.settings.get().quality !== 'low') {
-      if (fps < 24) this.lowFpsTimer += 0.5;
-      else this.lowFpsTimer = Math.max(0, this.lowFpsTimer - 0.5);
-      if (this.lowFpsTimer > 6) {
-        this.qualityDowngraded = true;
-        this.settings.set({ quality: 'low', shadows: false });
-        this.applySettings();
-        this.ui.toast(t('settings.qualityNote'));
-      }
-    }
   }
 
   // --------------------------------------------------------- test & debug hooks
@@ -1126,7 +1212,7 @@ export class Game implements UIBridge {
       rides: this.state.progress.rides,
       condition: this.state.progress.condition,
       traffic: this.traffic.obstacles().length,
-      trafficTotal: this.traffic.group.children.length,
+      trafficTotal: this.traffic.vehicleCount,
       pedestrians: this.peds.activePedestrianCount,
       jammedSegments: this.jammedList.length,
       screen: this.ui.currentScreen,

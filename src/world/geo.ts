@@ -31,18 +31,20 @@ export class Bucket {
   private parts: THREE.BufferGeometry[] = [];
   private partXZ: { x: number; z: number }[] = [];
   private material: THREE.Material;
+  private bakeGroundAO: boolean;
   readonly name: string;
 
-  constructor(name: string, material: THREE.Material) {
+  constructor(name: string, material: THREE.Material, bakeGroundAO = false) {
     this.name = name;
     this.material = material;
+    this.bakeGroundAO = bakeGroundAO;
   }
 
   get count(): number {
     return this.parts.length;
   }
 
-  /** Add a primitive with a TRS transform and a tint (vertex colour). */
+  /** Add a primitive with a TRS transform and a tint (vertex colour + optional baked ground/overhang AO). */
   add(
     source: THREE.BufferGeometry,
     pos: THREE.Vector3 | { x: number; y: number; z: number },
@@ -81,16 +83,35 @@ export class Bucket {
     }
 
     const c = new THREE.Color(color);
-    const colors = new Float32Array(geo.getAttribute('position').count * 3);
-    for (let i = 0; i < colors.length; i += 3) {
-      colors[i] = c.r;
-      colors[i + 1] = c.g;
-      colors[i + 2] = c.b;
+    const posAttr = geo.getAttribute('position') as THREE.BufferAttribute;
+    const normAttr = geo.getAttribute('normal') as THREE.BufferAttribute | undefined;
+    const vertCount = posAttr.count;
+    const colors = new Float32Array(vertCount * 3);
+    if (this.bakeGroundAO) {
+      for (let v = 0; v < vertCount; v++) {
+        const wy = posAttr.getY(v);
+        const t = wy <= 0 ? 0 : wy >= 1.35 ? 1 : wy / 1.35;
+        let ao = 0.78 + 0.22 * (t * t * (3 - 2 * t));
+        if (normAttr) {
+          const ny = normAttr.getY(v);
+          if (ny < -0.35) ao *= 0.82;
+          else if (ny > 0.55) ao = Math.min(1.04, ao * 1.03);
+        }
+        const i3 = v * 3;
+        colors[i3] = Math.min(1, c.r * ao);
+        colors[i3 + 1] = Math.min(1, c.g * ao);
+        colors[i3 + 2] = Math.min(1, c.b * ao);
+      }
+    } else {
+      for (let i = 0; i < colors.length; i += 3) {
+        colors[i] = c.r;
+        colors[i + 1] = c.g;
+        colors[i + 2] = c.b;
+      }
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     if (!geo.getAttribute('uv')) {
-      const count = geo.getAttribute('position').count;
-      geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(count * 2), 2));
+      geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(vertCount * 2), 2));
     }
     this.parts.push(geo);
     this.partXZ.push({ x: px, z: pz });
@@ -226,7 +247,7 @@ export class Bucket {
   }
 }
 
-/** Shared PBR material for tinted merged geometry. */
+/** Shared PBR material for glossy/metallic tinted merged geometry. */
 export function tintedMaterial(
   map: THREE.Texture | null,
   opts: Partial<THREE.MeshStandardMaterialParameters> = {},
@@ -237,6 +258,30 @@ export function tintedMaterial(
     map,
     roughness: 0.86,
     metalness: 0.02,
+    ...opts,
+  });
+  if (map) {
+    map.wrapS = THREE.RepeatWrapping;
+    map.wrapT = THREE.RepeatWrapping;
+  }
+  return mat;
+}
+
+/**
+ * Shared mobile-optimized Lambertian diffuse material for matte architectural
+ * plaster, concrete, brick, foliage, cloth, and painted signs.
+ * Evaluates full sun/moon shadows, hemisphere sky/ground bounce, ambient, and
+ * headlamp/street lights WITHOUT expensive per-pixel GGX specular or PMREM
+ * octahedral CubeUV dual-mip fetches on Mali-G72 MP3.
+ */
+export function matteMaterial(
+  map: THREE.Texture | null,
+  opts: Partial<THREE.MeshLambertMaterialParameters> = {},
+): THREE.MeshLambertMaterial {
+  const mat = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    map,
     ...opts,
   });
   if (map) {

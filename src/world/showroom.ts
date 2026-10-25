@@ -117,20 +117,20 @@ export class Showroom {
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(24, 24),
-      new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.78, metalness: 0.08 }),
+      new THREE.MeshLambertMaterial({ map: floorTex }),
     );
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
 
     const backWall = new THREE.Mesh(
       new THREE.PlaneGeometry(18, 7.5),
-      new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.88 }),
+      new THREE.MeshLambertMaterial({ map: wallTex }),
     );
     backWall.position.set(0, 3.6, -6.8);
     this.scene.add(backWall);
 
     // Merged static workshop props + plinth (2 draw calls instead of 24!)
-    const solidMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.74, metalness: 0.14 });
+    const solidMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     const metalMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.34, metalness: 0.72 });
     const bSolid = new Bucket('showroom.solid', solidMat);
     const bMetal = new Bucket('showroom.metal', metalMat);
@@ -185,26 +185,29 @@ export class Showroom {
     this.scene.add(this.wheelsOnWall);
     this.scene.add(this.turntable);
 
-    // Fast, warm 3-point directional + hemisphere studio lighting (0 shadow maps, 0 point-light shader permutations!)
-    this.scene.add(new THREE.HemisphereLight(0xffe9c8, 0x26332b, 1.85));
-    const key = new THREE.DirectionalLight(0xffdfa8, 3.2);
+    // Fast studio lighting matching 1-DirLight + Hemi + Ambient signature (0 shadow maps, 0 SpotLights!)
+    this.scene.add(new THREE.HemisphereLight(0xffebd0, 0x3a5060, 2.55));
+    this.scene.add(new THREE.AmbientLight(0xfff4e2, 0.55));
+    const key = new THREE.DirectionalLight(0xffe3b5, 4.25);
     key.position.set(3.4, 6.2, 4.8);
     this.scene.add(key);
-
-    const rim = new THREE.DirectionalLight(0x9fd4ff, 1.45);
-    rim.position.set(-4.2, 3.8, -3.6);
-    this.scene.add(rim);
   }
 
   setRickshaw(vehicle: VehicleDef, look: RickshawLook): void {
     this.ensureBuilt();
-    if (this.visual) {
-      this.turntable.remove(this.visual.root);
-      this.visual.dispose();
+    if (!this.visual) {
+      this.visual = new RickshawVisual(vehicle, look, false);
+      this.visual.setNightLighting(true, 0.7);
+      this.turntable.add(this.visual.root);
+    } else {
+      this.visual.applyLook(look, vehicle);
+      this.visual.setNightLighting(true, 0.7);
     }
-    this.visual = new RickshawVisual(vehicle, look, true);
-    this.visual.setNightLighting(true, 0.7);
-    this.turntable.add(this.visual.root);
+  }
+
+  prewarm(renderer: THREE.WebGLRenderer, vehicle: VehicleDef, look: RickshawLook): void {
+    this.setRickshaw(vehicle, look);
+    renderer.compile(this.scene, this.camera);
   }
 
   drag(dx: number): void {

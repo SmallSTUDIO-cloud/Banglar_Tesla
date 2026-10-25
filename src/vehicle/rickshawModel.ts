@@ -92,22 +92,15 @@ export class RickshawRig {
       roughness: 0.2,
       metalness: 0.88,
     });
-    const fabricMat = new THREE.MeshStandardMaterial({
+    const fabricMat = new THREE.MeshLambertMaterial({
       vertexColors: true,
-      roughness: 0.84,
-      metalness: 0.04,
       side: THREE.DoubleSide,
     });
-    const woodLeatherMat = new THREE.MeshStandardMaterial({
+    const woodLeatherMat = new THREE.MeshLambertMaterial({
       vertexColors: true,
-      roughness: 0.68,
-      metalness: 0.06,
     });
-    const glowMat = new THREE.MeshStandardMaterial({
-      color: 0xfff3c8,
-      emissive: new THREE.Color(this.isElectric ? 0xdff8ff : 0xffd27a),
-      emissiveIntensity: 0.65,
-      roughness: 0.25,
+    const glowMat = new THREE.MeshBasicMaterial({
+      color: this.isElectric ? 0xe6fbff : 0xffe49e,
     });
 
     const bMetal = new Bucket('rickshaw.chassis.metal', metalMat);
@@ -468,26 +461,24 @@ export class RickshawRig {
     if (cm3) this.chassis.add(cm3);
     if (cm4) this.chassis.add(cm4);
 
-    // Optional fairy-light garland around hood rim
+    // Optional fairy-light garland around hood rim (merged into 1 vertex-colored draw call!)
     if (look.fairyLights) {
-      const colors = [0xff5e7e, 0xffd24a, 0x4ef2b4, 0x5cc8ff];
-      const bulbGeo = new THREE.SphereGeometry(0.021, 6, 6);
-      const mats = colors.map(
-        (col) =>
-          new THREE.MeshStandardMaterial({
-            color: col,
-            emissive: col,
-            emissiveIntensity: 0.85,
-            roughness: 0.3,
-          }),
-      );
-      this.fairyBulbMaterials.push(...mats);
+      const colors = ['#ff5e7e', '#ffd24a', '#4ef2b4', '#5cc8ff'];
+      const fairyMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+      const bFairy = new Bucket('rickshaw.fairyLights', fairyMat);
+      const bulbSrc = new THREE.SphereGeometry(0.5, 6, 6);
       for (let i = 0; i < 12; i++) {
-        const bulb = new THREE.Mesh(bulbGeo, mats[i % mats.length]);
         const t = i / 11;
-        bulb.position.set(-0.46 + t * 0.92, 1.54 + Math.sin(t * Math.PI) * 0.06, -0.17);
-        this.chassis.add(bulb);
+        bFairy.add(
+          bulbSrc,
+          { x: -0.46 + t * 0.92, y: 1.54 + Math.sin(t * Math.PI) * 0.06, z: -0.17 },
+          { x: 0.042, y: 0.042, z: 0.042 },
+          colors[i % colors.length],
+        );
       }
+      bulbSrc.dispose();
+      const fairyMesh = bFairy.build({ cast: false, receive: false }, true);
+      if (fairyMesh) this.chassis.add(fairyMesh);
     }
 
     // ----------------------------------------- 8. RICKSHAWWALLAH (PULLER) RIG
@@ -502,7 +493,7 @@ export class RickshawRig {
   }
 
   private buildPuller(_unused: Bucket): void {
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.02 });
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
     const b = new Bucket('rickshaw.puller', mat);
     // Seated/pedaling posture over saddle (z = -0.05) reaching forward to grips (z = +0.61)
     b.box({ x: 0, y: 1.24, z: 0.02 }, { x: 0.33, y: 0.40, z: 0.21 }, '#d98a3c', { x: 0.28 }); // lungi/shirt torso
@@ -521,7 +512,7 @@ export class RickshawRig {
     if (mesh) this.puller.add(mesh);
 
     const legGeo = new THREE.CylinderGeometry(0.052, 0.044, 0.44, 7);
-    const legMat = new THREE.MeshStandardMaterial({ color: 0x1d4e6e, roughness: 0.88 });
+    const legMat = new THREE.MeshLambertMaterial({ color: 0x1d4e6e });
     const leftLeg = new THREE.Mesh(legGeo, legMat);
     const rightLeg = new THREE.Mesh(legGeo, legMat);
     leftLeg.name = 'leftLeg';
