@@ -3,25 +3,23 @@ name: Deploy Web Game to GitHub Pages
 on:
   push:
     branches:
-      - arena/7873a750-banglar-tesla
+      - main
+  pull_request:
+    branches:
       - main
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: 'pages'
+  group: "pages-${{ github.ref }}"
   cancel-in-progress: false
 
 jobs:
   build:
     name: Build & Verify Web Bundle
     runs-on: ubuntu-latest
-    outputs:
-      pages_enabled: ${{ steps.pages_check.outputs.enabled }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -58,34 +56,19 @@ jobs:
           ! grep -q 'url(/fonts/' dist/assets/*.css
 
       - name: Upload GitHub Pages artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
 
-      - name: Check if GitHub Pages is enabled in repository settings
-        id: pages_check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if gh api "repos/${{ github.repository }}/pages" >/dev/null 2>&1; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "### GitHub Pages Repository Setting Required"
-              echo "Web bundle built, verified, and uploaded as \`github-pages\` artifact."
-              echo "To publish live at \`https://smallstudio-cloud.github.io/Banglar_Tesla/\`:"
-              echo "1. Open **Settings → Pages** in \`${{ github.repository }}\`."
-              echo "2. Under **Build and deployment → Source**, select **GitHub Actions**."
-              echo "3. Re-run this workflow (or push/merge to \`main\`)."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: needs.build.outputs.pages_enabled == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
