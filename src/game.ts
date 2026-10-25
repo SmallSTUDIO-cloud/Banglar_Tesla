@@ -21,9 +21,11 @@ import { SettingsStore } from './core/settings';
 import { GameState } from './core/gameState';
 import { setLocale, t } from './core/i18n';
 import { audio } from './audio/audio';
+import { BanglaSpeechService } from './audio/speech';
 
 import { buildCity, type CityResult } from './world/city';
-import { buildProps } from './world/props';
+import { buildProps, type VendorSpot } from './world/props';
+import { DestructionSystem } from './world/destruction';
 import { EnvironmentSystem } from './world/environment';
 import { Showroom } from './world/showroom';
 import { SignAtlas, releaseScratchCanvas, setTextureQuality } from './world/textures';
@@ -43,6 +45,7 @@ import { ChaseCamera, nextCameraMode } from './vehicle/chaseCamera';
 
 import { TrafficSystem } from './ai/traffic';
 import { PedestrianSystem } from './ai/pedestrians';
+import { ROADRAGE_ESCAPED_TEXT, RoadRageSystem } from './ai/roadRage';
 
 import { MissionSystem } from './missions/missionSystem';
 import { dailySeed, dateKey, generateMission, type MissionOffer } from './missions/mission';
@@ -69,6 +72,11 @@ export class Game implements UIBridge {
 
   private city: CityResult;
   private env: EnvironmentSystem;
+  private destruction: DestructionSystem;
+  private vendorSpots: VendorSpot[];
+  private speech: BanglaSpeechService;
+  private roadRage: RoadRageSystem;
+  private tanWindLines: THREE.LineSegments;
   private traffic: TrafficSystem;
   private peds: PedestrianSystem;
   private player: RickshawVisual;
@@ -90,6 +98,7 @@ export class Game implements UIBridge {
   private lastSave = 0;
   private lastImpactAt = 0;
   private bellCooldown = 0;
+  private teaCooldown = 0;
   private freeRidePoiCooldown = 0;
   private showroomVisible = false;
   private envMap: THREE.Texture | null = null;
@@ -141,11 +150,30 @@ export class Game implements UIBridge {
     this.scene.add(props.group);
     this.city.registerShadowCasters(props.group);
     this.city.colliders.push(...props.colliders);
+    this.vendorSpots = props.vendorSpots;
+    this.audio.setVendorSpots(props.vendorSpots);
     releaseScratchCanvas();
+
+    this.destruction = new DestructionSystem((x, z) => this.city.heightAt(x, z));
+    this.destruction.registerProps(this.city.breakableLamps, this.city.lampPositions);
+    this.destruction.registerProps(props.breakableStalls);
+    this.scene.add(this.destruction.group);
+    this.destruction.onBreak = (prop, impactSpeed) => {
+      this.audio.playBreakableCrash(prop.kind === 'lamp' ? 'lamp' : 'stall');
+      this.chase.addTrauma(clamp(impactSpeed * 0.045, 0.14, 0.42));
+      if (this.settings.get().haptics && navigator.vibrate) {
+        navigator.vibrate(35);
+      }
+    };
+
+    // Pooled 1-draw-call radial motion-streak lines attached to camera for `টান` speed boost
+    this.tanWindLines = buildTanWindLines();
+    this.camera.add(this.tanWindLines);
 
     this.traffic = new TrafficSystem(initialQuality, (x, z) => this.city.heightAt(x, z));
     this.scene.add(this.traffic.group);
-    this.traffic.onHorn = (x, z, kind) => this.audio.trafficHorn(x, z, kind);
+    this.traffic.onHorn = (x, z, kind) =>
+      this.audio.trafficHorn(x - this.controller.x, z - this.controller.z, kind);
 
     this.peds = new PedestrianSystem(initialQuality);
     this.scene.add(this.peds.group);
@@ -155,6 +183,53 @@ export class Game implements UIBridge {
       (x, z) => this.city.heightAt(x, z),
       (x, z) => surfaceAtWorld(x, z),
     );
+    this.controller.stamina = this.state.progress.stamina;
+    this.controller.onBreakableHit = (id, impactSpeed, x, z, yaw) =>
+      this.destruction.tryBreak(id, impactSpeed, x, z, yaw);
+    this.controller.onTanAutoStop = (reason) => {
+      this.audio.setTanBoost(false);
+      this.ui.toast(t(reason === 'battery' ? 'toast.tanLowBattery' : 'toast.tanEmpty'), 'bad');
+    };
+
+    this.speech = new BanglaSpeechService(this.audio);
+    this.roadRage = new RoadRageSystem(this.scene, this.traffic, this.speech, this.audio, {
+      heightAt: (x, z) => this.city.heightAt(x, z),
+      getDialogueSettings: () => {
+        const s = this.settings.get();
+        return {
+          volume: s.dialogue * s.master,
+          muted: s.muted || !s.sfxEnabled,
+          subtitles: s.subtitles,
+        };
+      },
+      onAlertBanner: (head, sub, sec) => this.ui.setRoadRageBanner(head, sub, sec),
+      onSubtitle: (speakerKey, banglaLine) => this.ui.showRoadRageSubtitle(speakerKey, banglaLine),
+      onEscaped: () => {
+        this.ui.toast(ROADRAGE_ESCAPED_TEXT, 'good');
+        this.audio.successStinger();
+      },
+      onOpenConfrontation: () => {
+        this.controller.speed = 0;
+        this.controller.setTanActive(false);
+        this.audio.setTanBoost(false);
+        this.ui.openRoadRageConfrontation();
+      },
+      onCloseConfrontation: () => {
+        this.ui.closeRoadRageConfrontation();
+      },
+      onScuffleStart: () => {
+        this.audio.playScuffle();
+        this.chase.addTrauma(0.58);
+        this.ui.toast(t('roadrage.scuffleAlert'), 'bad');
+      },
+      onScuffleComplete: () => {
+        this.controller.applyScufflePenalty();
+        this.state.progress.stamina = this.controller.stamina;
+        this.state.damageCondition(6);
+        if (this.missions.state === 'toDropoff') this.missions.registerImpact(1.1);
+        this.state.saveNow();
+      },
+    });
 
     this.player = new RickshawVisual(this.state.vehicle(), this.currentLook());
     this.scene.add(this.player.root);
@@ -181,6 +256,12 @@ export class Game implements UIBridge {
     this.input.onCamera = () => this.toggleCamera();
     this.input.onRecover = () => this.recoverRickshaw();
     this.input.onHorn = () => this.ringBell();
+    this.input.onTanToggle = () => this.toggleTanBoost();
+    this.input.onTeaInteract = () => {
+      if (this.isTeaRestAvailable(this.state.vehicle().kind === 'electric')) {
+        this.buyRoadsideTea();
+      }
+    };
 
     this.ui = new AppUI(this, this.state, this.settings);
     this.devPerf = new DevPerfOverlay();
@@ -311,13 +392,19 @@ export class Game implements UIBridge {
           this.city.withPrewarmState(() => {
             this.missions.withPrewarmState(() => {
               this.traffic.withPrewarmState(() => {
-                this.player.setNightLighting(true);
-                try {
-                  this.renderer.compile(this.scene, this.camera);
-                  this.renderer.render(this.scene, this.camera);
-                } finally {
-                  this.player.setNightLighting(false);
-                }
+                this.destruction.withPrewarmState(() => {
+                  this.roadRage.withPrewarmState(() => {
+                    this.tanWindLines.visible = true;
+                    this.player.setNightLighting(true);
+                    try {
+                      this.renderer.compile(this.scene, this.camera);
+                      this.renderer.render(this.scene, this.camera);
+                    } finally {
+                      this.tanWindLines.visible = false;
+                      this.player.setNightLighting(false);
+                    }
+                  });
+                });
               });
             });
           });
@@ -393,17 +480,21 @@ export class Game implements UIBridge {
   private update(dt: number): void {
     this.menuTime += dt;
     this.detourToastCooldown = Math.max(0, this.detourToastCooldown - dt);
+    this.teaCooldown = Math.max(0, this.teaCooldown - dt);
     const settings = this.settings.get();
 
     if (this.showroomVisible) {
+      this.audio.setSceneMode('menu');
       this.showroom.update(dt);
       return;
     }
 
     const q = QUALITY[settings.quality];
+    this.audio.setSceneMode(this.mode === 'menu' ? 'menu' : 'driving');
     this.audio.update(dt, this.controller.x, this.controller.z);
     this.tmpPlayerVec.set(this.controller.x, 0, this.controller.z);
     this.env.update(dt, this.tmpPlayerVec);
+    this.destruction.update(dt);
     this.city.updateShadowFocus(
       this.controller.x,
       this.controller.z,
@@ -415,6 +506,7 @@ export class Game implements UIBridge {
     this.peds.update(dt, this.controller.x, this.controller.z, this.controller.speed, this.controller.yaw);
 
     if (this.mode === 'menu') {
+      this.tanWindLines.visible = false;
       if (!this.debugFreeCamera) this.updateMenuCamera(dt);
       const menuGround = this.city.heightAt(this.controller.x, this.controller.z);
       this.player.root.position.set(this.controller.x, menuGround, this.controller.z);
@@ -425,7 +517,11 @@ export class Game implements UIBridge {
     }
 
     const sampled = this.input.sample();
-    const input = this.debugInput ? { ...sampled, ...this.debugInput, horn: false } : sampled;
+    const rawInput = this.debugInput ? { ...sampled, ...this.debugInput, horn: false } : sampled;
+    const lockedByRage = this.roadRage.isControlLocked;
+    const input = lockedByRage
+      ? { throttle: 0, brake: 1, steer: 0, horn: false }
+      : rawInput;
     const wetness = this.env.wetness;
     const derived = deriveVehicle(
       this.state.vehicle(),
@@ -448,6 +544,7 @@ export class Game implements UIBridge {
       regenFactor: derived.regenFactor,
     });
     this.audio.setElectricMode(derived.isElectric);
+    this.audio.setTanBoost(this.controller.tanActive);
 
     // -------- fixed-step 60 Hz vehicle physics
     this.accumulator += dt;
@@ -475,12 +572,33 @@ export class Game implements UIBridge {
       this.accumulator -= stepSize;
       steps++;
     }
+    if (lockedByRage) {
+      this.controller.speed = 0;
+      if (this.roadRage.currentState === 'scuffling') {
+        this.chase.addTrauma(0.06);
+      }
+    }
+    this.state.progress.stamina = this.controller.stamina;
 
     const trafficImpact = this.resolveTrafficCollisions();
     if (trafficImpact > totalImpact) totalImpact = trafficImpact;
     if (onSidewalk && steppedDistance > 0) this.chase.addTrauma(0.03);
 
     this.handleImpact(totalImpact, lastImpactX, lastImpactZ);
+    this.roadRage.update(dt, this.controller.x, this.controller.z);
+
+    // -------- pooled `টান` motion streaks + FOV surge
+    const boostVisual =
+      this.controller.tanActive && this.controller.speed > derived.maxSpeed * 0.72
+        ? clamp01((this.controller.speed - derived.maxSpeed * 0.72) / Math.max(1, derived.maxSpeed * 0.9))
+        : 0;
+    this.chase.setBoostAmount(boostVisual);
+    if (!settings.reduceEffects && boostVisual > 0.08) {
+      this.tanWindLines.visible = true;
+      this.tanWindLines.rotation.z = (this.menuTime * 9.5) % (Math.PI * 2);
+    } else {
+      this.tanWindLines.visible = false;
+    }
 
     // -------- visuals (YXZ Euler order + true steerAngle & slope pitch!)
     const lateral = this.controller.lateralAccel;
@@ -541,7 +659,7 @@ export class Game implements UIBridge {
 
     // -------- audio
     this.audio.setVehicleSpeed(this.controller.speed, input.throttle);
-    this.audio.setRain(this.env.getWeather() === 'rain' ? 1 : 0);
+    this.audio.setRain(this.env.getWeather() === 'rain' ? 1 : 0, wetness);
     this.audio.setCrowd(clamp01(this.peds.activePedestrianCount / 75));
 
     // -------- HUD
@@ -610,9 +728,11 @@ export class Game implements UIBridge {
   // --------------------------------------------------------------- actions
   startMode(mode: 'duty' | 'free' | 'daily'): void {
     void this.audio.init();
+    this.roadRage.cancel();
     if (this.showroomVisible) this.showroomVisible = false;
     this.mode = mode;
     this.paused = false;
+    this.audio.setSceneMode('driving');
     this.state.setMode(mode);
     this.chooseAtmosphere(mode);
     this.respawnPlayer();
@@ -727,13 +847,16 @@ export class Game implements UIBridge {
 
   private togglePause(force?: boolean): void {
     if (this.mode === 'menu') return;
+    if (this.roadRage.isControlLocked) return;
     const next = force ?? !this.paused;
     if (next === this.paused) return;
     this.paused = next;
     if (this.paused) {
       this.ui.showPause(0);
+      this.audio.setSceneMode('paused');
       this.audio.setVehicleSpeed(0, 0);
     } else {
+      this.audio.setSceneMode('driving');
       this.ui.show('hud');
     }
   }
@@ -744,11 +867,14 @@ export class Game implements UIBridge {
       return;
     }
     this.paused = false;
+    this.audio.setSceneMode('driving');
     this.ui.show('hud');
   }
 
   restartMission(): void {
     this.paused = false;
+    this.roadRage.cancel();
+    this.audio.setSceneMode('driving');
     this.missions.cancel();
     this.respawnPlayer();
     this.ui.show('hud');
@@ -756,6 +882,8 @@ export class Game implements UIBridge {
   }
 
   recoverRickshaw(): void {
+    if (this.roadRage.isControlLocked) return;
+    this.roadRage.cancel(8);
     const free = this.mode === 'free';
     const fee = free ? 0 : 45;
     if (fee > 0) this.state.spend(fee);
@@ -789,6 +917,11 @@ export class Game implements UIBridge {
   }
 
   returnToMenu(): void {
+    this.roadRage.cancel();
+    this.tanWindLines.visible = false;
+    this.controller.setTanActive(false);
+    this.audio.setTanBoost(false);
+    this.audio.setSceneMode('menu');
     this.state.setSpawn(this.controller.x, this.controller.z, this.controller.yaw);
     this.state.saveNow();
     this.missions.cancel();
@@ -979,6 +1112,10 @@ export class Game implements UIBridge {
   private resolveTrafficCollisions(): number {
     const obstacles = this.traffic.obstacles();
     let impact = 0;
+    const preSpeed = this.controller.speed;
+    const pVx = Math.sin(this.controller.yaw) * preSpeed;
+    const pVz = Math.cos(this.controller.yaw) * preSpeed;
+
     for (let i = 0; i < obstacles.length; i++) {
       const ob = obstacles[i];
       const dx = this.controller.x - ob.x;
@@ -986,15 +1123,105 @@ export class Game implements UIBridge {
       const dist = Math.hypot(dx, dz);
       const minDist = ob.radius + RIDE.bodyRadius * 0.84;
       if (dist < minDist && dist > 0.0001) {
+        const oVx = Math.sin(ob.yaw) * ob.speed;
+        const oVz = Math.cos(ob.yaw) * ob.speed;
+        const relSpeed = Math.hypot(pVx - oVx, pVz - oVz);
+
         const push = (minDist - dist) / dist;
         this.controller.x += dx * push;
         this.controller.z += dz * push;
         const speedLoss = Math.min(Math.abs(this.controller.speed), 2.2);
         this.controller.speed *= 0.35;
-        impact = Math.max(impact, speedLoss * 0.5 + 0.2);
+        const hitImpact = Math.max(speedLoss * 0.5 + 0.2, relSpeed * 0.26);
+        impact = Math.max(impact, hitImpact);
+
+        // Milestone 2: High-impact collision with a private passenger car (`car` ONLY)
+        if (ob.kind === 'car' && (Math.abs(preSpeed) >= 4.0 || relSpeed >= 4.2)) {
+          this.roadRage.tryStart(ob.agentIndex, this.controller.x, this.controller.z);
+        }
       }
     }
     return impact;
+  }
+
+  // ------------------------------------------------ টান boost, tea rest & road rage
+  toggleTanBoost(): void {
+    if (this.mode === 'menu' || this.paused || this.roadRage.isControlLocked) return;
+    const next = !this.controller.tanActive;
+    const isElectric = this.state.vehicle().kind === 'electric';
+    if (next) {
+      const ok = this.controller.setTanActive(true);
+      if (!ok) {
+        this.audio.uiError();
+        this.ui.toast(t(isElectric ? 'toast.tanLowBattery' : 'toast.tanLowRecovering'), 'bad');
+        return;
+      }
+      this.audio.setTanBoost(true);
+      this.audio.playTanBoost();
+    } else {
+      this.controller.setTanActive(false);
+      this.audio.setTanBoost(false);
+      this.audio.uiTap();
+    }
+    this.hudTick = 1;
+    this.updateHud(isElectric);
+  }
+
+  private isTeaRestAvailable(isElectric: boolean): boolean {
+    if (this.mode === 'menu' || this.paused || this.roadRage.isActive || this.teaCooldown > 0) return false;
+    if (Math.abs(this.controller.speed) > 0.95) return false;
+    if (!isElectric && this.controller.stamina >= 95) return false;
+    if (isElectric && this.controller.battery >= 95) return false;
+    for (let i = 0; i < this.vendorSpots.length; i++) {
+      const s = this.vendorSpots[i];
+      if (s.broken || s.kind !== 'tea') continue;
+      const dx = s.x - this.controller.x;
+      const dz = s.z - this.controller.z;
+      if (dx * dx + dz * dz <= 6.2 * 6.2) return true;
+    }
+    return false;
+  }
+
+  buyRoadsideTea(): void {
+    if (this.mode === 'menu' || this.paused || this.roadRage.isActive) return;
+    if (!this.state.spend(10)) {
+      this.audio.uiError();
+      this.ui.toast(t('toast.teaNoMoney'), 'bad');
+      return;
+    }
+    this.controller.restoreStamina(100);
+    if (this.state.vehicle().kind === 'electric') {
+      this.controller.rechargeBattery(18);
+    }
+    this.state.progress.stamina = this.controller.stamina;
+    this.teaCooldown = 8;
+    this.audio.playTeaSip();
+    this.ui.toast(t('toast.teaRested'), 'good');
+    this.state.saveNow();
+    this.hudTick = 1;
+    this.updateHud(this.state.vehicle().kind === 'electric');
+  }
+
+  settleRoadRagePay(): void {
+    const ok = this.roadRage.settleWithPayment((amt) => this.state.spend(amt));
+    if (!ok) {
+      this.audio.uiError();
+      this.ui.toast(t('roadrage.noMoney'), 'bad');
+      return;
+    }
+    this.audio.coin();
+    this.ui.toast(t('roadrage.paidToast'), 'good');
+    this.state.saveNow();
+    this.hudTick = 1;
+    this.updateHud(this.state.vehicle().kind === 'electric');
+  }
+
+  refuseRoadRagePay(): void {
+    this.roadRage.refusePayment();
+  }
+
+  isAndroidApp(): boolean {
+    return this.speech.isAndroidApp();
   }
 
   private freeRideInteractions(dt: number): void {
@@ -1073,6 +1300,9 @@ export class Game implements UIBridge {
       cameraMode: this.settings.get().cameraMode,
       isElectric,
       battery: this.controller.battery,
+      stamina: this.controller.stamina,
+      tanActive: this.controller.tanActive,
+      teaAvailable: this.isTeaRestAvailable(isElectric),
       routePoints: this.activeRoute ? this.activeRoute.points : null,
       jammedSegments: this.jammedList,
       detourActive: !!this.activeRoute?.avoidedJam,
@@ -1110,15 +1340,20 @@ export class Game implements UIBridge {
     this.traffic.setQuality(quality);
     this.peds.setQuality(quality);
     this.audio.setVolumes({
+      master: s.master,
       music: s.music,
+      sfx: s.sfx,
       ambience: s.ambience,
       traffic: s.traffic,
       vehicle: s.vehicle,
       dialogue: s.dialogue,
       ui: s.ui,
       muted: s.muted,
+      musicEnabled: s.musicEnabled && s.radioMode !== 'street',
+      sfxEnabled: s.sfxEnabled,
+      reduceNoisyAmbience: s.reduceNoisyAmbience,
     });
-    this.audio.setMusicEnabled(s.radioMode !== 'street' && !s.muted);
+    this.audio.setMusicEnabled(s.musicEnabled && s.radioMode !== 'street' && !s.muted);
     this.input.setSensitivity(s.sensitivity);
     this.input.setDeadzone(s.deadzone);
     this.chase.setShakeEnabled(s.cameraShake);
@@ -1194,6 +1429,13 @@ export class Game implements UIBridge {
   debugSnapshot(): Record<string, unknown> {
     return {
       audio: this.audio.ready,
+      audioUnlocked: this.audio.unlocked,
+      audioScene: this.audio.currentSceneMode,
+      audioAssets: this.audio.loadedAssetCount,
+      audioActiveSources: this.audio.activeSourceCount,
+      speechBackend: this.speech.activeBackend,
+      speechCount: this.speech.spokenCount,
+      speechLastText: this.speech.lastSpokenText,
       tutorialDone: this.state.progress.tutorialDone,
       mode: this.mode,
       paused: this.paused,
@@ -1205,6 +1447,8 @@ export class Game implements UIBridge {
       steerAngle: this.controller.steerAngle,
       speed: this.controller.speed,
       battery: this.controller.battery,
+      stamina: this.controller.stamina,
+      tanActive: this.controller.tanActive,
       vehicleId: this.state.selectedVehicleId,
       cameraMode: this.settings.get().cameraMode,
       missionState: this.missions.state,
@@ -1215,6 +1459,12 @@ export class Game implements UIBridge {
       trafficTotal: this.traffic.vehicleCount,
       pedestrians: this.peds.activePedestrianCount,
       jammedSegments: this.jammedList.length,
+      roadRageState: this.roadRage.currentState,
+      roadRageEscapeLeft: this.roadRage.escapeSecondsRemaining,
+      roadRageDistance: this.roadRage.currentDistance,
+      breakableTotal: this.destruction.totalRegistered,
+      breakableBroken: this.destruction.brokenCount,
+      activeDebrisPieces: this.destruction.activePieceCount,
       screen: this.ui.currentScreen,
       quality: this.settings.get().quality,
       weather: this.env.getWeather(),
@@ -1379,6 +1629,89 @@ export class Game implements UIBridge {
     return this.state.progress.ownedCosmetics.length;
   }
 
+  /**
+   * Positions an instanced traffic vehicle of `kind` directly in front of the player
+   * and rams into it through real vehicle physics + collision resolution.
+   */
+  debugCollideWithTrafficKindForTest(kind: 'car' | 'rickshaw' | 'cng' | 'bus', speed = 6.8): boolean {
+    const road = snapToNearestRoad(0, 0);
+    this.debugTeleport(road.x, road.z, road.yaw);
+    const fx = Math.sin(road.yaw);
+    const fz = Math.cos(road.yaw);
+    const idx = this.traffic.debugPositionAgentForTest(
+      kind,
+      road.x + fx * 2.1,
+      road.z + fz * 2.1,
+      road.yaw,
+      0,
+    );
+    if (idx < 0) return false;
+    const pose = this.traffic.getAgentPose(idx);
+    if (pose) {
+      this.debugTeleport(pose.x - fx * 2.0, pose.z - fz * 2.0, road.yaw);
+    }
+    this.controller.speed = speed;
+    this.debugInput = { throttle: 1, brake: 0, steer: 0 };
+    this.debugStepSim(0.45);
+    this.debugInput = null;
+    return true;
+  }
+
+  /**
+   * Teleports player onto the clear road adjacent to an intact breakable prop (`lamp` or `stall`)
+   * and drives straight into it at real speed to exercise physics + DestructionSystem.
+   */
+  debugSmashBreakableForTest(kind: 'lamp' | 'stall', speed = 6.8): boolean {
+    const candidates = this.destruction.findIntactProps(kind, 12);
+    for (let i = 0; i < candidates.length; i++) {
+      const prop = candidates[i];
+      const road = snapToNearestRoad(prop.x, prop.z);
+      const dx = prop.x - road.x;
+      const dz = prop.z - road.z;
+      const yaw = Math.atan2(dx, dz);
+      const ux = Math.sin(yaw);
+      const uz = Math.cos(yaw);
+      this.debugTeleport(prop.x - ux * 1.4, prop.z - uz * 1.4, yaw);
+      this.controller.speed = speed;
+      this.debugInput = { throttle: 1, brake: 0, steer: 0 };
+      this.debugStepSim(0.25);
+      this.debugInput = null;
+      if (prop.broken) return true;
+    }
+    return false;
+  }
+
+  debugSetBalanceForTest(amount: number): void {
+    this.state.progress.balance = Math.max(0, Math.round(amount));
+    this.hudTick = 1;
+    this.updateHud(this.state.vehicle().kind === 'electric');
+  }
+
+  debugSelectVehicleForTest(id: 'classic' | 'electric'): void {
+    if (!this.state.ownsVehicle(id)) {
+      this.state.progress.ownedVehicles.push(id);
+    }
+    this.state.selectVehicle(id);
+    this.refreshPlayerLook();
+    this.hudTick = 1;
+    this.updateHud(this.state.vehicle().kind === 'electric');
+  }
+
+  debugMoveNearTeaStallForTest(): boolean {
+    for (let i = 0; i < this.vendorSpots.length; i++) {
+      const s = this.vendorSpots[i];
+      if (s.broken || s.kind !== 'tea') continue;
+      this.debugTeleport(s.x + 2.4, s.z, 0);
+      this.controller.speed = 0;
+      this.controller.stamina = Math.min(this.controller.stamina, 55);
+      this.teaCooldown = 0;
+      this.hudTick = 1;
+      this.updateHud(this.state.vehicle().kind === 'electric');
+      return true;
+    }
+    return false;
+  }
+
   get isPaused(): boolean {
     return this.paused;
   }
@@ -1386,6 +1719,39 @@ export class Game implements UIBridge {
   get currentMode(): Mode {
     return this.mode;
   }
+}
+
+function buildTanWindLines(): THREE.LineSegments {
+  const count = 14;
+  const positions = new Float32Array(count * 6);
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + (i % 2) * 0.14;
+    const r0 = 0.72 + (i % 3) * 0.11;
+    const r1 = r0 + 0.36 + (i % 2) * 0.12;
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const base = i * 6;
+    positions[base] = c * r0;
+    positions[base + 1] = s * r0 * 0.68;
+    positions[base + 2] = -1.65;
+    positions[base + 3] = c * r1;
+    positions[base + 4] = s * r1 * 0.68;
+    positions[base + 5] = -1.15;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.LineBasicMaterial({
+    color: 0xfff0c2,
+    transparent: true,
+    opacity: 0.42,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const lines = new THREE.LineSegments(geo, mat);
+  lines.visible = false;
+  lines.frustumCulled = false;
+  lines.renderOrder = 20;
+  return lines;
 }
 
 function formatClock(seconds: number): string {

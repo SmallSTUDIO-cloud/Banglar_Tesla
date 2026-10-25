@@ -19,13 +19,18 @@ export interface Settings {
   renderScale: number;
   shadows: boolean;
   fpsTarget: 30 | 60;
+  master: number;
   music: number;
+  sfx: number;
   ambience: number;
   traffic: number;
   vehicle: number;
   dialogue: number;
   ui: number;
   muted: boolean;
+  musicEnabled: boolean;
+  sfxEnabled: boolean;
+  reduceNoisyAmbience: boolean;
   radioMode: 'both' | 'music' | 'street';
   steering: 'buttons' | 'wheel';
   handedness: 'right' | 'left';
@@ -47,13 +52,18 @@ export const DEFAULT_SETTINGS: Settings = {
   renderScale: 1,
   shadows: true,
   fpsTarget: 60,
+  master: 0.85,
   music: 0.62,
+  sfx: 0.8,
   ambience: 0.7,
   traffic: 0.6,
   vehicle: 0.75,
   dialogue: 0.85,
   ui: 0.7,
   muted: false,
+  musicEnabled: true,
+  sfxEnabled: true,
+  reduceNoisyAmbience: false,
   radioMode: 'both',
   steering: 'buttons',
   handedness: 'right',
@@ -111,7 +121,9 @@ export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS
   if (raw.fpsTarget === 30 || raw.fpsTarget === 60) out.fpsTarget = raw.fpsTarget;
 
   num('renderScale', 0.6, 1.2, base.renderScale);
+  num('master', 0, 1, base.master);
   num('music', 0, 1, base.music);
+  num('sfx', 0, 1, base.sfx);
   num('ambience', 0, 1, base.ambience);
   num('traffic', 0, 1, base.traffic);
   num('vehicle', 0, 1, base.vehicle);
@@ -124,6 +136,9 @@ export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS
 
   bool('shadows', base.shadows);
   bool('muted', base.muted);
+  bool('musicEnabled', base.musicEnabled);
+  bool('sfxEnabled', base.sfxEnabled);
+  bool('reduceNoisyAmbience', base.reduceNoisyAmbience);
   bool('cameraShake', base.cameraShake);
   bool('haptics', base.haptics);
   bool('reduceEffects', base.reduceEffects);

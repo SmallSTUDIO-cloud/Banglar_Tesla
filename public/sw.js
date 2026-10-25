@@ -1,5 +1,5 @@
 /* Banglar Tesla — offline cache so the installed PWA runs without a network. */
-const CACHE = 'banglar-tesla-v1';
+const CACHE = 'banglar-tesla-v2';
 const CORE = ['./', './index.html', './manifest.webmanifest', './fonts/HindSiliguri-Regular.ttf', './fonts/HindSiliguri-Bold.ttf'];
 
 self.addEventListener('install', (event) => {

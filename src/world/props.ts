@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../core/mathx';
 import type { Collider } from './city';
+import type { BreakableKind, BreakableProp } from './destruction';
 import { Bucket } from './geo';
 import { ROAD_SEGMENTS, isClearOfRoads } from './layout';
 import { SignAtlas, clothTexture } from './textures';
@@ -24,12 +25,14 @@ export interface VendorSpot {
   x: number;
   z: number;
   kind: 'fuchka' | 'jhalmuri' | 'tea' | 'market';
+  broken?: boolean;
 }
 
 export interface PropsResult {
   group: THREE.Group;
   colliders: Collider[];
   vendorSpots: VendorSpot[];
+  breakableStalls: BreakableProp[];
 }
 
 export function buildProps(signAtlas: SignAtlas): PropsResult {
@@ -37,6 +40,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
   group.name = 'mohammadpur-props';
   const colliders: Collider[] = [];
   const vendorSpots: VendorSpot[] = [];
+  const breakableStalls: BreakableProp[] = [];
   const rng = mulberry32(90210);
 
   const solidMat = new THREE.MeshLambertMaterial({
@@ -80,8 +84,23 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     return true;
   };
 
-  const addPropCollider = (x: number, z: number, halfX: number, halfZ: number, height: number): void => {
-    colliders.push({
+  const setAllTags = (tag: number): void => {
+    solid.setTag(tag);
+    metal.setTag(tag);
+    cloth.setTag(tag);
+    glass.setTag(tag);
+    signs.setTag(tag);
+  };
+
+  const addPropCollider = (
+    x: number,
+    z: number,
+    halfX: number,
+    halfZ: number,
+    height: number,
+    breakableId?: number,
+  ): Collider => {
+    const col: Collider = {
       minX: x - halfX,
       maxX: x + halfX,
       minZ: z - halfZ,
@@ -89,10 +108,14 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
       height,
       cameraBlocking: false,
       kind: 'prop',
-    });
+      breakableId,
+    };
+    colliders.push(col);
+    return col;
   };
 
   // Helper to place a standing vendor or customer figure on the sidewalk (y = 0.09)
+  // Human figures are excluded from breakable stall geometry tags so only the stall/cart breaks!
   const addPersonFigure = (
     px: number,
     pz: number,
@@ -101,6 +124,8 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     lower: string,
     apronColor?: string,
   ): void => {
+    const prevTag = solid.currentTagId;
+    setAllTags(-1);
     const base = 0.09;
     solid.cylinder({ x: px, y: base + 0.42, z: pz }, 0.14, 0.82, lower);
     solid.box({ x: px, y: base + 1.02, z: pz }, { x: 0.34, y: 0.46, z: 0.21 }, shirt, { y: yaw });
@@ -114,6 +139,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     }
     solid.cylinder({ x: px, y: base + 1.38, z: pz }, 0.10, 0.21, '#8d5e3c');
     solid.cylinder({ x: px, y: base + 1.48, z: pz }, 0.105, 0.06, '#1c1715');
+    setAllTags(prevTag);
   };
 
   // ----------------- 1. FUCHKA & CHOTPOTI STALL (`ফুচকা ও চটপটি ভ্যান`)
@@ -347,10 +373,29 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
       if (!canPlaceStall(sx, sz, 1.35)) continue;
       const mod = stallTypeCounter % 5;
       stallTypeCounter++;
+      const stallId = 1000 + breakableStalls.length;
+      setAllTags(stallId);
       if (mod === 0) buildFuchkaStall(sx, sz, faceYaw);
       else if (mod === 1) buildJhalmuriStall(sx, sz, faceYaw);
       else if (mod === 2) buildTeaTong(sx, sz, faceYaw);
       else buildFruitOrVegCart(sx, sz, faceYaw, mod === 3);
+      setAllTags(-1);
+
+      const stallCol = colliders[colliders.length - 1];
+      const spot = vendorSpots[vendorSpots.length - 1];
+      stallCol.breakableId = stallId;
+      const bKind: BreakableKind =
+        mod === 0 ? 'fuchka' : mod === 1 ? 'jhalmuri' : mod === 2 ? 'tea' : 'market';
+      breakableStalls.push({
+        id: stallId,
+        kind: bKind,
+        x: sx,
+        z: sz,
+        yaw: faceYaw,
+        collider: stallCol,
+        slices: [],
+        vendorSpot: spot,
+      });
     }
   }
 
@@ -370,15 +415,23 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     }
   }
 
-  for (const b of [
+  const buckets = [
     { bucket: solid, cast: true },
     { bucket: metal, cast: false },
     { bucket: cloth, cast: true },
     { bucket: glass, cast: false },
     { bucket: signs, cast: false },
-  ]) {
+  ];
+  for (const b of buckets) {
     for (const m of b.bucket.buildChunked(3, 280, { cast: b.cast, receive: true })) group.add(m);
   }
+  for (let i = 0; i < breakableStalls.length; i++) {
+    const bs = breakableStalls[i];
+    for (const b of buckets) {
+      const list = b.bucket.getTagSlices().get(bs.id);
+      if (list) bs.slices.push(...list);
+    }
+  }
 
-  return { group, colliders, vendorSpots };
+  return { group, colliders, vendorSpots, breakableStalls };
 }

@@ -46,6 +46,15 @@ export const ICONS = {
   slow: svg(`<path d="M12 4.4a7.6 7.6 0 1 0 7.6 7.6"/><path d="M12 8.4V12l2.8 1.8"/>`, 22),
   route: svg(`<circle cx="6.2" cy="17.8" r="2.2"/><circle cx="17.8" cy="6.2" r="2.2"/><path d="M8.4 17.8h4.2a3 3 0 0 0 0-6H9.4a3 3 0 0 1 0-5.6h4.2"/>`, 22),
   check: svg(`<path d="M5.4 12.6l4.2 4.2 9-9.6" stroke-width="2.2"/>`),
+  smartphone: svg(
+    `<rect x="6.5" y="2.8" width="11" height="18.4" rx="2.3"/><path d="M10.4 5.4h3.2M12 18.2h.01" stroke-width="2"/>`,
+    20,
+  ),
+  bolt: svg(`<path d="M13.2 3.2L6.4 13h5l-.8 7.8L17.6 11h-5z" fill="currentColor" stroke="none"/>`, 18),
+  speaker: svg(
+    `<path d="M5 9.5h3.4L13 5.8v12.4l-4.6-3.7H5z"/><path d="M16.2 9a4.4 4.4 0 0 1 0 6M18.6 6.8a7.5 7.5 0 0 1 0 10.4"/>`,
+    18,
+  ),
 } as const;
 
 export function icon(name: keyof typeof ICONS): HTMLElement {

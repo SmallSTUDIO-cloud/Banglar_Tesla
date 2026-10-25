@@ -36,6 +36,9 @@ export interface TrafficObstacle {
   z: number;
   radius: number;
   kind: VehicleKind;
+  agentIndex: number;
+  speed: number;
+  yaw: number;
 }
 
 interface ActiveTrafficAgent extends InstancedVehicleState {
@@ -51,6 +54,8 @@ interface ActiveTrafficAgent extends InstancedVehicleState {
   stuckTimer: number;
   honkTimer: number;
   farAccum: number;
+  roadRageHold: number;
+  rageImmuneTimer: number;
 }
 
 const FLEET_DISTRIBUTION: { kind: VehicleKind; weight: number; cruiseMin: number; cruiseMax: number }[] = [
@@ -188,6 +193,8 @@ export class TrafficSystem {
       stuckTimer: 0,
       honkTimer: 1 + this.rng() * 5,
       farAccum: (index % 5) * 0.016,
+      roadRageHold: 0,
+      rageImmuneTimer: 0,
     };
   }
 
@@ -235,13 +242,24 @@ export class TrafficSystem {
       if (dx * dx + dz * dz > 26 * 26) continue;
       let ob = this.obstaclePool[n];
       if (!ob) {
-        ob = { x: a.x, z: a.z, radius: a.arch.radius, kind: a.kind };
+        ob = {
+          x: a.x,
+          z: a.z,
+          radius: a.arch.radius,
+          kind: a.kind,
+          agentIndex: i,
+          speed: a.speed,
+          yaw: a.yaw,
+        };
         this.obstaclePool.push(ob);
       } else {
         ob.x = a.x;
         ob.z = a.z;
         ob.radius = a.arch.radius;
         ob.kind = a.kind;
+        ob.agentIndex = i;
+        ob.speed = a.speed;
+        ob.yaw = a.yaw;
       }
       this.activeObstacles[n] = ob;
       n++;
@@ -295,11 +313,12 @@ export class TrafficSystem {
 
     for (let i = 0; i < this.agents.length; i++) {
       const a = this.agents[i];
+      if (a.rageImmuneTimer > 0) a.rageImmuneTimer = Math.max(0, a.rageImmuneTimer - dt);
       const dxP = a.x - this.playerX;
       const dzP = a.z - this.playerZ;
       const distSqToPlayer = dxP * dxP + dzP * dzP;
 
-      if (distSqToPlayer > 225 * 225) {
+      if (a.roadRageHold <= 0 && distSqToPlayer > 225 * 225) {
         this.relocateNearPlayer(a);
       }
 
@@ -309,6 +328,24 @@ export class TrafficSystem {
         if (distSqToPlayer > 86 * 86) a.nearLod = false;
       } else if (distSqToPlayer < 76 * 76) {
         a.nearLod = true;
+      }
+
+      if (a.roadRageHold > 0) {
+        a.roadRageHold = Math.max(0, a.roadRageHold - dt);
+        a.targetLateral = clamp(a.lane.halfRoadWidth * 0.36, 0.35, 1.15);
+        a.lateralOffset = damp(a.lateralOffset, a.targetLateral, 4.2, dt);
+        a.speed = Math.max(0, a.speed - 7.5 * dt);
+        a.s = Math.min(a.lane.length - 0.5, a.s + a.speed * dt);
+        a.stuckTimer = 0;
+        sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
+        a.x = this.tmpPt.x;
+        a.z = this.tmpPt.z;
+        a.yaw += angleDelta(a.yaw, this.tmpPt.yaw + 0.08) * (1 - Math.exp(-8 * dt));
+        if (a.visible) {
+          a.y = this.heightAt(a.x, a.z);
+          a.braking = Math.floor(this.clock * 4) % 2 === 0;
+        }
+        continue;
       }
 
       // Multi-rate AI: beyond 105m run full car-following AI at ~12 Hz while smoothly
@@ -507,6 +544,87 @@ export class TrafficSystem {
         return;
       }
     }
+  }
+
+  canTriggerRoadRage(agentIndex: number): boolean {
+    const a = this.agents[agentIndex];
+    return !!a && a.kind === 'car' && a.roadRageHold <= 0 && a.rageImmuneTimer <= 0;
+  }
+
+  pullOverCar(agentIndex: number, holdSeconds = 45): { x: number; y: number; z: number; yaw: number } | null {
+    const a = this.agents[agentIndex];
+    if (!a || a.kind !== 'car') return null;
+    a.roadRageHold = holdSeconds;
+    a.dwellTimer = 0;
+    return { x: a.x, y: a.y, z: a.z, yaw: a.yaw };
+  }
+
+  releaseCar(agentIndex: number, immuneSeconds = 18): void {
+    const a = this.agents[agentIndex];
+    if (!a) return;
+    a.roadRageHold = 0;
+    a.rageImmuneTimer = immuneSeconds;
+  }
+
+  getAgentPose(agentIndex: number): { x: number; y: number; z: number; yaw: number; kind: VehicleKind } | null {
+    const a = this.agents[agentIndex];
+    if (!a) return null;
+    return { x: a.x, y: a.y, z: a.z, yaw: a.yaw, kind: a.kind };
+  }
+
+  /**
+   * Deterministic test helper: position an existing `car` (or `nonCarKind`) agent
+   * at a known road point near the player without allocating extra fleet instances.
+   */
+  debugPositionAgentForTest(
+    kind: VehicleKind,
+    x: number,
+    z: number,
+    yaw: number,
+    speed = 0,
+  ): number {
+    let idx = this.agents.findIndex((a) => a.kind === kind && a.roadRageHold <= 0);
+    if (idx < 0 && this.agents.length > 0) {
+      idx = this.agents.length - 1;
+      const arch = getTrafficArchetype(kind);
+      this.agents[idx].kind = kind;
+      this.agents[idx].arch = arch;
+      this.agents[idx].variant = 0;
+    }
+    if (idx < 0) return -1;
+    const a = this.agents[idx];
+    // Pick nearest lane so lane update stays coherent
+    let bestLane = this.graph.lanes[0];
+    let bestD = Infinity;
+    let bestS = 4;
+    for (let i = 0; i < this.graph.lanes.length; i++) {
+      const l = this.graph.lanes[i];
+      const along = clamp((x - l.ax) * l.ux + (z - l.az) * l.uz, 2, Math.max(2, l.length - 2));
+      const px = l.ax + l.ux * along;
+      const pz = l.az + l.uz * along;
+      const d = (px - x) * (px - x) + (pz - z) * (pz - z);
+      if (d < bestD) {
+        bestD = d;
+        bestLane = l;
+        bestS = along;
+      }
+    }
+    a.lane = bestLane;
+    a.s = bestS;
+    a.lateralOffset = 0;
+    a.targetLateral = 0;
+    a.x = x;
+    a.z = z;
+    a.y = this.heightAt(x, z);
+    a.yaw = yaw;
+    a.speed = speed;
+    a.dwellTimer = speed <= 0.25 ? 2.0 : 0;
+    a.visible = true;
+    a.nearLod = true;
+    a.roadRageHold = 0;
+    a.rageImmuneTimer = 0;
+    this.fleet.sync(this.agents);
+    return idx;
   }
 
   dispose(): void {

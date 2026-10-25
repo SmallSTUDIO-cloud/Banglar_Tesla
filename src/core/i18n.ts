@@ -481,6 +481,55 @@ export const STRINGS: Record<string, Entry> = {
   'daily.ride2': { bn: 'আজকের চ্যালেঞ্জ: আরামদায়ক যাত্রা', en: 'Daily: keep it smooth' },
   'daily.ride3': { bn: 'আজকের চ্যালেঞ্জ: বৃষ্টির আগে', en: 'Daily: beat the rain' },
   'daily.done': { bn: 'আজকের চ্যালেঞ্জ সম্পন্ন হয়েছে', en: 'Today’s challenge is complete' },
+
+  // --------------------------------------------------- audio & soundscape (v0.4)
+  'audio.tapToUnlock': { bn: 'সাউন্ড চালু করতে ট্যাপ করুন', en: 'Tap to enable sound' },
+  'settings.master': { bn: 'মূল ভলিউম (Master)', en: 'Master volume' },
+  'settings.sfx': { bn: 'সাউন্ড ইফেক্ট (SFX)', en: 'Sound effects (SFX)' },
+  'settings.musicToggle': { bn: 'মিউজিক চালু', en: 'Music enabled' },
+  'settings.sfxToggle': { bn: 'সাউন্ড ইফেক্ট চালু', en: 'Sound effects enabled' },
+  'settings.calmAmbience': { bn: 'শহরের অতিরিক্ত কোলাহল কমান', en: 'Reduce noisy street ambience' },
+
+  // --------------------------------------------------- টান boost & stamina (v0.4)
+  'hud.tan': { bn: 'টান', en: 'টান' },
+  'hud.stamina': { bn: 'দম', en: 'Stamina' },
+  'toast.tanEmpty': { bn: 'দম শেষ! একটু জিরিয়ে নিন বা টং দোকানে চা খান', en: 'Out of stamina! Ease off or rest at a tea stall' },
+  'toast.tanLowRecovering': { bn: 'দম একটু ফিরুক, তারপর আবার টান দিন', en: 'Catch your breath before boosting again' },
+  'toast.tanLowBattery': { bn: 'ব্যাটারি কম — টান বন্ধ হয়েছে', en: 'Battery too low for টান boost' },
+  'hud.teaPrompt': { bn: '☕ চা পান করুন (৳১০) — দম পুরো ফিরবে', en: '☕ Have Tea (৳10) — Restore Stamina' },
+  'toast.teaRested': { bn: 'গরম এক কাপ দুধ চা! দম পুরো ফিরেছে!', en: 'Hot milk tea at the tong! Stamina restored!' },
+  'toast.teaNoMoney': { bn: 'চায়ের জন্য অন্তত ৳১০ দরকার', en: 'Need ৳10 for roadside tea' },
+
+  // --------------------------------------------------- road rage encounter (v0.4)
+  'roadrage.alert': { bn: 'ROAD RAGE! গাড়িওয়ালা রেগে নামছে!', en: 'ROAD RAGE! Angry car driver pursuing!' },
+  'roadrage.escaping': { bn: 'পালান! {s} সেকেন্ড', en: 'ESCAPING! {s}s' },
+  'roadrage.chaseHint': { bn: 'দ্রুত চালিয়ে দূরে যান!', en: 'Drive away fast to escape!' },
+  'roadrage.escaped': { bn: 'পালাতে পেরেছেন!', en: 'পালাতে পেরেছেন!' },
+  'roadrage.line.driver': { bn: 'ওই হারামজাদা, দাঁড়া!', en: 'ওই হারামজাদা, দাঁড়া!' },
+  'roadrage.line.player': { bn: 'মাফ করে দেন ভাই, ভুলে লেগে গেছে!', en: 'মাফ করে দেন ভাই, ভুলে লেগে গেছে!' },
+  'roadrage.speaker.driver': { bn: 'গাড়িওয়ালা', en: 'Car Driver' },
+  'roadrage.speaker.player': { bn: 'রিকশাওয়ালা', en: 'Rickshaw Driver' },
+  'roadrage.modal.title': { bn: 'গাড়িওয়ালা পথ আটকেছে!', en: 'Caught by Angry Driver!' },
+  'roadrage.modal.desc': {
+    bn: 'প্রাইভেট কারে জোরে ধাক্কা লেগেছে! গাড়িওয়ালা ক্ষতিপূরণ দাবি করছে। এখন কী করবেন?',
+    en: 'You slammed into a private car and the driver caught up! How will you handle it?',
+  },
+  'roadrage.choice.pay': { bn: '১০০ টাকা দিয়ে মিটমাট করুন', en: '১০০ টাকা দিয়ে মিটমাট করুন' },
+  'roadrage.choice.refuse': { bn: 'দেব না', en: 'দেব না' },
+  'roadrage.noMoney': { bn: 'পর্যাপ্ত টাকা নেই (কমপক্ষে ৳১০০ প্রয়োজন)', en: 'Not enough Taka (৳100 required to settle)' },
+  'roadrage.paidToast': { bn: '৳১০০ দিয়ে ঝামেলা মিটমাট হয়েছে', en: 'Settled the dispute for ৳100' },
+  'roadrage.scuffleAlert': { bn: 'ধস্তাধস্তি! দম কমে গেছে!', en: 'Street scuffle! Stamina drained!' },
+
+  // --------------------------------------------------- APK install button (v0.4)
+  'menu.installApk': { bn: 'Install APK', en: 'Install APK' },
+  'menu.installApkSub': {
+    bn: 'অ্যান্ড্রয়েড ফোনে ইনস্টল করতে ব্রাউজার থেকে APK ইনস্টলের অনুমতি দিন',
+    en: 'Android may ask permission to install APKs from your browser',
+  },
+  'toast.apkDownload': {
+    bn: 'Banglar-Tesla.apk ডাউনলোড শুরু হচ্ছে — অ্যান্ড্রয়েডে ব্রাউজার ইনস্টল অনুমতি দিন',
+    en: 'Downloading Banglar-Tesla.apk — approve browser install permission on Android if prompted',
+  },
 };
 
 export function translate(locale: Locale, key: string, params?: Record<string, string | number>): string {

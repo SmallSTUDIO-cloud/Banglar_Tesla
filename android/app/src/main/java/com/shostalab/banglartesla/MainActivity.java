@@ -24,6 +24,7 @@ public final class MainActivity extends Activity {
             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
 
     private WebView webView;
+    private BanglaTtsBridge ttsBridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,6 +54,10 @@ public final class MainActivity extends Activity {
 
         wv.setWebViewClient(new AssetWebViewClient(getAssets()));
         wv.setWebChromeClient(new WebChromeClient());
+
+        BanglaTtsBridge bridge = new BanglaTtsBridge(this);
+        this.ttsBridge = bridge;
+        wv.addJavascriptInterface(bridge, "__btAndroidTts");
 
         this.webView = wv;
         setContentView(wv);
@@ -88,6 +93,9 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        if (ttsBridge != null) {
+            ttsBridge.stop();
+        }
         if (webView != null) {
             webView.onPause();
         }
@@ -108,7 +116,12 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (ttsBridge != null) {
+            ttsBridge.shutdown();
+            ttsBridge = null;
+        }
         if (webView != null) {
+            webView.removeJavascriptInterface("__btAndroidTts");
             webView.destroy();
             webView = null;
         }

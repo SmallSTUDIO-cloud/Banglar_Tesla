@@ -179,6 +179,12 @@ export class ChaseCamera {
     this.reduceMotion = reduce;
   }
 
+  private boostFovKick = 0;
+
+  setBoostAmount(amount: number): void {
+    this.boostFovKick = clamp01(amount);
+  }
+
   /** Kick the trauma accumulator (0..1) on collision or curb hop. */
   addTrauma(amount: number): void {
     if (!this.shakeEnabled || this.reduceMotion) return;
@@ -316,8 +322,10 @@ export class ChaseCamera {
       this.currentLook.lerp(this.desiredLook, 1 - Math.exp(-(preset.posDamp + 2.5) * dt));
     }
 
-    // Dynamic FOV (NFS MW speed surge, calmed when Reduce Effects is enabled)
-    const fovTarget = preset.baseFov + (this.reduceMotion ? 0 : preset.speedFovBoost * speedNorm);
+    // Dynamic FOV (NFS MW speed surge + টান boost kick, calmed when Reduce Effects is enabled)
+    const fovTarget =
+      preset.baseFov +
+      (this.reduceMotion ? 0 : preset.speedFovBoost * speedNorm + this.boostFovKick * 4.4);
     this.fov = damp(this.fov, fovTarget, 5.2, dt);
     if (Math.abs(this.fov - this.appliedFov) > 0.04) {
       this.camera.fov = this.fov;
@@ -343,7 +351,7 @@ export class ChaseCamera {
   private pointBlocked(x: number, y: number, z: number, colliders: BoxCollider[], pad: number): boolean {
     for (let i = 0; i < colliders.length; i++) {
       const c = colliders[i];
-      if (c.height < y - 0.15) continue;
+      if (c.disabled || c.height < y - 0.15) continue;
       if (x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad) {
         return true;
       }
