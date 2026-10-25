@@ -1,27 +1,8 @@
 /* =========================================================================
    BANGLAR TESLA — UI design system
    Warm cream / deep green / rickshaw red / gold, small electric-blue accent.
-   Mobile-first, safe-area aware, works portrait and landscape.
+   Mobile-first, safe-area aware, works portrait, landscape, and desktop web.
    ========================================================================= */
-
-@font-face {
-  font-family: 'Hind Siliguri';
-  src: url('/fonts/HindSiliguri-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Hind Siliguri';
-  src: url('/fonts/HindSiliguri-SemiBold.ttf') format('truetype');
-  font-weight: 600;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Hind Siliguri';
-  src: url('/fonts/HindSiliguri-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
 
 :root {
   --cream: #f7f0e3;
@@ -1682,4 +1663,43 @@ input[type='range']::-moz-range-thumb {
   background: linear-gradient(90deg, #4cd6a0, #e8b25a);
   border-radius: 99px;
 }
+
+/* Minimal PC / Laptop browser enhancements (leaves mobile/tablet viewports untouched) */
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled),
+  .icon-btn:hover {
+    border-color: rgba(232, 178, 90, 0.55);
+  }
+}
+
+@media (min-width: 1024px) and (min-height: 580px) and (not (pointer: coarse)) {
+  .steer-pad,
+  .steer-wheel,
+  .touch-btn.pedal,
+  .touch-btn.brake {
+    display: none !important;
+  }
+  .drive-left::after {
+    content: 'WASD / ↑↓←→ Drive · Space/H Bell · C Camera · R Recover · F Fullscreen · Esc Menu';
+    pointer-events: none;
+    padding: 0.44rem 0.82rem;
+    border-radius: var(--radius-pill);
+    background: rgba(14, 17, 25, 0.72);
+    border: 1px solid rgba(255, 232, 180, 0.16);
+    color: rgba(247, 240, 227, 0.82);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    white-space: nowrap;
+  }
+  #job-offer {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(460px, 90vw);
+  }
+}
+
 

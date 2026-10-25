@@ -1,0 +1,78 @@
+name: Deploy Web Game to GitHub Pages
+
+on:
+  push:
+    branches:
+      - arena/7873a750-banglar-tesla
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: 'pages'
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & Verify Web Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run typecheck & unit tests
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Build baseline bundle & run E2E / Mobile / Spec suites
+        run: |
+          npm run build
+          npm run test:e2e
+          npm run test:mobile
+          npm run test:spec
+
+      - name: Build production GitHub Pages bundle (/Banglar_Tesla/)
+        env:
+          GITHUB_PAGES: 'true'
+        run: |
+          npm run build
+          test -f dist/index.html
+          test -f dist/.nojekyll
+          grep -q '/Banglar_Tesla/assets/' dist/index.html
+          ! grep -q 'url(/fonts/' dist/assets/*.css
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

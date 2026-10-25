@@ -52,6 +52,13 @@ export async function teardownHarness(browser, server) {
     /* ignore */
   }
   try {
+    if (server?.pid) {
+      try {
+        execFileSync('pkill', ['-KILL', '-P', String(server.pid)]);
+      } catch {
+        /* no child processes */
+      }
+    }
     server?.kill?.('SIGKILL');
   } catch {
     /* ignore */

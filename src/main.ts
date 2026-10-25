@@ -29,6 +29,16 @@ async function boot(): Promise<void> {
     };
     win.__banglarTesla = game;
     win.__banglarTeslaAndroidBack = () => game.handleBackButton();
+
+    // Unlock WebAudio once on the first user gesture for desktop browser autoplay rules
+    const unlockAudio = (): void => {
+      void game.audio.init();
+      window.removeEventListener('pointerdown', unlockAudio, true);
+      window.removeEventListener('keydown', unlockAudio, true);
+    };
+    window.addEventListener('pointerdown', unlockAudio, true);
+    window.addEventListener('keydown', unlockAudio, true);
+
     await game.init();
     game.start();
   } catch (err) {
@@ -49,7 +59,9 @@ void boot();
 const isBundledApkHost = window.location.hostname === 'appassets.androidplatform.net';
 if ('serviceWorker' in navigator && import.meta.env.PROD && !isBundledApkHost) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(new URL('sw.js', window.location.href).pathname).catch((err) => {
+    const base = import.meta.env.BASE_URL || './';
+    const swUrl = base.startsWith('/') ? `${base.replace(/\/?$/, '/')}sw.js` : new URL('sw.js', window.location.href).pathname;
+    navigator.serviceWorker.register(swUrl).catch((err) => {
       console.warn('[pwa] service worker registration failed', err);
     });
   });

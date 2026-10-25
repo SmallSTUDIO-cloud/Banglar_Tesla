@@ -61,15 +61,24 @@ export class InputManager {
       const tag = (ev.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       this.keys.add(ev.code);
-      if (ev.code === 'Escape' || ev.code === 'KeyP') this.onPause?.();
+      if (ev.code === 'Escape') {
+        const back = (window as unknown as { __banglarTeslaAndroidBack?: () => boolean }).__banglarTeslaAndroidBack;
+        if (!back || !back()) this.onPause?.();
+      } else if (ev.code === 'KeyP') {
+        this.onPause?.();
+      }
       if (ev.code === 'KeyC' || ev.code === 'KeyV') this.onCamera?.();
       if (ev.code === 'KeyR') this.onRecover?.();
+      if (ev.code === 'KeyF' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+        else void document.documentElement.requestFullscreen?.().catch(() => {});
+      }
       if (ev.code === 'F3' || (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyP')) {
         ev.preventDefault();
         this.onDevPerf?.();
       }
-      if (ev.code === 'Space') {
-        ev.preventDefault();
+      if (ev.code === 'Space' || ev.code === 'KeyH' || ev.code === 'KeyB') {
+        if (ev.code === 'Space') ev.preventDefault();
         this.hornPressed = true;
         this.onHorn?.();
       }
@@ -78,7 +87,7 @@ export class InputManager {
     const keyup = (e: Event): void => {
       const ev = e as KeyboardEvent;
       this.keys.delete(ev.code);
-      if (ev.code === 'Space') this.hornPressed = false;
+      if (ev.code === 'Space' || ev.code === 'KeyH' || ev.code === 'KeyB') this.hornPressed = false;
     };
     const blur = (): void => {
       this.keys.clear();

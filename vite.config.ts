@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite';
 
+const ghPages =
+  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.GITHUB_PAGES === 'true';
+
 export default defineConfig({
-  base: './',
+  base: ghPages ? '/Banglar_Tesla/' : './',
   server: {
     host: '0.0.0.0',
     port: 5173,
