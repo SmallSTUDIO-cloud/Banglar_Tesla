@@ -68,7 +68,7 @@ const browser = await puppeteer.launch({
 const page = await browser.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
-await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120000 });
+await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
 await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
 await new Promise((r) => setTimeout(r, 1200));
 

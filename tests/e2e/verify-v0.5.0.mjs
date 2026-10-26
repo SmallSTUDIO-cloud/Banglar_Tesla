@@ -90,7 +90,7 @@ async function main() {
   });
 
   try {
-    await page.goto(BASE, { waitUntil: 'networkidle0' });
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction('Boolean(window.__banglarTesla)', { timeout: 25000 });
     await page.click('body');
     await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === 26', { timeout: 15000 });
@@ -643,7 +643,7 @@ async function main() {
     );
 
     // Full reload persistence check for v0.5.0 fields (REP, Blacklist rank #9, clock 04:45 PM, introSeen)
-    await page.reload({ waitUntil: 'networkidle2', timeout: 150000 });
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 150000 });
     await page.waitForFunction('Boolean(window.__banglarTesla)', { timeout: 60000 });
     const afterReload = await page.evaluate(() => {
       const s = window.__banglarTesla.debugSnapshot();

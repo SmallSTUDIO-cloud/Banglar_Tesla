@@ -74,7 +74,7 @@ async function main() {
   page.on('pageerror', (e) => errors.push(String(e)));
 
   try {
-    await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120000 });
+    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     await page.evaluate(() => document.getElementById('boot-skip')?.click());
     await new Promise((r) => setTimeout(r, 700));
@@ -328,7 +328,7 @@ async function main() {
 
     // 5. Reload persistence of Electric Rickshaw & upgrades
     await page.evaluate(() => window.__banglarTesla.debugSaveNow());
-    await page.reload({ waitUntil: 'networkidle2', timeout: 150000 });
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 150000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     const afterReload = await page.evaluate(() => {
       const g = window.__banglarTesla;

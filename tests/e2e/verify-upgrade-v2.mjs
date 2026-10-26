@@ -83,7 +83,7 @@ async function main() {
   });
 
   try {
-    await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120000 });
+    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
 
     // Dismiss splash screen via DOM click or check unlock pill
@@ -527,7 +527,7 @@ async function main() {
       g.applySettings();
       g.debugSaveNow();
     });
-    await page.reload({ waitUntil: 'networkidle2', timeout: 150000 });
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 150000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     const persistedAudioSettings = await page.evaluate(() => {
       const g = window.__banglarTesla;
@@ -563,7 +563,7 @@ async function main() {
         stop: () => undefined,
       };
     });
-    await androidPage.goto(BASE, { waitUntil: 'networkidle2', timeout: 180000 });
+    await androidPage.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 180000 });
     await androidPage.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     const androidShellCheck = await androidPage.evaluate(() => ({
       isAndroidApp: window.__banglarTesla.isAndroidApp(),
