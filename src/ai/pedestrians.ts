@@ -1,19 +1,20 @@
 /**
- * Dense, varied Mohammadpur pedestrian crowd (Sections 12 & 13):
- *   - Rendered via 6 InstancedMeshes sharing ONE material (~6 draw calls total
- *     for up to 90 animated pedestrians with varied heights, sarees/lungis/kurtas,
- *     and shopping bags).
+ * Dense, varied Mohammadpur pedestrian crowd (Sections 12, 13 & v0.5.0 §29):
+ *   - Rendered via 9 InstancedMeshes sharing ONE material (~9 draw calls total
+ *     for up to 96 animated pedestrians with visible faces, eyes/brows/mouth,
+ *     hair/topi/orna silhouettes, attached swinging arms & hands, legs & sandals,
+ *     sarees/lungis/kurtas, and shopping bags).
  *   - Walks along real Mohammadpur sidewalks & market plazas, recycling distant
  *     walkers (>155m) into corridors near the player so streets always feel lively.
- *   - Actively avoids approaching rickshaws (side-stepping onto outer sidewalk,
- *     pausing & turning toward danger), reacts non-graphically with a grounded
- *     stumble on contact, and calls out authentic Bengali lines ("এই! দেখে চালান!",
- *     "সামনে দেখেন ভাই!", "আস্তে চালান!") with strict anti-spam cooldowns.
+ *   - Distance LOD: full arm/leg swing & head look-at within 58m, simplified pose
+ *     beyond 58m, 20 Hz throttled AI beyond 85m, hidden beyond 135m — zero
+ *     per-frame heap allocations and 100% preserved crowd density!
  */
 
 import * as THREE from 'three';
 import { QUALITY, type QualitySettings } from '../core/config';
 import { clamp, damp, mulberry32, TAU } from '../core/mathx';
+import { Bucket } from '../world/geo';
 import { ROAD_SEGMENTS, isClearOfRoads } from '../world/layout';
 
 export interface PedPath {
@@ -48,7 +49,7 @@ function buildSidewalkPaths(): PedPath[] {
     for (const side of [-1, 1] as const) {
       const lat = (seg.halfWidth + seg.sidewalk * 0.54) * side;
       const ax = seg.ax + seg.ux * margin + seg.leftX * lat;
-      const az = seg.az + seg.uz * margin + seg.leftZ * lat;
+      const az = seg.az + seg.uz * margin + seg.leftX * 0 + seg.leftZ * lat;
       const bx = seg.bx - seg.ux * margin + seg.leftX * lat;
       const bz = seg.bz - seg.uz * margin + seg.leftZ * lat;
       const mx = (ax + bx) * 0.5;
@@ -89,7 +90,17 @@ const TOP_COLORS = [
   '#c9184a', // magenta saree
   '#457b9d', // school/college blue
 ];
-const SKIN_TONES = ['#8b5a3c', '#9e6845', '#704730', '#ad7650'];
+const SKIN_TONES = ['#8b5a3c', '#9e6845', '#704730', '#ad7650', '#946242'];
+const HAIR_HEADWEAR_COLORS = [
+  '#151518', // jet-black hair
+  '#241a16', // dark espresso hair
+  '#18181b', // natural black hair
+  '#f5f5f0', // white cotton prayer topi
+  '#1e3a8a', // navy cap
+  '#9f1239', // maroon headscarf / orna
+  '#065f46', // deep teal headscarf
+  '#b45309', // ochre cap / wrap
+];
 const LOWER_COLORS = ['#1f2937', '#1e4e68', '#4a3525', '#dcd6c8', '#7f1d1d', '#1b4332'];
 const BAG_COLORS = ['#d97706', '#dc2626', '#16a34a', '#2563eb', '#9333ea'];
 const REACTION_KEYS = [
@@ -100,6 +111,92 @@ const REACTION_KEYS = [
   'ped.react.5',
   'ped.react.6',
 ];
+
+function buildPedBodyGeo(mat: THREE.Material): THREE.BufferGeometry {
+  const b = new Bucket('ped.body', mat);
+  // Chest & lower tunic/kurta hem
+  b.box({ x: 0, y: 1.08, z: 0 }, { x: 0.33, y: 0.44, z: 0.20 }, '#ffffff');
+  b.box({ x: 0, y: 0.80, z: 0 }, { x: 0.35, y: 0.20, z: 0.22 }, '#f5f5f5');
+  // Collar neckline + short-sleeve shoulder caps so attached arms emerge cleanly from sleeves
+  b.cylinder({ x: 0, y: 1.31, z: 0 }, 0.085, 0.06, '#e8e8e8');
+  b.box({ x: -0.205, y: 1.22, z: 0 }, { x: 0.11, y: 0.16, z: 0.14 }, '#ffffff', { z: 0.14 });
+  b.box({ x: 0.205, y: 1.22, z: 0 }, { x: 0.11, y: 0.16, z: 0.14 }, '#ffffff', { z: -0.14 });
+  return b.build({ cast: true, receive: false })!.geometry;
+}
+
+function buildPedHeadGeo(mat: THREE.Material): THREE.BufferGeometry {
+  const b = new Bucket('ped.head', mat);
+  // Neck + sculpted head (`#ffffff` multiplies with `SKIN_TONES` instanceColor)
+  b.cylinder({ x: 0, y: 1.36, z: 0 }, 0.052, 0.10, '#f2e8e2');
+  const sphere = new THREE.SphereGeometry(0.112, 10, 8);
+  b.add(sphere, { x: 0, y: 1.49, z: 0 }, { x: 0.94, y: 1.06, z: 0.98 }, '#ffffff');
+  sphere.dispose();
+
+  // Ears + nose bridge (`+Z` is forward walking direction)
+  b.box({ x: -0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ebd8cf');
+  b.box({ x: 0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ebd8cf');
+  b.box({ x: 0, y: 1.485, z: 0.108 }, { x: 0.026, y: 0.044, z: 0.030 }, '#f5e6de');
+
+  // Visible facial features: eyebrows, eye sclera, dark pupils, and mouth expression!
+  for (const sx of [-1, 1]) {
+    b.box({ x: sx * 0.040, y: 1.530, z: 0.102 }, { x: 0.034, y: 0.011, z: 0.014 }, '#1c1513');
+    b.box({ x: sx * 0.039, y: 1.506, z: 0.104 }, { x: 0.030, y: 0.018, z: 0.012 }, '#ffffff');
+    b.box({ x: sx * 0.039, y: 1.505, z: 0.110 }, { x: 0.014, y: 0.014, z: 0.008 }, '#120e0d');
+  }
+  b.box({ x: 0, y: 1.444, z: 0.102 }, { x: 0.044, y: 0.013, z: 0.012 }, '#542422');
+  return b.build({ cast: false, receive: false })!.geometry;
+}
+
+function buildPedHairGeo(mat: THREE.Material): THREE.BufferGeometry {
+  const b = new Bucket('ped.hair', mat);
+  // Full hair/topi/headscarf crown sitting cleanly atop `headGeo` without covering eyes
+  const cap = new THREE.SphereGeometry(0.118, 9, 6, 0, Math.PI * 2, 0, Math.PI * 0.56);
+  b.add(cap, { x: 0, y: 1.505, z: -0.006 }, { x: 0.98, y: 1.02, z: 1.02 }, '#ffffff');
+  cap.dispose();
+  // Back hair / nape volume + sideburns + subtle front brow brim
+  b.box({ x: 0, y: 1.47, z: -0.075 }, { x: 0.19, y: 0.13, z: 0.08 }, '#eaeaea');
+  b.box({ x: -0.098, y: 1.50, z: 0.01 }, { x: 0.025, y: 0.08, z: 0.09 }, '#f0f0f0');
+  b.box({ x: 0.098, y: 1.50, z: 0.01 }, { x: 0.025, y: 0.08, z: 0.09 }, '#f0f0f0');
+  b.box({ x: 0, y: 1.565, z: 0.078 }, { x: 0.16, y: 0.026, z: 0.07 }, '#ffffff', { x: 0.18 });
+  return b.build({ cast: false, receive: false })!.geometry;
+}
+
+function buildPedArmGeo(mat: THREE.Material): THREE.BufferGeometry {
+  const b = new Bucket('ped.arm', mat);
+  // Pivots at shoulder `(0, 0, 0)`: upper arm -> forearm -> wrist band -> palm & thumb!
+  b.cylinder({ x: 0, y: -0.11, z: 0 }, 0.040, 0.22, '#f5ebe6');
+  b.cylinder({ x: 0, y: -0.29, z: 0.018 }, 0.034, 0.20, '#ffffff', { x: -0.14 });
+  b.cylinder({ x: 0, y: -0.38, z: 0.030 }, 0.037, 0.022, '#2d2622', { x: -0.14 });
+  // Attached visible hand + fingers + thumb
+  b.box({ x: 0, y: -0.435, z: 0.042 }, { x: 0.046, y: 0.078, z: 0.058 }, '#ffffff', { x: -0.12 });
+  b.box({ x: 0, y: -0.418, z: 0.074 }, { x: 0.024, y: 0.036, z: 0.026 }, '#f2e4dc', { x: -0.35 });
+  return b.build({ cast: false, receive: false })!.geometry;
+}
+
+function buildPedLegGeo(mat: THREE.Material): THREE.BufferGeometry {
+  const b = new Bucket('ped.leg', mat);
+  // Pivots at hip `(0, 0, 0)`: trouser leg + ankle + visible South Asian sandal/shoe!
+  b.box({ x: 0, y: -0.23, z: 0 }, { x: 0.108, y: 0.44, z: 0.125 }, '#ffffff');
+  b.cylinder({ x: 0, y: -0.47, z: 0 }, 0.040, 0.08, '#9e6b49');
+  // Sandal sole + forefoot strap (`+Z` forward toe)
+  b.box({ x: 0, y: -0.522, z: 0.034 }, { x: 0.106, y: 0.034, z: 0.195 }, '#231915');
+  b.box({ x: 0, y: -0.498, z: 0.052 }, { x: 0.108, y: 0.022, z: 0.065 }, '#3d291f');
+  return b.build({ cast: false, receive: false })!.geometry;
+}
+
+function buildPedSkirtGeo(mat: THREE.Material): THREE.BufferGeometry {
+  const b = new Bucket('ped.skirt', mat);
+  b.cone({ x: 0, y: 0.56, z: 0 }, 0.25, 0.68, '#ffffff');
+  b.cylinder({ x: 0, y: 0.24, z: 0 }, 0.245, 0.045, '#e8dfd1');
+  return b.build({ cast: false, receive: false })!.geometry;
+}
+
+function buildPedBagGeo(mat: THREE.Material): THREE.BufferGeometry {
+  const b = new Bucket('ped.bag', mat);
+  b.box({ x: 0, y: 0, z: 0 }, { x: 0.22, y: 0.25, z: 0.12 }, '#ffffff');
+  b.box({ x: 0, y: 0.15, z: 0 }, { x: 0.11, y: 0.07, z: 0.04 }, '#28221e');
+  return b.build({ cast: false, receive: false })!.geometry;
+}
 
 interface PedAgent {
   pathIdx: number;
@@ -115,6 +212,7 @@ interface PedAgent {
   reactCooldown: number;
   hasSkirt: boolean;
   hasBag: boolean;
+  hairScaleY: number;
   lookAtPlayer: number;
   worldX: number;
   worldZ: number;
@@ -126,6 +224,9 @@ export class PedestrianSystem {
   private peds: PedAgent[] = [];
   private body: THREE.InstancedMesh;
   private head: THREE.InstancedMesh;
+  private hair: THREE.InstancedMesh;
+  private armL: THREE.InstancedMesh;
+  private armR: THREE.InstancedMesh;
   private legL: THREE.InstancedMesh;
   private legR: THREE.InstancedMesh;
   private skirt: THREE.InstancedMesh;
@@ -144,32 +245,55 @@ export class PedestrianSystem {
   onReaction?: (ev: PedestrianReactionEvent) => void;
 
   constructor(quality: QualitySettings) {
-    this.maxCapacity = Math.max(96, QUALITY.high.pedestrians);
+    this.maxCapacity = Math.max(96, QUALITY.pc_high.pedestrians);
     this.group.name = 'mohammadpur-pedestrians';
 
-    const bodyGeo = new THREE.CapsuleGeometry(0.155, 0.46, 3, 8);
-    bodyGeo.translate(0, 1.02, 0);
-    const headGeo = new THREE.SphereGeometry(0.105, 8, 7);
-    headGeo.translate(0, 1.5, 0);
-    const legGeo = new THREE.BoxGeometry(0.105, 0.52, 0.125);
-    legGeo.translate(0, -0.26, 0);
-    const skirtGeo = new THREE.ConeGeometry(0.25, 0.72, 8, 1, false);
-    skirtGeo.translate(0, 0.72, 0);
-    const bagGeo = new THREE.BoxGeometry(0.22, 0.26, 0.12);
-
-    // ONE shared matte Lambertian material with FrontSide backface culling across all 6 instanced parts!
+    // ONE shared matte Lambertian material with vertexColors across all 9 instanced body parts!
     const sharedPedMat = new THREE.MeshLambertMaterial({
       color: 0xffffff,
+      vertexColors: true,
     });
+
+    const bodyGeo = buildPedBodyGeo(sharedPedMat);
+    const headGeo = buildPedHeadGeo(sharedPedMat);
+    const hairGeo = buildPedHairGeo(sharedPedMat);
+    const armGeo = buildPedArmGeo(sharedPedMat);
+    const legGeo = buildPedLegGeo(sharedPedMat);
+    const skirtGeo = buildPedSkirtGeo(sharedPedMat);
+    const bagGeo = buildPedBagGeo(sharedPedMat);
 
     this.body = new THREE.InstancedMesh(bodyGeo, sharedPedMat, this.maxCapacity);
     this.head = new THREE.InstancedMesh(headGeo, sharedPedMat, this.maxCapacity);
+    this.hair = new THREE.InstancedMesh(hairGeo, sharedPedMat, this.maxCapacity);
+    this.armL = new THREE.InstancedMesh(armGeo, sharedPedMat, this.maxCapacity);
+    this.armR = new THREE.InstancedMesh(armGeo, sharedPedMat, this.maxCapacity);
     this.legL = new THREE.InstancedMesh(legGeo, sharedPedMat, this.maxCapacity);
     this.legR = new THREE.InstancedMesh(legGeo, sharedPedMat, this.maxCapacity);
     this.skirt = new THREE.InstancedMesh(skirtGeo, sharedPedMat, this.maxCapacity);
     this.bag = new THREE.InstancedMesh(bagGeo, sharedPedMat, this.maxCapacity);
 
-    for (const mesh of [this.body, this.head, this.legL, this.legR, this.skirt, this.bag]) {
+    this.body.name = 'ped.body';
+    this.head.name = 'ped.head';
+    this.hair.name = 'ped.hair';
+    this.armL.name = 'ped.armL';
+    this.armR.name = 'ped.armR';
+    this.legL.name = 'ped.legL';
+    this.legR.name = 'ped.legR';
+    this.skirt.name = 'ped.skirt';
+    this.bag.name = 'ped.bag';
+
+    const allMeshes = [
+      this.body,
+      this.head,
+      this.hair,
+      this.armL,
+      this.armR,
+      this.legL,
+      this.legR,
+      this.skirt,
+      this.bag,
+    ];
+    for (const mesh of allMeshes) {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false;
       mesh.castShadow = false;
@@ -183,10 +307,15 @@ export class PedestrianSystem {
     for (let i = 0; i < this.maxCapacity; i++) {
       const ped = this.createAgent(i);
       this.peds.push(ped);
+      const skinHex = SKIN_TONES[Math.floor(this.rng() * SKIN_TONES.length)];
       cTmp.set(TOP_COLORS[Math.floor(this.rng() * TOP_COLORS.length)]);
       this.body.setColorAt(i, cTmp);
-      cTmp.set(SKIN_TONES[Math.floor(this.rng() * SKIN_TONES.length)]);
+      cTmp.set(skinHex);
       this.head.setColorAt(i, cTmp);
+      this.armL.setColorAt(i, cTmp);
+      this.armR.setColorAt(i, cTmp);
+      cTmp.set(HAIR_HEADWEAR_COLORS[Math.floor(this.rng() * HAIR_HEADWEAR_COLORS.length)]);
+      this.hair.setColorAt(i, cTmp);
       cTmp.set(LOWER_COLORS[Math.floor(this.rng() * LOWER_COLORS.length)]);
       this.legL.setColorAt(i, cTmp);
       this.legR.setColorAt(i, cTmp);
@@ -197,7 +326,7 @@ export class PedestrianSystem {
       if (!ped.hasSkirt) this.skirt.setMatrixAt(i, zeroMat);
       if (!ped.hasBag) this.bag.setMatrixAt(i, zeroMat);
     }
-    for (const mesh of [this.body, this.head, this.legL, this.legR, this.skirt, this.bag]) {
+    for (const mesh of allMeshes) {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       mesh.instanceMatrix.needsUpdate = true;
     }
@@ -209,12 +338,41 @@ export class PedestrianSystem {
     return this.activeCount;
   }
 
+  /** Diagnostics helper for automated §29 NPC character verification. */
+  getCharacterMeshSummary(): {
+    activeCount: number;
+    hasHead: boolean;
+    hasHair: boolean;
+    hasLeftArm: boolean;
+    hasRightArm: boolean;
+    hasLegs: boolean;
+  } {
+    return {
+      activeCount: this.activeCount,
+      hasHead: this.head.count > 0 && this.head.geometry.attributes.position.count > 40,
+      hasHair: this.hair.count > 0 && this.hair.geometry.attributes.position.count > 20,
+      hasLeftArm: this.armL.count > 0 && this.armL.geometry.attributes.position.count > 30,
+      hasRightArm: this.armR.count > 0 && this.armR.geometry.attributes.position.count > 30,
+      hasLegs: this.legL.count > 0 && this.legR.count > 0,
+    };
+  }
+
   setQuality(quality: QualitySettings): void {
     this.activeCount = clamp(quality.pedestrians, 8, this.maxCapacity);
-    for (const mesh of [this.body, this.head, this.legL, this.legR, this.skirt, this.bag]) {
+    for (const mesh of [
+      this.body,
+      this.head,
+      this.hair,
+      this.armL,
+      this.armR,
+      this.legL,
+      this.legR,
+      this.skirt,
+      this.bag,
+    ]) {
       mesh.count = this.activeCount;
     }
-    // Only torso capsule casts into shadow map (cuts 5/6ths of pedestrian shadow draw calls!)
+    // Only torso casts into shadow map (cuts 8/9ths of pedestrian shadow draw calls!)
     this.body.castShadow = quality.shadows;
   }
 
@@ -248,6 +406,7 @@ export class PedestrianSystem {
       reactCooldown: 0,
       hasSkirt,
       hasBag: this.rng() < 0.36,
+      hairScaleY: 0.94 + this.rng() * 0.14,
       lookAtPlayer: 0,
       worldX: p ? p.ax + (p.bx - p.ax) * t : 0,
       worldZ: p ? p.az + (p.bz - p.az) * t : 0,
@@ -281,7 +440,6 @@ export class PedestrianSystem {
     const absSpeed = Math.abs(playerSpeed);
     const pfx = Math.sin(playerYaw);
     const pfz = Math.cos(playerYaw);
-    // Front wheel / nose point of player rickshaw for accurate near-miss & contact checks
     const noseX = playerX + pfx * 0.95;
     const noseZ = playerZ + pfz * 0.95;
     const predX = noseX + pfx * clamp(playerSpeed * 0.55, -1.2, 3.6);
@@ -405,6 +563,9 @@ export class PedestrianSystem {
         this.matrix.compose(this.pos, this.quat, this.scale);
         this.body.setMatrixAt(i, this.matrix);
         this.head.setMatrixAt(i, this.matrix);
+        this.hair.setMatrixAt(i, this.matrix);
+        this.armL.setMatrixAt(i, this.matrix);
+        this.armR.setMatrixAt(i, this.matrix);
         this.legL.setMatrixAt(i, this.matrix);
         this.legR.setMatrixAt(i, this.matrix);
         if (ped.hasSkirt) this.skirt.setMatrixAt(i, this.matrix);
@@ -420,12 +581,13 @@ export class PedestrianSystem {
       }
       const stumbleTilt = ped.stumbleTimer > 0 ? Math.sin(ped.stumbleTimer * 12) * 0.24 : 0;
 
-      const swing = moving ? Math.sin(ped.phase) * 0.44 : 0;
-      const bob = moving ? Math.abs(Math.cos(ped.phase)) * 0.028 : 0;
+      const nearLod = distSq <= 58 * 58;
+      const swing = moving && nearLod ? Math.sin(ped.phase) * 0.44 : 0;
+      const bob = moving && nearLod ? Math.abs(Math.cos(ped.phase)) * 0.028 : 0;
       const h = ped.heightScale;
       const groundY = 0.09;
 
-      // Torso & head (with grounded stumble tilt if bumped)
+      // Torso, head & hair/headwear
       if (stumbleTilt !== 0) {
         this.euler.set(stumbleTilt, yaw, stumbleTilt * 0.5, 'YXZ');
         this.quat.setFromEuler(this.euler);
@@ -437,26 +599,63 @@ export class PedestrianSystem {
       this.matrix.compose(this.pos, this.quat, this.scale);
       this.body.setMatrixAt(i, this.matrix);
       this.head.setMatrixAt(i, this.matrix);
-
       if (ped.hasSkirt) {
         this.skirt.setMatrixAt(i, this.matrix);
       }
 
+      this.scale.set(h, h * ped.hairScaleY, h);
+      this.matrix.compose(this.pos, this.quat, this.scale);
+      this.hair.setMatrixAt(i, this.matrix);
+      this.scale.set(h, h, h);
+
       const cosYaw = Math.cos(yaw);
       const sinYaw = Math.sin(yaw);
 
+      // Attached shoulders, swinging arms & hands (`armL` at +X local, `armR` at -X local)
+      const shoulderY = groundY + 1.24 * h + bob;
+      const shOffX = cosYaw * 0.205 * h;
+      const shOffZ = -sinYaw * 0.205 * h;
+
+      // Left arm swings opposite to left leg (or raises slightly in alarm when evading!)
+      const evadeRaise = ped.evadeAmount > 0.25 ? -0.45 * ped.evadeAmount : 0;
+      const armSwingL = swing !== 0 ? -swing * 0.82 : evadeRaise;
+      if (armSwingL !== 0) {
+        this.euler.set(armSwingL, yaw, 0.05, 'YXZ');
+        this.quat.setFromEuler(this.euler);
+      } else {
+        this.quat.setFromAxisAngle(Y_AXIS, yaw);
+      }
+      this.pos.set(wx + shOffX, shoulderY, wz + shOffZ);
+      this.matrix.compose(this.pos, this.quat, this.scale);
+      this.armL.setMatrixAt(i, this.matrix);
+
+      // Right arm holds shopping bag steady when `hasBag`, otherwise counter-swings naturally
+      const armSwingR = ped.hasBag ? -0.18 : swing !== 0 ? swing * 0.82 : evadeRaise;
+      if (armSwingR !== 0) {
+        this.euler.set(armSwingR, yaw, -0.05, 'YXZ');
+        this.quat.setFromEuler(this.euler);
+      } else {
+        this.quat.setFromAxisAngle(Y_AXIS, yaw);
+      }
+      this.pos.set(wx - shOffX, shoulderY, wz - shOffZ);
+      this.matrix.compose(this.pos, this.quat, this.scale);
+      this.armR.setMatrixAt(i, this.matrix);
+
       if (ped.hasBag) {
-        this.pos.set(wx - cosYaw * 0.23 * h, groundY + 0.68 * h + bob, wz + sinYaw * 0.23 * h);
+        this.pos.set(wx - cosYaw * 0.225 * h, groundY + 0.66 * h + bob, wz + sinYaw * 0.225 * h);
+        this.quat.setFromAxisAngle(Y_AXIS, yaw);
         this.matrix.compose(this.pos, this.quat, this.scale);
         this.bag.setMatrixAt(i, this.matrix);
       }
 
-      const hipX = -cosYaw * 0.08 * h;
-      const hipZ = sinYaw * 0.08 * h;
+      const hipX = cosYaw * 0.082 * h;
+      const hipZ = -sinYaw * 0.082 * h;
 
       if (swing !== 0) {
         this.euler.set(swing, yaw, 0, 'YXZ');
         this.quat.setFromEuler(this.euler);
+      } else {
+        this.quat.setFromAxisAngle(Y_AXIS, yaw);
       }
       this.pos.set(wx + hipX, groundY + 0.54 * h, wz + hipZ);
       this.matrix.compose(this.pos, this.quat, this.scale);
@@ -473,6 +672,9 @@ export class PedestrianSystem {
 
     this.body.instanceMatrix.needsUpdate = true;
     this.head.instanceMatrix.needsUpdate = true;
+    this.hair.instanceMatrix.needsUpdate = true;
+    this.armL.instanceMatrix.needsUpdate = true;
+    this.armR.instanceMatrix.needsUpdate = true;
     this.legL.instanceMatrix.needsUpdate = true;
     this.legR.instanceMatrix.needsUpdate = true;
     this.skirt.instanceMatrix.needsUpdate = true;
@@ -482,6 +684,8 @@ export class PedestrianSystem {
   dispose(): void {
     this.body.geometry.dispose();
     this.head.geometry.dispose();
+    this.hair.geometry.dispose();
+    this.armL.geometry.dispose();
     this.legL.geometry.dispose();
     this.skirt.geometry.dispose();
     this.bag.geometry.dispose();

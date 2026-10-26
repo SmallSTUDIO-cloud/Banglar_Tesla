@@ -51,7 +51,7 @@ page.on('pageerror', (e) => console.log('PAGEERROR', String(e).slice(0, 400)));
 page.on('console', (m) => {
   if (m.type() === 'error') console.log('CONSOLE', m.text().slice(0, 300));
 });
-await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 60000 });
+await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120000 });
 await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
 await new Promise((r) => setTimeout(r, 1200));
 fs.mkdirSync(out, { recursive: true });

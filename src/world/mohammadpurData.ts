@@ -92,6 +92,7 @@ export const MOHAMMADPUR_NODES: RawMapNode[] = [
 
   // --- Tajmahal Road Corridor (OSM way/33085581, 24692351, 33085726) ---
   { id: 'tajmahal_w', x: -148, z: -78, label: 'Tajmahal Road West' },
+  { id: 'krishi_cut', x: -176, z: -18, label: 'Krishi Market Shortcut Alley' },
   { id: 'tajmahal_e', x: -12, z: -112, label: 'Tajmahal × Shahjahan North' },
   { id: 'aziz_gali', x: -86, z: -96, label: 'Aziz Moholla Lane' },
 
@@ -194,6 +195,14 @@ export const MOHAMMADPUR_EDGES: RawMapEdge[] = [
   { id: 'babar_link_h', from: 'humayun_e', to: 'babar_humayun', nameEn: 'Humayun North Link', nameBn: 'হুমায়ুন উত্তর সড়ক', kind: 'medium', width: 8.0, sidewalk: 2.1, source: 'osm', osmWayId: 33393820 },
   { id: 'babar_link_e', from: 'humayun_far_e', to: 'babar_e', nameEn: 'Block-B East Rd', nameBn: 'ব্লক-বি পূর্ব সড়ক', kind: 'medium', width: 7.8, sidewalk: 2.0, source: 'approx_lane' },
   { id: 'babar_deadend', from: 'babar_mid', to: 'johuri_deadend', nameEn: 'Johuri Moholla Cul-de-sac', nameBn: 'জহুরি মহল্লা শেষ গলি', kind: 'gali', width: 5.8, sidewalk: 1.7, source: 'osm', osmWayId: 608234627 },
+
+  // Purpose-Built High-Risk Mohammadpur Race Shortcuts & Chicane Connectors (marked `approx_lane`)
+  { id: 'bazar_cut_n', from: 'shershah_spur_e', to: 'shahjahan_s', nameEn: 'Kacha Bazar Back-Alley Cut', nameBn: 'কাঁচাবাজার পেছনের শর্টকাট গলি', kind: 'gali', width: 5.8, sidewalk: 1.6, source: 'approx_lane' },
+  { id: 'bazar_cut_se', from: 'shershah_spur_e', to: 'asad_post', nameEn: 'Post Office Market Cut', nameBn: 'পোস্ট অফিস বাজার গলি', kind: 'gali', width: 5.8, sidewalk: 1.6, source: 'approx_lane' },
+  { id: 'krishi_cut_s', from: 'ring_nurjahan', to: 'krishi_cut', nameEn: 'Krishi Market Shortcut Alley', nameBn: 'কৃষি মার্কেট শর্টকাট গলি', kind: 'gali', width: 5.8, sidewalk: 1.6, source: 'approx_lane' },
+  { id: 'krishi_cut_n', from: 'krishi_cut', to: 'tajmahal_w', nameEn: 'Krishi Market North Cut', nameBn: 'কৃষি মার্কেট উত্তর গলি', kind: 'gali', width: 5.8, sidewalk: 1.6, source: 'approx_lane' },
+  { id: 'lalmatia_cut', from: 'asad_salimullah', to: 'zakir_w', nameEn: 'Lalmatia Diagonal Cut', nameBn: 'লালমাটিয়া কোনাকুনি শর্টকাট', kind: 'gali', width: 6.0, sidewalk: 1.7, source: 'approx_lane' },
+  { id: 'johuri_bypass', from: 'johuri_deadend', to: 'babar_humayun', nameEn: 'Johuri North Chicane', nameBn: 'জহুরি মহল্লা উত্তর বাইপাস', kind: 'gali', width: 5.8, sidewalk: 1.6, source: 'approx_lane' },
 ];
 
 export const OSM_ATTRIBUTION =

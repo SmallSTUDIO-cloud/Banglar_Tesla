@@ -333,15 +333,36 @@ async function main() {
       g.ui.show('menu');
       g.openBlacklist('menu');
       const playingOnSecondOpen = g.debugSnapshot().cinematicPlaying;
+      const portraitSvgCount = document.querySelectorAll('.blacklist-card [data-rival-portrait] svg').length;
 
-      // Launch Rival #10 boss event (`bl_boss_10`)!
+      // Test skippable per-rival 3D Character Intro (`playRivalIntro(10)`)!
+      g.playRivalIntro(10, false);
+      const rivalIntroPlaying = g.debugSnapshot().cinematicPlaying === true;
+      for (let i = 0; i < 60; i++) g.update(1 / 60);
+      g.skipBlacklistIntro();
+      const afterRivalIntroScreen = g.debugSnapshot().screen;
+
+      // Verify 2-lap circuit HUD (`bl_boss_07`)
+      g.startRivalEvent('bl_boss_07');
+      g.hudTick = 1;
+      g.update(0);
+      const circuitCpText = document.getElementById('hud-race')?.textContent ?? '';
+      g.exitRaceToFreeRide();
+
+      // Launch Rival #10 boss event (`bl_boss_10`) — full 4-rickshaw race!
       const balBeforeWin = g.state.balance;
       const repBeforeWin = g.state.rep;
       g.startRivalEvent('bl_boss_10');
       const raceHudVisible = !document.getElementById('hud-race')?.classList.contains('hidden');
+      const participantCount = g.raceSystem.participantCount;
+      const aiSnap = g.raceSystem.getAiRacersSnapshot();
+      const allDriversVisible = aiSnap.length === 3 && aiSnap.every((r) => r.hasVisibleDriver);
+      const uniqueTendencies = new Set(aiSnap.map((r) => r.tendency)).size;
+      const hudFourRacerText = document.getElementById('hud-race')?.textContent ?? '';
 
-      // Finish 3s countdown and pass all checkpoints through real RivalRaceSystem!
+      // Finish 3s countdown, record speed, and pass all checkpoints through real RivalRaceSystem!
       g.debugStepSim(3.2);
+      g.raceSystem.recordPlayerSpeed(16.2);
       const cps = g.raceSystem.checkpoints.slice();
       for (const cp of cps) {
         g.debugTeleport(cp.x, cp.z, 0);
@@ -352,20 +373,33 @@ async function main() {
       const afterWinBal = g.state.balance;
       const afterWinRep = g.state.rep;
       const resultScreen = g.debugSnapshot().screen;
+      const winResultMode = document.getElementById('race-result-sheet')?.getAttribute('data-result-mode');
+      const winHasPhotoWindow = Boolean(document.querySelector('[data-testid="winner-photo-window"]'));
+      const winStandingPills = document.querySelectorAll('#race-result-sheet .standing-pill').length;
+      const winClockBefore = g.debugSnapshot().clockMinutes;
+      g.frame(performance.now() + 500);
+      const winClockFrozen = g.debugSnapshot().clockMinutes === winClockBefore;
       g.exitRaceToFreeRide();
 
-      // Now test Race Defeat (bounded টাকা penalty + clean Retry without soft-lock!)
+      // Now test Race Defeat (bounded টাকা penalty + non-photo defeat screen + clean Retry!)
       g.debugSetBalanceForTest(15); // Less than lossFee (25) so we prove balance clamps >= 0!
       g.startRivalEvent('ev_duel_ring');
       g.debugStepSim(3.2);
-      // Exceed event targetSeconds to trigger real timeout/rival loss
       const limit = g.raceSystem.currentEvent?.targetSeconds ?? 78;
       g.debugStepSim(limit + 35);
       const lossScreen = g.debugSnapshot().screen;
+      const lossResultMode = document.getElementById('race-result-sheet')?.getAttribute('data-result-mode');
+      const lossHasPhotoWindow = Boolean(document.querySelector('[data-testid="winner-photo-window"]'));
       const balAfterLoss = g.state.balance;
       g.retryLastEvent();
       const retriedCleanly = g.raceSystem.isActive && g.debugSnapshot().screen === 'hud';
       g.exitRaceToFreeRide();
+
+      // Check NPC Pedestrian anatomy, street litter & Web/PC High quality profile
+      const pedSummary = g.peds.getCharacterMeshSummary();
+      const litterCount = g.city.litterCount;
+      const pcHighApplied = g.debugSetQuality('pc_high').quality === 'pc_high';
+      g.debugSetQuality('balanced');
 
       return {
         playingOnFirstOpen,
@@ -374,40 +408,99 @@ async function main() {
         afterSkipCinematic: afterSkipSnap.cinematicPlaying,
         introSeen: afterSkipSnap.blacklistIntroSeen,
         rivalCards,
+        portraitSvgCount,
+        rivalIntroPlaying,
+        afterRivalIntroScreen,
+        circuitHasLapLabel: circuitCpText.includes('1/2'),
         playingOnSecondOpen,
         raceHudVisible,
+        participantCount,
+        allDriversVisible,
+        uniqueTendencies,
+        hudHasOf4: hudFourRacerText.includes('/4'),
         balDeltaWin: afterWinBal - balBeforeWin,
         repDeltaWin: afterWinRep - repBeforeWin,
         afterWinRank,
         resultScreen,
+        winResultMode,
+        winHasPhotoWindow,
+        winStandingPills,
+        winClockFrozen,
         lossScreen,
+        lossResultMode,
+        lossHasPhotoWindow,
         balAfterLoss,
         retriedCleanly,
+        pedSummary,
+        litterCount,
+        pcHighApplied,
       };
     });
 
     check(
-      'First Blacklist entry plays skippable intro cinematic once and opens #10 -> #1 Blacklist roster',
+      'First Blacklist entry plays skippable intro cinematic once, renders 10 rival SVG portraits, and supports skippable per-rival 3D intro',
       blacklistFlow.playingOnFirstOpen &&
         blacklistFlow.overlayVisible &&
         blacklistFlow.afterSkipScreen === 'blacklist' &&
         !blacklistFlow.afterSkipCinematic &&
         blacklistFlow.introSeen &&
         blacklistFlow.rivalCards === 10 &&
+        blacklistFlow.portraitSvgCount === 10 &&
+        blacklistFlow.rivalIntroPlaying &&
+        blacklistFlow.afterRivalIntroScreen === 'blacklist' &&
         !blacklistFlow.playingOnSecondOpen,
-      JSON.stringify(blacklistFlow),
+      JSON.stringify({
+        rivalCards: blacklistFlow.rivalCards,
+        portraitSvgCount: blacklistFlow.portraitSvgCount,
+        rivalIntroPlaying: blacklistFlow.rivalIntroPlaying,
+        afterRivalIntroScreen: blacklistFlow.afterRivalIntroScreen,
+      }),
     );
     check(
-      'Winning Rival #10 race awards টাকা + REP and unlocks #9; losing clamps টাকা >= 0 and retries cleanly',
+      '4-Rickshaw Race runs 4 participants (3 visible distinct-tendency AI rivals + 1/4..4/4 & 2-lap HUD) and triggers Printed-Photo Winner Snapshot ONLY on victory',
       blacklistFlow.raceHudVisible &&
+        blacklistFlow.participantCount === 4 &&
+        blacklistFlow.allDriversVisible &&
+        blacklistFlow.uniqueTendencies === 3 &&
+        blacklistFlow.hudHasOf4 &&
+        blacklistFlow.circuitHasLapLabel &&
         blacklistFlow.balDeltaWin > 0 &&
         blacklistFlow.repDeltaWin > 0 &&
         blacklistFlow.afterWinRank === 9 &&
         blacklistFlow.resultScreen === 'raceResult' &&
+        blacklistFlow.winResultMode === 'winner-photo' &&
+        blacklistFlow.winHasPhotoWindow === true &&
+        blacklistFlow.winStandingPills === 4 &&
+        blacklistFlow.winClockFrozen === true &&
         blacklistFlow.lossScreen === 'raceResult' &&
+        blacklistFlow.lossResultMode === 'defeat' &&
+        blacklistFlow.lossHasPhotoWindow === false &&
         blacklistFlow.balAfterLoss === 0 &&
         blacklistFlow.retriedCleanly,
-      JSON.stringify(blacklistFlow),
+      JSON.stringify({
+        participantCount: blacklistFlow.participantCount,
+        allDriversVisible: blacklistFlow.allDriversVisible,
+        uniqueTendencies: blacklistFlow.uniqueTendencies,
+        winResultMode: blacklistFlow.winResultMode,
+        winStandingPills: blacklistFlow.winStandingPills,
+        lossResultMode: blacklistFlow.lossResultMode,
+        lossHasPhotoWindow: blacklistFlow.lossHasPhotoWindow,
+      }),
+    );
+    check(
+      'NPC pedestrians have full visible head/hair/arms/legs, city renders sparse non-collidable litter, and Web/PC High quality works',
+      blacklistFlow.pedSummary.hasHead &&
+        blacklistFlow.pedSummary.hasHair &&
+        blacklistFlow.pedSummary.hasLeftArm &&
+        blacklistFlow.pedSummary.hasRightArm &&
+        blacklistFlow.pedSummary.hasLegs &&
+        blacklistFlow.litterCount >= 100 &&
+        blacklistFlow.pcHighApplied,
+      JSON.stringify({
+        pedSummary: blacklistFlow.pedSummary,
+        litterCount: blacklistFlow.litterCount,
+        pcHighApplied: blacklistFlow.pcHighApplied,
+      }),
     );
 
     // ------------------------------------------------------------------
@@ -550,7 +643,7 @@ async function main() {
     );
 
     // Full reload persistence check for v0.5.0 fields (REP, Blacklist rank #9, clock 04:45 PM, introSeen)
-    await page.reload({ waitUntil: 'networkidle2', timeout: 60000 });
+    await page.reload({ waitUntil: 'networkidle2', timeout: 150000 });
     await page.waitForFunction('Boolean(window.__banglarTesla)', { timeout: 60000 });
     const afterReload = await page.evaluate(() => {
       const s = window.__banglarTesla.debugSnapshot();

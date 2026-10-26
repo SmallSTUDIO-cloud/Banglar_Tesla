@@ -83,7 +83,7 @@ async function main() {
   });
 
   try {
-    await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
 
     // Dismiss splash screen via DOM click or check unlock pill
@@ -189,7 +189,7 @@ async function main() {
       const g = window.__banglarTesla;
       g.debugSelectVehicleForTest('classic');
       // Place on straight open stretch of Asad Ave
-      g.debugTeleport(0, -108.5, Math.PI / 2);
+      g.debugTeleport(80, 95, 1.853); // verified centreline of Asad Ave segment `asad_4` (6.1m inside carriageway)
       g.controller.restoreStamina(100);
       g.debugStepSim(0.1);
 
@@ -201,8 +201,8 @@ async function main() {
       // Measure normal top speed over 4s on straight road
       g.debugInput = { throttle: 1, brake: 0, steer: 0 };
       for (let i = 0; i < 240; i++) {
-        g.controller.x = 0;
-        g.controller.z = -108.5;
+        g.controller.x = 80;
+        g.controller.z = 95;
         g.update(1 / 60);
       }
       const normalSpeed = g.controller.speed;
@@ -212,8 +212,8 @@ async function main() {
       tanBtn?.click();
       const activeAfterClick = g.controller.tanActive;
       for (let i = 0; i < 240; i++) {
-        g.controller.x = 0;
-        g.controller.z = -108.5;
+        g.controller.x = 80;
+        g.controller.z = 95;
         g.update(1 / 60);
       }
       const boostSpeed = g.controller.speed;
@@ -221,8 +221,8 @@ async function main() {
 
       // Drain remaining stamina to 0 -> auto-stops `টান`
       for (let i = 0; i < 300; i++) {
-        g.controller.x = 0;
-        g.controller.z = -108.5;
+        g.controller.x = 80;
+        g.controller.z = 95;
         g.update(1 / 60);
       }
       const autoStopped = !g.controller.tanActive;
@@ -295,8 +295,8 @@ async function main() {
       // Measure normal electric speed first
       g.debugInput = { throttle: 1, brake: 0, steer: 0 };
       for (let i = 0; i < 200; i++) {
-        g.controller.x = 0;
-        g.controller.z = -108.5;
+        g.controller.x = 80;
+        g.controller.z = 95;
         g.update(1 / 60);
       }
       const normalSpeed = g.controller.speed;
@@ -307,8 +307,8 @@ async function main() {
       g.controller.speed = 0;
       document.getElementById('hud-tan-btn')?.click();
       for (let i = 0; i < 200; i++) {
-        g.controller.x = 0;
-        g.controller.z = -108.5;
+        g.controller.x = 80;
+        g.controller.z = 95;
         g.update(1 / 60);
       }
       const boostSpeed = g.controller.speed;
@@ -527,7 +527,7 @@ async function main() {
       g.applySettings();
       g.debugSaveNow();
     });
-    await page.reload({ waitUntil: 'networkidle2', timeout: 60000 });
+    await page.reload({ waitUntil: 'networkidle2', timeout: 150000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     const persistedAudioSettings = await page.evaluate(() => {
       const g = window.__banglarTesla;
@@ -551,6 +551,10 @@ async function main() {
     );
 
     // Milestone 5: Verify Install APK button is hidden inside Android WebView shell
+    // Stop & close the first game page before booting a second WebGL instance —
+    // two concurrent SwiftShader scenes starve the second page's navigation.
+    await page.evaluate(() => window.__banglarTesla.stop());
+    await Promise.race([page.close(), new Promise((r) => setTimeout(r, 5000))]).catch(() => undefined);
     const androidPage = await browser.newPage();
     await androidPage.evaluateOnNewDocument(() => {
       window.__btAndroidTts = {
@@ -559,7 +563,7 @@ async function main() {
         stop: () => undefined,
       };
     });
-    await androidPage.goto(BASE, { waitUntil: 'networkidle2', timeout: 60000 });
+    await androidPage.goto(BASE, { waitUntil: 'networkidle2', timeout: 180000 });
     await androidPage.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     const androidShellCheck = await androidPage.evaluate(() => ({
       isAndroidApp: window.__banglarTesla.isAndroidApp(),

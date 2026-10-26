@@ -88,6 +88,8 @@ export interface CityResult {
   placeAnchors: Map<string, THREE.Vector3>;
   setWetness: (wet: number) => void;
   setNight: (on: boolean) => void;
+  litterCount: number;
+  updateStreetLitter: (dt: number, windStrength: number, playerX: number, playerZ: number) => void;
   registerShadowCasters: (root: THREE.Object3D) => void;
   updateShadowFocus: (x: number, z: number, shadowRadius: number, shadowsEnabled: boolean, force?: boolean) => void;
   withPrewarmState: (run: () => void) => void;
@@ -312,9 +314,73 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       }
     }
 
-    // ------- 2. FLUSH BANGLADESHI ROAD SURFACE DETAILS (Section 11) ---------
-    // Speed breakers on busy approaches (never inside junctions)
-    if (seg.length > 44 && (seg.jamProne || seg.kind === 'medium') && rng() < 0.46) {
+    // ------- 2. FLUSH BANGLADESHI ROAD SURFACE DETAILS & CULVERT CRESTS ------
+    // Purpose-built Mohammadpur box-culvert / embankment crests on long corridors:
+    // rises & falls smoothly via a raised cosine profile matched in both 3D asphalt
+    // slabs and `heightAt(x, z)` so tyres track slopes/crests with <1cm error!
+    const CREST_HEIGHT_BY_SEG: Record<string, number> = {
+      asad_0: 0.44, // Beribadh Embankment Approach ramp
+      ring_2: 0.40, // Ring Road Shia Mosque Overpass crest
+      babar_2: 0.46, // Babar Road Canal Box-Culvert bridge
+      satmasjid_2: 0.42, // Satmasjid Road Southern Culvert rise
+      asad_5: 0.36, // Asad Gate Crown straight
+    };
+    const crestH = CREST_HEIGHT_BY_SEG[seg.id] ?? 0;
+    if (crestH > 0 && seg.length >= 46) {
+      const cd = seg.length * 0.5;
+      const cxp = seg.ax + seg.ux * cd;
+      const czp = seg.az + seg.uz * cd;
+      const crestDepth = Math.min(26, seg.length - 20);
+      humps.push({
+        x: cxp,
+        z: czp,
+        ux: seg.ux,
+        uz: seg.uz,
+        halfWidth: seg.halfWidth + 0.15,
+        depth: crestDepth,
+        height: crestH,
+        axis: seg.axis,
+      });
+      const slabCount = 9;
+      const slabLen = crestDepth / slabCount;
+      for (let s = 0; s < slabCount; s++) {
+        const uMid = -crestDepth * 0.5 + (s + 0.5) * slabLen;
+        const u0 = uMid - slabLen * 0.5;
+        const u1 = uMid + slabLen * 0.5;
+        const y0 = Math.cos((u0 / (crestDepth * 0.5)) * (Math.PI * 0.5)) * crestH;
+        const y1 = Math.cos((u1 / (crestDepth * 0.5)) * (Math.PI * 0.5)) * crestH;
+        const yMid = (y0 + y1) * 0.5;
+        const pitch = -Math.atan2(y1 - y0, slabLen);
+        bRoad.box(
+          { x: cxp + seg.ux * uMid, y: 0.008 + yMid * 0.5, z: czp + seg.uz * uMid },
+          { x: seg.width + 0.12, y: Math.max(0.02, yMid + 0.016), z: slabLen + 0.08 },
+          '#81868e',
+          { y: yaw, x: pitch * 0.35 },
+        );
+      }
+      // Low painted concrete culvert guard-kerbs strictly outside the carriageway!
+      for (const side of [-1, 1] as const) {
+        const px = cxp + seg.leftX * (seg.halfWidth + 0.32) * side;
+        const pz = czp + seg.leftZ * (seg.halfWidth + 0.32) * side;
+        if (isClearOfRoads(px, pz, 0.15)) {
+          bWalk.box(
+            { x: px, y: crestH * 0.55 + 0.24, z: pz },
+            { x: 0.24, y: crestH + 0.38, z: crestDepth * 0.72 },
+            '#d9cbb3',
+            { y: yaw },
+          );
+          bMetal.box(
+            { x: px, y: crestH + 0.46, z: pz },
+            { x: 0.26, y: 0.08, z: crestDepth * 0.72 },
+            '#eab308',
+            { y: yaw },
+          );
+        }
+      }
+    }
+
+    // Speed breakers on busy approaches (never inside junctions or on culvert crests)
+    if (crestH === 0 && seg.length > 44 && (seg.jamProne || seg.kind === 'medium') && rng() < 0.46) {
       const hd = seg.length * (0.42 + rng() * 0.16);
       const hx = seg.ax + seg.ux * hd;
       const hz = seg.az + seg.uz * hd;
@@ -605,6 +671,48 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             });
           }
 
+          // Grounded concrete foundation plinth + shopfront entrance apron bridging onto footpath!
+          const fx = -seg.leftX * side;
+          const fz = -seg.leftZ * side;
+          bDet.box(
+            { x: cx + fx * 0.55, y: 0.13, z: cz + fz * 0.55 },
+            { x: bDepth + 1.35, y: 0.26, z: bWidth + 0.28 },
+            '#7d776c',
+            { y: yaw },
+          );
+
+          // 4-sided concrete floor-slab stringcourses (`ছাদের কার্নিশ`) & side-wall windows + sunshades!
+          const sideYawL = Math.atan2(seg.ux, seg.uz);
+          const sideYawR = Math.atan2(-seg.ux, -seg.uz);
+          for (let fl = 1; fl <= floors; fl++) {
+            const slabY = fl * floorH;
+            bDet.box(
+              { x: cx, y: slabY, z: cz },
+              { x: bDepth + 0.18, y: 0.12, z: bWidth + 0.18 },
+              '#b8b0a2',
+              { y: yaw },
+            );
+            if (fl < floors) {
+              const winY = fl * floorH + 1.48;
+              for (const sDir of [-1, 1] as const) {
+                const wx = cx + seg.ux * (bWidth * 0.5 + 0.03) * sDir;
+                const wz = cz + seg.uz * (bWidth * 0.5 + 0.03) * sDir;
+                const sYaw = sDir === 1 ? sideYawL : sideYawR;
+                for (const dOff of [-bDepth * 0.24, bDepth * 0.24]) {
+                  const ox = wx - fx * dOff;
+                  const oz = wz - fz * dOff;
+                  bDet.box({ x: ox, y: winY, z: oz }, { x: 1.18, y: 1.12, z: 0.06 }, '#20313b', { y: sYaw });
+                  bDet.box(
+                    { x: ox + seg.ux * 0.18 * sDir, y: winY + 0.62, z: oz + seg.uz * 0.18 * sDir },
+                    { x: 1.42, y: 0.08, z: 0.42 },
+                    '#9a9386',
+                    { y: sYaw },
+                  );
+                }
+              }
+            }
+          }
+
           // Rooftop parapet wall + black Gazi plastic water tank + concrete stairhead room (`চিলেকোঠা`)
           bDet.box(
             { x: cx, y: height + 0.42, z: cz },
@@ -612,8 +720,6 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             tint,
             { y: yaw },
           );
-          const fx = -seg.leftX * side;
-          const fz = -seg.leftZ * side;
           bDet.cylinder(
             { x: cx - fx * 1.4, y: height + 1.05, z: cz - fz * 1.4 },
             0.72,
@@ -629,7 +735,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             );
           }
 
-          // Street-facing facade details: ground-floor Dokan shutters, striped awning, Bangla signboard & upper balconies!
+          // Street-facing facade details: ground-floor Dokan shutters + pilasters, striped awning, Bangla signboard & upper balconies!
           const frontX = cx + fx * (bDepth * 0.5 + 0.04);
           const frontZ = cz + fz * (bDepth * 0.5 + 0.04);
 
@@ -641,6 +747,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               const sx = frontX + seg.ux * bayOff;
               const sz = frontZ + seg.uz * bayOff;
               bShut.quad({ x: sx, y: 1.42, z: sz }, 2.65, 2.55, '#cfd6de', { y: faceYaw });
+              // Vertical shopfront concrete pilaster beside shutter bay
+              bDet.box(
+                { x: sx + seg.ux * 1.48, y: 1.45, z: sz + seg.uz * 1.48 },
+                { x: 0.24, y: 2.65, z: 0.18 },
+                '#9e9688',
+                { y: faceYaw },
+              );
             }
             // Colourful Bangla shop signboard from SignAtlas!
             const slot = signAtlas.slot(signCursor++);
@@ -663,14 +776,23 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               { y: faceYaw, x: 0.28 },
             );
           } else {
-            // Residential iron boundary gate + guard post
+            // Residential iron boundary gate + masonry pillars
             bShut.quad({ x: frontX, y: 1.25, z: frontZ }, 2.8, 2.3, '#2d3b42', { y: faceYaw });
+            for (const pDir of [-1.55, 1.55]) {
+              bDet.box(
+                { x: frontX + seg.ux * pDir, y: 1.32, z: frontZ + seg.uz * pDir },
+                { x: 0.32, y: 2.55, z: 0.28 },
+                '#8f8779',
+                { y: faceYaw },
+              );
+            }
           }
 
-          // Projecting Bangladeshi apartment balconies (`বারান্দা`) + split AC outdoor units on upper floors
+          // Projecting Bangladeshi apartment balconies (`বারান্দা`) + sliding glass doors + planters + split AC units
           for (let fl = 1; fl < floors; fl++) {
             const by = fl * floorH + 0.55;
             const balW = Math.min(bWidth * 0.72, 5.8);
+            const railCol = fl % 2 === 0 ? '#3d5a52' : '#4a4e54';
             bDet.box(
               { x: frontX + fx * 0.42, y: by - 0.38, z: frontZ + fz * 0.42 },
               { x: balW, y: 0.14, z: 0.88 },
@@ -680,13 +802,47 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             bDet.box(
               { x: frontX + fx * 0.82, y: by + 0.08, z: frontZ + fz * 0.82 },
               { x: balW, y: 0.82, z: 0.06 },
-              fl % 2 === 0 ? '#3d5a52' : '#4a4e54',
+              railCol,
               { y: faceYaw },
             );
+            // Balcony side-return grilles + recessed dark balcony doorway + top sunshade canopy
+            for (const bSide of [-1, 1] as const) {
+              bDet.box(
+                {
+                  x: frontX + fx * 0.42 + seg.ux * (balW * 0.49) * bSide,
+                  y: by + 0.08,
+                  z: frontZ + fz * 0.42 + seg.uz * (balW * 0.49) * bSide,
+                },
+                { x: 0.06, y: 0.82, z: 0.84 },
+                railCol,
+                { y: faceYaw },
+              );
+            }
+            bDet.box(
+              { x: frontX + fx * 0.03, y: by + 0.62, z: frontZ + fz * 0.03 },
+              { x: Math.min(balW * 0.52, 2.4), y: 1.85, z: 0.06 },
+              '#1c2d36',
+              { y: faceYaw },
+            );
+            if ((fl + secIdx) % 3 === 0) {
+              // Terracotta balcony planter pot + greenery
+              bDet.cylinder(
+                { x: frontX + fx * 0.64 - seg.ux * (balW * 0.32), y: by - 0.16, z: frontZ + fz * 0.64 - seg.uz * (balW * 0.32) },
+                0.16,
+                0.26,
+                '#9c4a2d',
+              );
+              bDet.cone(
+                { x: frontX + fx * 0.64 - seg.ux * (balW * 0.32), y: by + 0.12, z: frontZ + fz * 0.64 - seg.uz * (balW * 0.32) },
+                0.24,
+                0.38,
+                '#2f6f3e',
+              );
+            }
             // White split-AC condenser box mounted beside balcony
             if ((fl + secIdx) % 2 === 0) {
               bDet.box(
-                { x: frontX + seg.ux * (bWidth * 0.38) + fx * 0.22, y: by + 0.9, z: frontZ + seg.uz * (bWidth * 0.38) + fz * 0.22 },
+                { x: frontX + seg.ux * (bWidth * 0.38) + fx * 0.22, y: by + 0.9, z: frontX * 0 + frontZ + seg.uz * (bWidth * 0.38) + fz * 0.22 },
                 { x: 0.78, y: 0.54, z: 0.34 },
                 '#e6e9ec',
                 { y: faceYaw },
@@ -946,7 +1102,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       const hp = localHumps[i];
       const dx = x - hp.x;
       const dz = z - hp.z;
-      if (Math.abs(dx) > hp.halfWidth + 2 || Math.abs(dz) > hp.halfWidth + 2) continue;
+      const maxExt = Math.max(hp.halfWidth, hp.depth * 0.5) + 1.5;
+      if (Math.abs(dx) > maxExt || Math.abs(dz) > maxExt) continue;
       const along = dx * hp.ux + dz * hp.uz;
       const across = Math.abs(-dx * hp.uz + dz * hp.ux);
       if (across <= hp.halfWidth && Math.abs(along) <= hp.depth * 0.5) {
@@ -996,6 +1153,103 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     }
   };
 
+  // --- §30 Sparse Instanced Non-Collidable Street-Paper / Litter (1 draw call, 0 colliders!) ---
+  const LITTER_COLORS = ['#ebe4d3', '#dfd5c3', '#f4d36e', '#7bc4e2', '#c89b62', '#e2ece9'];
+  interface LitterItem {
+    baseX: number;
+    baseZ: number;
+    ux: number;
+    uz: number;
+    baseYaw: number;
+    phase: number;
+    scale: number;
+  }
+  const litterItems: LitterItem[] = [];
+  for (let si = 0; si < ROAD_SEGMENTS.length && litterItems.length < 136; si++) {
+    const seg = ROAD_SEGMENTS[si];
+    const perSeg = seg.jamProne ? 4 : seg.kind === 'main' ? 3 : 2;
+    for (let k = 0; k < perSeg && litterItems.length < 136; k++) {
+      const along = 6 + rng() * Math.max(4, seg.length - 12);
+      const side: 1 | -1 = rng() < 0.5 ? 1 : -1;
+      const lat = (seg.halfWidth - 0.35 + rng() * 0.65) * side;
+      litterItems.push({
+        baseX: seg.ax + seg.ux * along + seg.leftX * lat,
+        baseZ: seg.az + seg.uz * along + seg.leftZ * lat,
+        ux: seg.ux,
+        uz: seg.uz,
+        baseYaw: rng() * Math.PI * 2,
+        phase: rng() * Math.PI * 2,
+        scale: 0.75 + rng() * 0.65,
+      });
+    }
+  }
+
+  const litterMat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true, side: THREE.DoubleSide });
+  const litterBucket = new Bucket('city.streetLitter', litterMat);
+  // Creased 2-flap street paper / flyer scrap (non-collidable, low-poly: 4 triangles per instance!)
+  litterBucket.quad({ x: -0.055, y: 0.008, z: 0 }, 0.13, 0.19, '#ffffff', { x: -Math.PI * 0.5 + 0.14, z: 0.12 });
+  litterBucket.quad({ x: 0.055, y: 0.008, z: 0 }, 0.13, 0.19, '#f2eee6', { x: -Math.PI * 0.5 - 0.10, z: -0.14 });
+  const litterProto = litterBucket.build({ cast: false, receive: false })!;
+  const streetLitterMesh = new THREE.InstancedMesh(litterProto.geometry, litterMat, litterItems.length);
+  streetLitterMesh.name = 'city.streetLitter';
+  streetLitterMesh.castShadow = false;
+  streetLitterMesh.receiveShadow = false;
+  streetLitterMesh.frustumCulled = false;
+
+  const litMatrix = new THREE.Matrix4();
+  const litPos = new THREE.Vector3();
+  const litQuat = new THREE.Quaternion();
+  const litEuler = new THREE.Euler();
+  const litScale = new THREE.Vector3();
+  const litColor = new THREE.Color();
+  for (let i = 0; i < litterItems.length; i++) {
+    const it = litterItems[i];
+    const gy = heightAt(it.baseX, it.baseZ) + 0.009;
+    litPos.set(it.baseX, gy, it.baseZ);
+    litEuler.set(0, it.baseYaw, 0, 'YXZ');
+    litQuat.setFromEuler(litEuler);
+    litScale.set(it.scale, it.scale, it.scale);
+    litMatrix.compose(litPos, litQuat, litScale);
+    streetLitterMesh.setMatrixAt(i, litMatrix);
+    litColor.set(LITTER_COLORS[i % LITTER_COLORS.length]);
+    streetLitterMesh.setColorAt(i, litColor);
+  }
+  streetLitterMesh.instanceMatrix.needsUpdate = true;
+  if (streetLitterMesh.instanceColor) streetLitterMesh.instanceColor.needsUpdate = true;
+  group.add(streetLitterMesh);
+
+  let litterWindClock = 0;
+  const updateStreetLitter = (
+    dt: number,
+    windStrength: number,
+    playerX: number,
+    playerZ: number,
+  ): void => {
+    // Strictly zero CPU/GPU matrix upload cost on calm windless frames!
+    if (windStrength <= 0.05 || dt <= 0) return;
+    litterWindClock += dt * (1.8 + windStrength * 2.6);
+    let touched = false;
+    for (let i = 0; i < litterItems.length; i++) {
+      const it = litterItems[i];
+      const dx = it.baseX - playerX;
+      const dz = it.baseZ - playerZ;
+      if (dx * dx + dz * dz > 48 * 48) continue;
+      const wave = Math.sin(litterWindClock + it.phase);
+      const drift = wave * 0.28 * windStrength;
+      const wx = it.baseX + it.ux * drift;
+      const wz = it.baseZ + it.uz * drift;
+      const wy = heightAt(it.baseX, it.baseZ) + 0.010 + Math.abs(wave) * 0.022 * windStrength;
+      litPos.set(wx, wy, wz);
+      litEuler.set(wave * 0.18 * windStrength, it.baseYaw + wave * 0.35 * windStrength, 0, 'YXZ');
+      litQuat.setFromEuler(litEuler);
+      litScale.set(it.scale, it.scale, it.scale);
+      litMatrix.compose(litPos, litQuat, litScale);
+      streetLitterMesh.setMatrixAt(i, litMatrix);
+      touched = true;
+    }
+    if (touched) streetLitterMesh.instanceMatrix.needsUpdate = true;
+  };
+
   return {
     group,
     colliders,
@@ -1008,6 +1262,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     placeAnchors,
     setWetness,
     setNight,
+    litterCount: litterItems.length,
+    updateStreetLitter,
     registerShadowCasters,
     updateShadowFocus,
     withPrewarmState,

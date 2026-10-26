@@ -633,6 +633,41 @@ export class TrafficSystem {
     return idx;
   }
 
+  /**
+   * Relocate any ambient vehicle currently overlapping a race starting grid box
+   * to a distant lane so all 4 racers start cleanly without spawn collisions.
+   */
+  clearStartZone(x: number, z: number, radius = 18): void {
+    const rSq = radius * radius;
+    const totalLanes = this.graph.lanes.length;
+    if (totalLanes === 0) return;
+    let moved = false;
+    for (let i = 0; i < this.agents.length; i++) {
+      const a = this.agents[i];
+      const dx = a.x - x;
+      const dz = a.z - z;
+      if (dx * dx + dz * dz > rSq) continue;
+      // Pick a lane well away from the start box
+      for (let k = 0; k < totalLanes; k++) {
+        const cand = this.graph.lanes[(i * 7 + k * 13) % totalLanes];
+        const midX = (cand.ax + cand.bx) * 0.5;
+        const midZ = (cand.az + cand.bz) * 0.5;
+        if ((midX - x) * (midX - x) + (midZ - z) * (midZ - z) > (radius + 38) * (radius + 38)) {
+          a.lane = cand;
+          a.s = cand.length * 0.5;
+          sampleLane(cand, a.s, 0, this.tmpPt);
+          a.x = this.tmpPt.x;
+          a.z = this.tmpPt.z;
+          a.y = this.heightAt(a.x, a.z);
+          a.yaw = this.tmpPt.yaw;
+          moved = true;
+          break;
+        }
+      }
+    }
+    if (moved) this.fleet.sync(this.agents);
+  }
+
   dispose(): void {
     this.agents.length = 0;
     this.group.clear();

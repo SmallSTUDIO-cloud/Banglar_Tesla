@@ -1,5 +1,5 @@
 /* Banglar Tesla — offline cache so the installed PWA runs without a network. */
-const CACHE = 'banglar-tesla-v5';
+const CACHE = 'banglar-tesla-v6';
 const CORE = [
   './',
   './index.html',
