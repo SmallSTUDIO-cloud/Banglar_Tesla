@@ -83,8 +83,9 @@ async function main() {
   });
 
   try {
-    await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120000 });
+    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
+    await page.evaluate(() => document.fonts.ready); // settle web fonts before UI measurement / reload (prevents font-abort races on slow runners)
 
     // Dismiss splash screen via DOM click or check unlock pill
     const preGestureState = await page.evaluate(() => {
@@ -190,6 +191,10 @@ async function main() {
       g.debugSelectVehicleForTest('classic');
       // Place on straight open stretch of Asad Ave
       g.debugTeleport(80, 95, 1.853); // verified centreline of Asad Ave segment `asad_4` (6.1m inside carriageway)
+      // Move all ambient traffic beyond 64m so nothing can reach the measurement
+      // point during the 4s windows (max closing distance 15.3 m/s × 4s ≈ 61m).
+      g.traffic.clearStartZone(80, 95, 64);
+      g.traffic.debugSetSimulationFrozen(true);
       g.controller.restoreStamina(100);
       g.debugStepSim(0.1);
 
@@ -231,6 +236,7 @@ async function main() {
       // Release pedal and regenerate stamina
       g.debugInput = null;
       g.controller.speed = 0;
+      g.traffic.debugSetSimulationFrozen(false);
       g.debugStepSim(3.0);
       const staminaRegen = g.controller.stamina;
 
@@ -287,6 +293,10 @@ async function main() {
     const tanElectricCheck = await page.evaluate(() => {
       const g = window.__banglarTesla;
       g.debugSelectVehicleForTest('electric');
+      // Same verified Asad Ave centreline + traffic clearing as the classic test
+      g.debugTeleport(80, 95, 1.853);
+      g.traffic.clearStartZone(80, 95, 64);
+      g.traffic.debugSetSimulationFrozen(true);
       g.controller.rechargeBattery(100);
       g.debugStepSim(0.1);
       const staminaHidden = document.getElementById('hud-stamina')?.classList.contains('hidden') ?? false;
@@ -316,6 +326,7 @@ async function main() {
       g.debugInput = null;
       g.controller.setTanActive(false);
       g.controller.speed = 0;
+      g.traffic.debugSetSimulationFrozen(false);
       g.debugSelectVehicleForTest('classic');
       return {
         staminaHidden,
@@ -527,7 +538,7 @@ async function main() {
       g.applySettings();
       g.debugSaveNow();
     });
-    await page.reload({ waitUntil: 'networkidle2', timeout: 150000 });
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 150000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     const persistedAudioSettings = await page.evaluate(() => {
       const g = window.__banglarTesla;
@@ -563,7 +574,7 @@ async function main() {
         stop: () => undefined,
       };
     });
-    await androidPage.goto(BASE, { waitUntil: 'networkidle2', timeout: 180000 });
+    await androidPage.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 180000 });
     await androidPage.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     const androidShellCheck = await androidPage.evaluate(() => ({
       isAndroidApp: window.__banglarTesla.isAndroidApp(),

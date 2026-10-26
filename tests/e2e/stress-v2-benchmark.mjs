@@ -87,8 +87,9 @@ async function main() {
   const profileRows = [];
 
   try {
-    await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120000 });
+    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
+    await page.evaluate(() => document.fonts.ready); // settle web fonts before UI measurement / reload (prevents font-abort races on slow runners)
     await page.mouse.click(450, 210);
     await page.evaluate(async () => {
       document.getElementById('boot-skip')?.click();
