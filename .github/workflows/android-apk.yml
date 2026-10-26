@@ -3,7 +3,7 @@ name: Build & Release Android APK
 on:
   push:
     branches:
-      - arena/ea8c21f1-banglar-tesla
+      - 'arena/*'
       - main
   workflow_dispatch:
     inputs:
