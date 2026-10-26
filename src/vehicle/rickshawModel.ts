@@ -21,6 +21,65 @@ import type { VehicleKind } from '../economy/catalog';
 import { Bucket, createWheel } from '../world/geo';
 import { rickshawArtTexture } from '../world/textures';
 
+export type DriverHairStyle =
+  | 'bandana'
+  | 'peaked_cap'
+  | 'curly'
+  | 'headband'
+  | 'pagri_wrap'
+  | 'spiky'
+  | 'bucket_hat'
+  | 'topi'
+  | 'ponytail_bun'
+  | 'crown_bandana';
+
+export type DriverOutfitStyle =
+  | 'vest_lungi'
+  | 'kurta_gamcha'
+  | 'jacket_pants'
+  | 'jersey_track'
+  | 'raincoat'
+  | 'royal_sherwani';
+
+export type DriverExpression = 'determined' | 'grin' | 'fierce' | 'cool';
+export type DriverEyewear = 'none' | 'aviator' | 'sport_visor';
+export type DriverPoseMode = 'riding' | 'intro' | 'victory';
+
+export interface DriverCharacterSpec {
+  skinHex: string;
+  hairStyle: DriverHairStyle;
+  hairHex: string;
+  headwearHex: string;
+  eyewear: DriverEyewear;
+  expression: DriverExpression;
+  outfitStyle: DriverOutfitStyle;
+  topHex: string;
+  bottomHex: string;
+  accentHex: string;
+}
+
+export const DEFAULT_PLAYER_CHARACTER: DriverCharacterSpec = {
+  skinHex: '#8d5b3c',
+  hairStyle: 'topi',
+  hairHex: '#1b1614',
+  headwearHex: '#f4f1ea',
+  eyewear: 'none',
+  expression: 'determined',
+  outfitStyle: 'kurta_gamcha',
+  topHex: '#d98a3c',
+  bottomHex: '#1d4e6e',
+  accentHex: '#c92a2a',
+};
+
+let sharedCharacterMaterial: THREE.MeshLambertMaterial | null = null;
+function getSharedCharacterMaterial(): THREE.MeshLambertMaterial {
+  if (!sharedCharacterMaterial) {
+    sharedCharacterMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+    sharedCharacterMaterial.userData = { shared: true };
+  }
+  return sharedCharacterMaterial;
+}
+
 export interface RickshawLook {
   frameColor: string;
   canopyColor: string;
@@ -35,6 +94,7 @@ export interface RickshawLook {
   mirrorSet: boolean;
   flowersColor: string | null;
   kind?: VehicleKind;
+  character?: DriverCharacterSpec;
 }
 
 export const DEFAULT_LOOK: RickshawLook = {
@@ -112,6 +172,13 @@ export class RickshawRig {
     this.frontWheel = createWheel(this.frontWheelRadius, '#1a1c1f', look.wheelTrim, 18);
     const rearL = createWheel(this.rearWheelRadius, '#1a1c1f', look.wheelTrim, 20);
     const rearR = createWheel(this.rearWheelRadius, '#1a1c1f', look.wheelTrim, 20);
+    if (!opts.isPlayer) {
+      for (const w of [this.frontWheel, rearL, rearR]) {
+        w.traverse((node) => {
+          if (node instanceof THREE.Mesh) node.castShadow = false;
+        });
+      }
+    }
     this.rearWheels = [rearL, rearR];
 
     rearL.position.set(RIDE.rearTrackHalf, this.rearWheelRadius, RIDE.rearAxleZ);
@@ -223,7 +290,6 @@ export class RickshawRig {
     // ----------------------- 5. STEERING FORK, HANDLEBARS, BELL, MIRRORS, LAMP
     const bSteerMetal = new Bucket('rickshaw.steer.metal', metalMat);
     const bSteerChrome = new Bucket('rickshaw.steer.chrome', chromeMat);
-    const bSteerWood = new Bucket('rickshaw.steer.wood', woodLeatherMat);
 
     // Head tube + chrome headset cups
     bSteerMetal.cylinder({ x: 0, y: 0.89, z: -0.01 }, 0.025, 0.22, frameCol, { x: -0.16 });
@@ -248,7 +314,7 @@ export class RickshawRig {
     }
     bSteerChrome.cylinder({ x: 0.05, y: 0.44, z: -0.18 }, 0.005, 0.38, '#cfd6de', { x: 0.85 });
     bSteerChrome.cylinder({ x: -0.05, y: 0.44, z: -0.18 }, 0.005, 0.38, '#cfd6de', { x: 0.85 });
-    bSteerWood.box({ x: 0, y: 0.22, z: -this.frontWheelRadius - 0.02 }, { x: 0.11, y: 0.11, z: 0.01 }, '#1b1d20');
+    bSteerMetal.box({ x: 0, y: 0.22, z: -this.frontWheelRadius - 0.02 }, { x: 0.11, y: 0.11, z: 0.01 }, '#1b1d20');
 
     // Front rod/caliper brake assembly
     bSteerChrome.box({ x: 0, y: 0.73, z: 0.048 }, { x: 0.11, y: 0.03, z: 0.025 }, '#c6cdd4');
@@ -266,7 +332,7 @@ export class RickshawRig {
         '#e2e8ef',
         { x: Math.PI / 2, z: side * 0.52 },
       );
-      bSteerWood.cylinder(
+      bSteerMetal.cylinder(
         { x: side * 0.275, y: 1.17, z: -0.195 },
         0.018,
         0.13,
@@ -330,12 +396,10 @@ export class RickshawRig {
     bSteerMetal.box({ x: 0, y: 0.68, z: 0.072 }, { x: 0.16, y: 0.075, z: 0.008 }, '#144b82');
     bSteerChrome.box({ x: 0, y: 0.68, z: 0.077 }, { x: 0.14, y: 0.055, z: 0.004 }, '#f4f1e4');
 
-    const steerM1 = bSteerMetal.build({ cast: true, receive: false }, true);
+    const steerM1 = bSteerMetal.build({ cast: Boolean(opts.isPlayer), receive: false }, true);
     const steerM2 = bSteerChrome.build({ cast: false, receive: false }, true);
-    const steerM3 = bSteerWood.build({ cast: false, receive: false }, true);
     if (steerM1) this.steering.add(steerM1);
     if (steerM2) this.steering.add(steerM2);
-    if (steerM3) this.steering.add(steerM3);
 
     // Glowing headlamp lens
     const lens = new THREE.Mesh(new THREE.CircleGeometry(0.046, 14), glowMat);
@@ -481,45 +545,286 @@ export class RickshawRig {
       if (fairyMesh) this.chassis.add(fairyMesh);
     }
 
-    // ----------------------------------------- 8. RICKSHAWWALLAH (PULLER) RIG
-    if (opts.isPlayer !== false) {
-      this.buildPuller(bWood);
-      this.chassis.add(this.puller);
-    }
+    // ----------------------------------------- 8. RICKSHAWWALLAH / RIVAL CHARACTER RIG
+    this.buildPuller(look.character ?? DEFAULT_PLAYER_CHARACTER);
+    this.chassis.add(this.puller);
 
     // Passenger seat mount
     this.passengerMount.position.set(0, 0.82, -0.74);
     this.chassis.add(this.passengerMount);
   }
 
-  private buildPuller(_unused: Bucket): void {
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-    const b = new Bucket('rickshaw.puller', mat);
-    // Seated/pedaling posture over saddle (z = -0.05) reaching forward to grips (z = +0.61)
-    b.box({ x: 0, y: 1.24, z: 0.02 }, { x: 0.33, y: 0.40, z: 0.21 }, '#d98a3c', { x: 0.28 }); // lungi/shirt torso
-    // Checkered gamcha towel draped over shoulder!
-    b.box({ x: 0.12, y: 1.36, z: 0.06 }, { x: 0.11, y: 0.22, z: 0.25 }, '#c92a2a', { x: 0.28, z: -0.12 });
-    b.cylinder({ x: 0, y: 1.50, z: 0.11 }, 0.095, 0.19, '#8b5e3c'); // head
-    b.cylinder({ x: 0, y: 1.58, z: 0.11 }, 0.10, 0.065, '#1b1614'); // hair / cap
-    // Arms reaching handlebars
-    for (const sx of [-0.20, 0.20]) {
-      b.cylinder({ x: sx, y: 1.28, z: 0.31 }, 0.044, 0.50, '#8b5e3c', { x: 1.25, z: -sx * 0.4 });
-    }
-    // Checkered lungi + legs
-    b.cylinder({ x: 0, y: 0.98, z: 0.01 }, 0.16, 0.24, '#1d4e6e', { x: 0.2 });
-    const mesh = b.build({ cast: true, receive: false }, true);
-    if (mesh) mesh.name = 'pullerBody';
-    if (mesh) this.puller.add(mesh);
+  private poseMode: DriverPoseMode = 'riding';
+  private poseTime = 0;
 
-    const legGeo = new THREE.CylinderGeometry(0.052, 0.044, 0.44, 7);
-    const legMat = new THREE.MeshLambertMaterial({ color: 0x1d4e6e });
-    const leftLeg = new THREE.Mesh(legGeo, legMat);
-    const rightLeg = new THREE.Mesh(legGeo, legMat);
-    leftLeg.name = 'leftLeg';
-    rightLeg.name = 'rightLeg';
-    leftLeg.position.set(0.105, 0.72, 0.05);
-    rightLeg.position.set(-0.105, 0.72, 0.05);
-    this.puller.add(leftLeg, rightLeg);
+  setCharacterPose(mode: DriverPoseMode, elapsed = 0): void {
+    this.poseMode = mode;
+    this.poseTime = elapsed;
+  }
+
+  private buildPuller(spec: DriverCharacterSpec): void {
+    const mat = getSharedCharacterMaterial();
+
+    // ---- 1. Seated Torso, Collar, Outfit Silhouette & Hip Posture ----
+    const bTorso = new Bucket('rickshaw.puller.torso', mat);
+    // Seated hips/lungi/pants over leather saddle (0, 1.03, -0.04)
+    bTorso.cylinder({ x: 0, y: 1.03, z: -0.01 }, 0.155, 0.22, spec.bottomHex, { x: 0.18 });
+    // Main torso leaning forward naturally toward handlebars
+    const torsoW = spec.outfitStyle === 'jacket_pants' || spec.outfitStyle === 'raincoat' ? 0.36 : 0.33;
+    bTorso.box({ x: 0, y: 1.24, z: 0.03 }, { x: torsoW, y: 0.40, z: 0.21 }, spec.topHex, { x: 0.24 });
+
+    // Distinct outfit details so rivals never look like recolors of one mesh
+    if (spec.outfitStyle === 'kurta_gamcha') {
+      // Draped checkered/striped gamcha scarf over right shoulder
+      bTorso.box({ x: -0.11, y: 1.35, z: 0.07 }, { x: 0.10, y: 0.24, z: 0.25 }, spec.accentHex, {
+        x: 0.26,
+        z: 0.12,
+      });
+    } else if (spec.outfitStyle === 'jacket_pants') {
+      // Open street-racing jacket lapels + inner shirt chest stripe
+      bTorso.box({ x: 0, y: 1.25, z: 0.135 }, { x: 0.11, y: 0.36, z: 0.03 }, spec.accentHex, { x: 0.24 });
+      bTorso.box({ x: 0, y: 1.42, z: 0.08 }, { x: 0.24, y: 0.07, z: 0.18 }, spec.accentHex, { x: 0.24 });
+    } else if (spec.outfitStyle === 'vest_lungi') {
+      // Sleeveless athletic vest straps + bare muscular shoulder caps + waist sash
+      bTorso.cylinder({ x: 0.175, y: 1.37, z: 0.07 }, 0.055, 0.09, spec.skinHex, { z: Math.PI / 2 });
+      bTorso.cylinder({ x: -0.175, y: 1.37, z: 0.07 }, 0.055, 0.09, spec.skinHex, { z: Math.PI / 2 });
+      bTorso.box({ x: 0, y: 1.09, z: 0.02 }, { x: 0.33, y: 0.06, z: 0.23 }, spec.accentHex, { x: 0.2 });
+    } else if (spec.outfitStyle === 'jersey_track') {
+      // Sport racing chest chevron & racing number stripe on back
+      bTorso.box({ x: 0, y: 1.29, z: 0.04 }, { x: 0.345, y: 0.09, z: 0.22 }, spec.accentHex, { x: 0.24 });
+    } else if (spec.outfitStyle === 'raincoat') {
+      // Monsoon high storm collar + reflective chest tape
+      bTorso.cylinder({ x: 0, y: 1.43, z: 0.09 }, 0.115, 0.08, spec.topHex, { x: 0.2 });
+      bTorso.box({ x: 0, y: 1.27, z: 0.04 }, { x: 0.365, y: 0.045, z: 0.22 }, spec.accentHex, { x: 0.24 });
+    } else if (spec.outfitStyle === 'royal_sherwani') {
+      // Champion gold-trimmed high collar & shoulder epaulettes
+      bTorso.cylinder({ x: 0, y: 1.43, z: 0.09 }, 0.105, 0.07, spec.accentHex, { x: 0.18 });
+      for (const sx of [-0.17, 0.17]) {
+        bTorso.box({ x: sx, y: 1.41, z: 0.08 }, { x: 0.09, y: 0.035, z: 0.12 }, spec.accentHex, { x: 0.24 });
+      }
+    }
+
+    const torsoMesh = bTorso.build({ cast: true, receive: false }, true);
+    if (torsoMesh) {
+      torsoMesh.name = 'pullerBody';
+      this.puller.add(torsoMesh);
+    }
+
+    // ---- 2. Sculpted Head with Visible Eyes, Eyebrows, Nose, Mouth & Distinct Hair/Headwear ----
+    const headGroup = new THREE.Group();
+    headGroup.name = 'pullerHead';
+    headGroup.position.set(0, 1.45, 0.11);
+
+    const bHead = new Bucket('rickshaw.puller.head', mat);
+    // Neck + sculpted head + jaw + ears + nose bridge (+Z = front face)
+    bHead.cylinder({ x: 0, y: 0.015, z: -0.01 }, 0.052, 0.08, spec.skinHex);
+    bHead.cylinder({ x: 0, y: 0.105, z: 0 }, 0.094, 0.175, spec.skinHex);
+    bHead.box({ x: 0, y: 0.068, z: 0.022 }, { x: 0.135, y: 0.085, z: 0.135 }, spec.skinHex);
+    for (const sx of [-1, 1]) {
+      bHead.box({ x: sx * 0.094, y: 0.102, z: -0.004 }, { x: 0.024, y: 0.048, z: 0.032 }, spec.skinHex);
+    }
+    // Nose bridge
+    bHead.box({ x: 0, y: 0.098, z: 0.094 }, { x: 0.024, y: 0.042, z: 0.026 }, spec.skinHex, { x: -0.18 });
+
+    // Eyes (white sclera + dark pupils)
+    for (const sx of [-1, 1]) {
+      bHead.box({ x: sx * 0.036, y: 0.116, z: 0.088 }, { x: 0.030, y: 0.018, z: 0.012 }, '#f8fafc');
+      bHead.box({ x: sx * 0.035, y: 0.116, z: 0.093 }, { x: 0.015, y: 0.015, z: 0.010 }, '#111827');
+      // Expressive eyebrows
+      const browTilt =
+        spec.expression === 'fierce'
+          ? sx * 0.28
+          : spec.expression === 'determined'
+            ? sx * 0.16
+            : spec.expression === 'grin'
+              ? -sx * 0.10
+              : 0;
+      bHead.box(
+        { x: sx * 0.038, y: 0.136, z: 0.091 },
+        { x: 0.036, y: 0.009, z: 0.012 },
+        spec.hairHex,
+        { z: browTilt },
+      );
+    }
+
+    // Mouth with readable expression
+    if (spec.expression === 'grin') {
+      bHead.box({ x: 0, y: 0.064, z: 0.090 }, { x: 0.052, y: 0.016, z: 0.012 }, '#4a1d1f');
+      bHead.box({ x: 0, y: 0.066, z: 0.094 }, { x: 0.042, y: 0.008, z: 0.008 }, '#f8fafc');
+    } else if (spec.expression === 'fierce') {
+      bHead.box({ x: 0, y: 0.063, z: 0.091 }, { x: 0.046, y: 0.011, z: 0.012 }, '#3b1818', { z: 0.09 });
+    } else {
+      bHead.box({ x: 0, y: 0.064, z: 0.091 }, { x: 0.044, y: 0.010, z: 0.012 }, '#4a201e');
+    }
+
+    // Optional eyewear (aviator shades / sport visor)
+    if (spec.eyewear === 'aviator') {
+      for (const sx of [-1, 1]) {
+        bHead.box({ x: sx * 0.038, y: 0.116, z: 0.098 }, { x: 0.038, y: 0.024, z: 0.010 }, '#0f172a');
+      }
+      bHead.box({ x: 0, y: 0.122, z: 0.099 }, { x: 0.088, y: 0.005, z: 0.008 }, '#facc15');
+    } else if (spec.eyewear === 'sport_visor') {
+      bHead.box({ x: 0, y: 0.118, z: 0.097 }, { x: 0.105, y: 0.024, z: 0.014 }, spec.accentHex);
+    }
+
+    // Back/side hair base so hairline never looks bald unless designed
+    bHead.cylinder({ x: 0, y: 0.148, z: -0.012 }, 0.098, 0.085, spec.hairHex);
+    bHead.box({ x: 0, y: 0.115, z: -0.055 }, { x: 0.175, y: 0.11, z: 0.08 }, spec.hairHex);
+
+    // 10 Distinct Hair / Headwear Silhouettes
+    switch (spec.hairStyle) {
+      case 'bandana': {
+        bHead.cylinder({ x: 0, y: 0.158, z: 0 }, 0.103, 0.055, spec.headwearHex);
+        // Streaming knotted bandana tails at back!
+        bHead.box({ x: 0.02, y: 0.135, z: -0.115 }, { x: 0.035, y: 0.028, z: 0.09 }, spec.headwearHex, { x: -0.45 });
+        bHead.box({ x: -0.02, y: 0.125, z: -0.11 }, { x: 0.032, y: 0.025, z: 0.085 }, spec.accentHex, { x: -0.65 });
+        break;
+      }
+      case 'peaked_cap': {
+        bHead.cylinder({ x: 0, y: 0.172, z: 0 }, 0.102, 0.068, spec.headwearHex);
+        bHead.box({ x: 0, y: 0.148, z: 0.105 }, { x: 0.145, y: 0.014, z: 0.095 }, spec.accentHex, { x: 0.14 });
+        break;
+      }
+      case 'curly': {
+        for (const [ox, oy, oz] of [
+          [0, 0.195, 0.01],
+          [-0.055, 0.18, 0.02],
+          [0.055, 0.18, 0.02],
+          [0, 0.185, -0.045],
+        ]) {
+          bHead.cylinder({ x: ox, y: oy, z: oz }, 0.062, 0.058, spec.hairHex);
+        }
+        break;
+      }
+      case 'headband': {
+        bHead.cylinder({ x: 0, y: 0.148, z: 0.004 }, 0.103, 0.034, spec.headwearHex);
+        bHead.cone({ x: 0, y: 0.215, z: 0.01 }, 0.088, 0.085, spec.hairHex);
+        break;
+      }
+      case 'pagri_wrap': {
+        // Traditional twisted cloth pagri / gamcha turban
+        bHead.cylinder({ x: 0, y: 0.175, z: -0.005 }, 0.118, 0.088, spec.headwearHex, { z: 0.08 });
+        bHead.cylinder({ x: 0, y: 0.205, z: 0.01 }, 0.098, 0.055, spec.accentHex, { z: -0.1 });
+        break;
+      }
+      case 'spiky': {
+        bHead.cylinder({ x: 0, y: 0.146, z: 0.004 }, 0.102, 0.03, spec.headwearHex);
+        for (let s = -1; s <= 1; s++) {
+          bHead.cone({ x: s * 0.038, y: 0.22, z: 0.015 - Math.abs(s) * 0.015 }, 0.048, 0.095, spec.hairHex, {
+            x: 0.18,
+            z: -s * 0.22,
+          });
+        }
+        break;
+      }
+      case 'bucket_hat': {
+        bHead.cylinder({ x: 0, y: 0.152, z: 0 }, 0.142, 0.018, spec.headwearHex, { x: 0.06 });
+        bHead.cylinder({ x: 0, y: 0.186, z: 0 }, 0.098, 0.068, spec.headwearHex);
+        bHead.cylinder({ x: 0, y: 0.165, z: 0 }, 0.101, 0.02, spec.accentHex);
+        break;
+      }
+      case 'ponytail_bun': {
+        bHead.cylinder({ x: 0, y: 0.168, z: 0.005 }, 0.099, 0.062, spec.hairHex);
+        bHead.cylinder({ x: 0, y: 0.148, z: 0.008 }, 0.102, 0.026, spec.headwearHex);
+        // Sleek tied back bun / ponytail!
+        bHead.cylinder({ x: 0, y: 0.145, z: -0.115 }, 0.048, 0.075, spec.hairHex, { x: -0.7 });
+        break;
+      }
+      case 'crown_bandana': {
+        // #1 Champion gold-trimmed crown headband + flowing tail
+        bHead.cylinder({ x: 0, y: 0.155, z: 0.004 }, 0.105, 0.044, spec.headwearHex);
+        bHead.cone({ x: 0, y: 0.195, z: 0.085 }, 0.032, 0.055, spec.accentHex);
+        bHead.box({ x: 0, y: 0.13, z: -0.115 }, { x: 0.045, y: 0.03, z: 0.095 }, spec.accentHex, { x: -0.5 });
+        break;
+      }
+      case 'topi':
+      default: {
+        bHead.cylinder({ x: 0, y: 0.175, z: 0 }, 0.099, 0.062, spec.headwearHex);
+        break;
+      }
+    }
+
+    const headMesh = bHead.build({ cast: false, receive: false }, true);
+    if (headMesh) headGroup.add(headMesh);
+    this.puller.add(headGroup);
+
+    // ---- 3. Articulated Left & Right Arms + Attached Hands Gripping Handlebar (±0.275, 1.17, 0.605) ----
+    const sleeveCol = spec.outfitStyle === 'vest_lungi' ? spec.skinHex : spec.topHex;
+    for (const side of [1, -1] as const) {
+      const armGroup = new THREE.Group();
+      armGroup.name = side === 1 ? 'leftArm' : 'rightArm';
+      // Shoulder pivot in chassis coords: (±0.185, 1.38, 0.08)
+      // Handlebar grip in chassis coords: (±0.275, 1.17, 0.605) -> local target (±0.090, -0.210, +0.525)
+      armGroup.position.set(side * 0.185, 1.38, 0.08);
+
+      const bArm = new Bucket(`rickshaw.puller.arm.${side > 0 ? 'L' : 'R'}`, mat);
+      // Short sleeve cuff at shoulder
+      bArm.cylinder({ x: side * 0.015, y: -0.025, z: 0.04 }, 0.050, 0.11, sleeveCol, {
+        x: 1.05,
+        z: -side * 0.22,
+      });
+      // Upper arm: Shoulder (0,0,0) -> Elbow (side*0.065, -0.145, 0.245)
+      bArm.cylinder(
+        { x: side * 0.032, y: -0.072, z: 0.122 },
+        0.041,
+        0.295,
+        spec.outfitStyle === 'jacket_pants' || spec.outfitStyle === 'raincoat' || spec.outfitStyle === 'royal_sherwani'
+          ? sleeveCol
+          : spec.skinHex,
+        { x: 1.04, z: -side * 0.22 },
+      );
+      // Elbow joint cap (prevents any seam gap)
+      bArm.cylinder({ x: side * 0.065, y: -0.145, z: 0.245 }, 0.039, 0.055, spec.skinHex, { x: 1.3 });
+      // Forearm: Elbow (side*0.065, -0.145, 0.245) -> Wrist (side*0.088, -0.202, 0.492)
+      bArm.cylinder(
+        { x: side * 0.077, y: -0.174, z: 0.368 },
+        0.035,
+        0.262,
+        spec.skinHex,
+        { x: 1.34, z: -side * 0.09 },
+      );
+      // Shaped Hand + Curled Knuckles + Thumb wrapped around handlebar grip (side*0.090, -0.210, 0.525)!
+      bArm.box(
+        { x: side * 0.090, y: -0.198, z: 0.518 },
+        { x: 0.052, y: 0.028, z: 0.058 },
+        spec.skinHex,
+        { x: 0.22 },
+      );
+      bArm.box(
+        { x: side * 0.090, y: -0.214, z: 0.542 },
+        { x: 0.050, y: 0.032, z: 0.024 },
+        spec.skinHex,
+      );
+      bArm.box(
+        { x: side * 0.066, y: -0.216, z: 0.516 },
+        { x: 0.022, y: 0.022, z: 0.036 },
+        spec.skinHex,
+        { y: side * 0.35 },
+      );
+
+      const armMesh = bArm.build({ cast: false, receive: false }, true);
+      if (armMesh) armGroup.add(armMesh);
+      this.puller.add(armGroup);
+    }
+
+    // ---- 4. Articulated Legs + Visible Sandals/Shoes ----
+    for (const side of [1, -1] as const) {
+      const legGroup = new THREE.Group();
+      legGroup.name = side === 1 ? 'leftLeg' : 'rightLeg';
+      legGroup.position.set(side * 0.105, 0.72, 0.05);
+
+      const bLeg = new Bucket(`rickshaw.puller.leg.${side > 0 ? 'L' : 'R'}`, mat);
+      const calfCol = spec.outfitStyle === 'vest_lungi' || spec.outfitStyle === 'kurta_gamcha' ? spec.skinHex : spec.bottomHex;
+      bLeg.cylinder({ x: 0, y: 0.11, z: -0.02 }, 0.054, 0.22, spec.bottomHex, { x: -0.12 });
+      bLeg.cylinder({ x: 0, y: -0.09, z: 0.01 }, 0.042, 0.23, calfCol);
+      // Visible foot + sandal/shoe resting on pedal/footboard
+      bLeg.box({ x: 0, y: -0.215, z: 0.048 }, { x: 0.068, y: 0.036, z: 0.135 }, '#231f20');
+      bLeg.box({ x: 0, y: -0.195, z: 0.035 }, { x: 0.060, y: 0.024, z: 0.095 }, spec.skinHex);
+
+      const legMesh = bLeg.build({ cast: false, receive: false }, true);
+      if (legMesh) legGroup.add(legMesh);
+      this.puller.add(legGroup);
+    }
   }
 
   /** Hide rider torso/head only during cockpit over-handlebar camera so view is unobstructed. */
@@ -569,6 +874,41 @@ export class RickshawRig {
         rl.position.y = 0.72 - s * 0.075;
         ll.rotation.x = Math.cos(opts.pedalPhase) * 0.24;
         rl.rotation.x = -Math.cos(opts.pedalPhase) * 0.24;
+      }
+    }
+
+    const la = this.puller.getObjectByName('leftArm');
+    const ra = this.puller.getObjectByName('rightArm');
+    const hd = this.puller.getObjectByName('pullerHead');
+    if (la && ra && hd) {
+      if (this.poseMode === 'victory') {
+        // Celebratory winner snapshot pose: right fist raised high, left hand steady on handlebar!
+        la.position.set(0.185, 1.38, 0.08);
+        la.rotation.set(0, 0, 0);
+        ra.position.set(-0.185, 1.40, 0.08);
+        ra.rotation.set(-1.58 + Math.sin(this.poseTime * 3.2) * 0.10, -0.18, -0.24);
+        hd.rotation.set(-0.08, 0.32 + Math.sin(this.poseTime * 1.8) * 0.08, 0);
+      } else if (this.poseMode === 'intro') {
+        // Rival intro taunt pose: confident head turn & subtle shoulder swagger
+        const steer = clampVal(opts.steerAngle, -0.55, 0.55);
+        la.position.set(0.185, 1.38, 0.08 + 0.24 * Math.sin(steer));
+        ra.position.set(-0.185, 1.38, 0.08 - 0.24 * Math.sin(steer));
+        la.rotation.set(0, -steer * 0.36, 0);
+        ra.rotation.set(Math.sin(this.poseTime * 2.6) * 0.06, -steer * 0.36, 0);
+        hd.rotation.set(Math.sin(this.poseTime * 2.2) * 0.05, -0.22 + Math.sin(this.poseTime * 1.1) * 0.14, 0);
+      } else {
+        // Riding pose: hands track the exact rotating handlebar grips (`steering.rotation.y = -steerAngle`)!
+        const steer = clampVal(opts.steerAngle, -0.68, 0.68);
+        const sinS = Math.sin(steer);
+        la.position.set(0.185 - 0.05 * sinS, 1.38, 0.08 + 0.25 * sinS);
+        ra.position.set(-0.185 - 0.05 * sinS, 1.38, 0.08 - 0.25 * sinS);
+        la.rotation.set(-0.04 * sinS, -steer * 0.34, 0);
+        ra.rotation.set(0.04 * sinS, -steer * 0.34, 0);
+        hd.rotation.set(
+          clampVal(-opts.pitch * 0.35, -0.14, 0.14),
+          -steer * 0.45,
+          -opts.roll * 0.35,
+        );
       }
     }
 
@@ -692,6 +1032,10 @@ export class RickshawVisual {
 
   setCockpitVisibility(inCockpit: boolean): void {
     this.rig.setCockpitVisibility(inCockpit);
+  }
+
+  setCharacterPose(mode: DriverPoseMode, elapsed = 0): void {
+    this.rig.setCharacterPose(mode, elapsed);
   }
 
   setNightLighting(on: boolean, intensity = 1): void {

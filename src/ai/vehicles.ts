@@ -194,14 +194,19 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     halfWidth = 0.62;
     radius = 1.12;
     schemeHexes = ['#177245', '#12653c', '#1e7f4f', '#155d39'];
+    // Sculpted rear tub, sloped front apron, rounded front mudguard & windshield frame
     primary.box({ x: 0, y: 0.46, z: -0.18 }, { x: 1.24, y: 0.42, z: 1.72 }, '#ffffff');
-    primary.box({ x: 0, y: 0.48, z: 0.86 }, { x: 0.82, y: 0.40, z: 0.56 }, '#ffffff');
-    primary.box({ x: 0, y: 0.34, z: 1.02 }, { x: 0.30, y: 0.12, z: 0.34 }, '#ffffff');
+    primary.box({ x: 0, y: 0.50, z: 0.84 }, { x: 0.86, y: 0.44, z: 0.54 }, '#ffffff', { x: 0.08 });
+    primary.cylinder({ x: 0, y: 0.48, z: 0.96 }, 0.34, 0.38, '#ffffff', { z: Math.PI / 2 });
+    primary.box({ x: 0, y: 0.36, z: 1.02 }, { x: 0.32, y: 0.14, z: 0.38 }, '#ffffff');
     primary.box({ x: 0, y: 1.08, z: 0.78 }, { x: 1.06, y: 0.68, z: 0.05 }, '#ffffff', { x: -0.22 });
 
+    // Yellow-black Dhaka taxi-stripe, arched black tarpaulin roof & front chrome bumper
     detail.box({ x: 0, y: 0.69, z: -0.18 }, { x: 1.26, y: 0.06, z: 1.74 }, '#e6b832');
-    detail.box({ x: 0, y: 1.48, z: -0.10 }, { x: 1.24, y: 0.10, z: 1.84 }, '#1d221e');
-    detail.box({ x: 0, y: 1.54, z: -0.12 }, { x: 1.12, y: 0.06, z: 1.66 }, '#2a302b');
+    detail.box({ x: 0, y: 0.34, z: 1.14 }, { x: 0.92, y: 0.06, z: 0.08 }, '#cfd6de');
+    detail.box({ x: 0, y: 1.46, z: -0.10 }, { x: 1.24, y: 0.09, z: 1.84 }, '#1d221e');
+    detail.box({ x: 0, y: 1.53, z: -0.12 }, { x: 1.08, y: 0.08, z: 1.68 }, '#262c27');
+    detail.box({ x: 0, y: 1.58, z: -0.14 }, { x: 0.84, y: 0.05, z: 1.48 }, '#2f3630');
     detail.box({ x: 0, y: 1.09, z: 0.805 }, { x: 0.94, y: 0.54, z: 0.03 }, '#1e3a48', { x: -0.22 });
     detail.box({ x: 0.06, y: 1.04, z: 0.83 }, { x: 0.02, y: 0.42, z: 0.02 }, '#111111', { x: -0.22, z: 0.32 });
     for (const sx of [-0.61, 0.61]) {
@@ -215,8 +220,13 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
       }
       detail.box({ x: sx * 1.12, y: 1.12, z: 0.76 }, { x: 0.10, y: 0.08, z: 0.03 }, '#cfd6de');
     }
+    // Upholstered bench + visible CNG driver with head, hair & arms gripping handlebar!
     detail.box({ x: 0, y: 0.68, z: -0.58 }, { x: 1.08, y: 0.28, z: 0.45 }, '#542a1c');
-    detail.cylinder({ x: 0, y: 1.02, z: 0.25 }, 0.16, 0.46, '#2b4c72');
+    detail.box({ x: 0, y: 0.98, z: 0.24 }, { x: 0.34, y: 0.42, z: 0.22 }, '#2b4c72');
+    detail.cylinder({ x: 0, y: 1.26, z: 0.25 }, 0.095, 0.19, '#8d5b3c');
+    detail.cylinder({ x: 0, y: 1.34, z: 0.24 }, 0.098, 0.07, '#18181b');
+    detail.cylinder({ x: -0.15, y: 1.02, z: 0.42 }, 0.035, 0.34, '#8d5b3c', { x: -1.1 });
+    detail.cylinder({ x: 0.15, y: 1.02, z: 0.42 }, 0.035, 0.34, '#8d5b3c', { x: -1.1 });
     detail.cylinder({ x: 0, y: 0.86, z: -1.07 }, 0.22, 0.11, '#1a1c1f', { x: Math.PI / 2 });
     addHead(0, 0.64, 1.15, 0.16, 0.16, 0.04, '#fff6cf');
     for (const sx of [-0.34, 0.34]) {
@@ -245,26 +255,33 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     primary.box({ x: 0, y: 1.44, z: -0.96 }, { x: 0.96, y: 0.32, z: 0.06 }, '#ffffff', { x: 0.32 });
     primary.box({ x: 0, y: 1.66, z: -0.64 }, { x: 0.96, y: 0.10, z: 0.68 }, '#ffffff');
 
-    // Frame, footboard, carriage, gold trim, puller & seated passenger in detailGeo
+    // Frame, footboard, carriage, gold trim, full puller (head/hair/arms gripping handlebar/legs) & passenger!
     detail.cylinder({ x: 0, y: 0.38, z: -0.66 }, 0.02, 1.08, '#9aa3ad', { z: Math.PI / 2 });
     detail.cylinder({ x: 0, y: 0.66, z: 0.38 }, 0.022, 0.92, '#145a44', { x: 0.98 });
     detail.cylinder({ x: 0, y: 0.88, z: 0.36 }, 0.018, 0.84, '#145a44', { x: Math.PI / 2 });
     detail.cylinder({ x: 0, y: 0.94, z: 0.78 }, 0.02, 0.42, '#cfd6de', { x: -0.14 });
-    detail.cylinder({ x: 0, y: 1.15, z: 0.73 }, 0.014, 0.42, '#dce3ea', { z: Math.PI / 2 });
+    detail.cylinder({ x: 0, y: 1.15, z: 0.73 }, 0.014, 0.46, '#dce3ea', { z: Math.PI / 2 });
     detail.box({ x: 0, y: 0.53, z: -0.34 }, { x: 0.88, y: 0.04, z: 0.36 }, '#5e3c20');
     detail.box({ x: 0, y: 0.65, z: -0.76 }, { x: 0.90, y: 0.22, z: 0.54 }, '#145a44');
     detail.box({ x: 0, y: 0.78, z: -0.74 }, { x: 0.84, y: 0.11, z: 0.46 }, '#a61c2b');
     detail.box({ x: 0, y: 1.02, z: -0.98 }, { x: 0.88, y: 0.56, z: 0.06 }, '#f2b938');
     for (const side of [-1, 1]) {
       detail.box({ x: side * 0.52, y: 0.72, z: -0.66 }, { x: 0.12, y: 0.06, z: 0.72 }, '#145a44');
+      // Puller attached arms + hands reaching forward to handlebar grips!
+      detail.cylinder({ x: side * 0.19, y: 1.24, z: 0.36 }, 0.036, 0.56, '#8b5e3c', { x: -1.24, z: side * -0.06 });
+      detail.box({ x: side * 0.20, y: 1.15, z: 0.71 }, { x: 0.05, y: 0.05, z: 0.07 }, '#7a5032');
+      detail.cylinder({ x: side * 0.10, y: 0.82, z: 0.05 }, 0.055, 0.44, '#1f4e70', { x: 0.16 });
     }
     detail.box({ x: 0, y: 1.71, z: -0.64 }, { x: 0.98, y: 0.025, z: 0.12 }, '#f2b938');
     detail.box({ x: 0, y: 1.52, z: -0.26 }, { x: 0.96, y: 0.09, z: 0.03 }, '#f2b938');
-    detail.box({ x: 0, y: 1.22, z: 0.04 }, { x: 0.32, y: 0.40, z: 0.20 }, '#d98236', { x: 0.25 });
-    detail.cylinder({ x: 0, y: 1.49, z: 0.12 }, 0.09, 0.18, '#8b5e3c');
-    detail.cylinder({ x: 0, y: 0.92, z: 0.02 }, 0.15, 0.36, '#1f4e70');
-    detail.box({ x: 0.08, y: 1.12, z: -0.74 }, { x: 0.32, y: 0.38, z: 0.22 }, '#f0b429');
-    detail.cylinder({ x: 0.08, y: 1.38, z: -0.74 }, 0.085, 0.17, '#8b5e3c');
+    detail.box({ x: 0, y: 1.22, z: 0.06 }, { x: 0.33, y: 0.40, z: 0.20 }, '#d98236', { x: 0.25 });
+    detail.cylinder({ x: 0, y: 1.49, z: 0.14 }, 0.095, 0.19, '#8b5e3c');
+    detail.cylinder({ x: 0, y: 1.57, z: 0.13 }, 0.098, 0.07, '#18181b');
+    detail.cylinder({ x: 0, y: 1.54, z: 0.14 }, 0.102, 0.03, '#c92a2a'); // red gamcha headband!
+    // Seated passenger with hair & arms
+    detail.box({ x: 0.06, y: 1.10, z: -0.74 }, { x: 0.32, y: 0.38, z: 0.22 }, '#f0b429');
+    detail.cylinder({ x: 0.06, y: 1.38, z: -0.74 }, 0.09, 0.18, '#8b5e3c');
+    detail.cylinder({ x: 0.06, y: 1.46, z: -0.75 }, 0.093, 0.07, '#18181b');
     addHead(0, 0.90, 0.85, 0.08, 0.08, 0.03, '#ffe7a8');
     addBrake(-0.32, 0.60, -1.03, 0.06, 0.05, 0.025);
     addBrake(0.32, 0.60, -1.03, 0.06, 0.05, 0.025);
@@ -280,7 +297,7 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     radius = 1.18;
     schemeHexes = ['#0f7a8c', '#c92a3e', '#1d5fa7', '#d97b16'];
     primary.box({ x: 0, y: 0.48, z: -0.15 }, { x: 1.32, y: 0.38, z: 2.05 }, '#ffffff');
-    primary.box({ x: 0, y: 0.52, z: 0.98 }, { x: 0.88, y: 0.44, z: 0.52 }, '#ffffff');
+    primary.box({ x: 0, y: 0.54, z: 0.98 }, { x: 0.90, y: 0.46, z: 0.52 }, '#ffffff', { x: 0.10 });
     primary.box({ x: 0, y: 1.67, z: -0.05 }, { x: 1.26, y: 0.04, z: 2.18 }, '#ffffff');
     for (const sx of [-0.63, 0.63]) {
       primary.box({ x: sx, y: 0.86, z: -0.45 }, { x: 0.03, y: 0.24, z: 1.26 }, '#ffffff');
@@ -289,10 +306,17 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
       detail.cylinder({ x: sx, y: 1.15, z: -1.10 }, 0.018, 0.92, '#dce3ea');
     }
     detail.box({ x: 0, y: 1.62, z: -0.05 }, { x: 1.34, y: 0.08, z: 2.28 }, '#f4f1e6');
+    detail.box({ x: 0, y: 0.36, z: 1.25 }, { x: 1.02, y: 0.08, z: 0.08 }, '#cfd6de'); // chrome bullbar
     detail.box({ x: 0, y: 1.16, z: 0.94 }, { x: 1.06, y: 0.62, z: 0.04 }, '#204254', { x: -0.16 });
     detail.box({ x: 0, y: 0.32, z: -0.35 }, { x: 0.96, y: 0.16, z: 0.95 }, '#1d242b');
     detail.box({ x: 0, y: 0.72, z: -0.82 }, { x: 1.16, y: 0.18, z: 0.42 }, '#7a2323');
     detail.box({ x: 0, y: 0.72, z: -0.12 }, { x: 1.16, y: 0.18, z: 0.38 }, '#7a2323');
+    // Visible EasyBike driver with head, cap & arms
+    detail.box({ x: 0, y: 1.02, z: 0.46 }, { x: 0.34, y: 0.42, z: 0.22 }, '#1e3a8a');
+    detail.cylinder({ x: 0, y: 1.31, z: 0.47 }, 0.095, 0.18, '#8d5b3c');
+    detail.cylinder({ x: 0, y: 1.39, z: 0.47 }, 0.098, 0.07, '#f8fafc');
+    detail.cylinder({ x: -0.16, y: 1.06, z: 0.65 }, 0.035, 0.34, '#8d5b3c', { x: -1.15 });
+    detail.cylinder({ x: 0.16, y: 1.06, z: 0.65 }, 0.035, 0.34, '#8d5b3c', { x: -1.15 });
     addHead(0, 0.74, 1.25, 0.16, 0.14, 0.04, '#e8fbff');
     addBrake(-0.46, 0.56, -1.18, 0.16, 0.08, 0.03);
     addBrake(0.46, 0.56, -1.18, 0.16, 0.08, 0.03);
@@ -307,25 +331,43 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     halfWidth = 1.19;
     radius = 2.65;
     schemeHexes = ['#b7282e', '#165a8a', '#1e6f50', '#8a2b52'];
+    // Lower skirt body + sloped front brow + rounded upper roof cap
     primary.box({ x: 0, y: 0.92, z: 0 }, { x: 2.38, y: 0.96, z: 7.42 }, '#ffffff');
-    primary.box({ x: 0, y: 2.78, z: 0 }, { x: 2.22, y: 0.18, z: 7.12 }, '#ffffff');
+    primary.box({ x: 0, y: 2.78, z: -0.04 }, { x: 2.24, y: 0.20, z: 7.18 }, '#ffffff');
+    primary.box({ x: 0, y: 2.88, z: 0 }, { x: 1.98, y: 0.10, z: 6.92 }, '#ffffff');
 
+    // Gold waist belt, cream window band, roof AC pods, dark wheel wells & grille slats
     detail.box({ x: 0, y: 1.38, z: 0 }, { x: 2.41, y: 0.14, z: 7.46 }, '#f2a922');
     detail.box({ x: 0, y: 2.08, z: 0 }, { x: 2.36, y: 1.26, z: 7.36 }, '#f4efe0');
-    detail.box({ x: 0, y: 2.94, z: 0.4 }, { x: 1.56, y: 0.20, z: 2.6 }, '#cfd6de');
-    detail.box({ x: 0, y: 0.46, z: 3.74 }, { x: 2.40, y: 0.24, z: 0.14 }, '#282d33');
-    detail.box({ x: 0, y: 0.46, z: -3.74 }, { x: 2.40, y: 0.24, z: 0.14 }, '#282d33');
-    detail.box({ x: 0, y: 2.02, z: 3.69 }, { x: 2.14, y: 0.96, z: 0.05 }, '#193240');
-    detail.box({ x: 0, y: 2.62, z: 3.70 }, { x: 1.68, y: 0.22, z: 0.05 }, '#102419');
+    detail.box({ x: 0, y: 2.98, z: 0.4 }, { x: 1.56, y: 0.22, z: 2.6 }, '#cfd6de');
+    detail.box({ x: 0, y: 2.96, z: -1.8 }, { x: 1.38, y: 0.16, z: 1.5 }, '#bfc8d2');
+    detail.box({ x: 0, y: 0.46, z: 3.74 }, { x: 2.40, y: 0.26, z: 0.16 }, '#22262c');
+    detail.box({ x: 0, y: 0.46, z: -3.74 }, { x: 2.40, y: 0.26, z: 0.16 }, '#22262c');
+    detail.box({ x: 0, y: 0.44, z: 3.83 }, { x: 0.62, y: 0.14, z: 0.03 }, '#f8fafc'); // Dhaka Metro plate
+    detail.box({ x: 0, y: 2.02, z: 3.69 }, { x: 2.16, y: 0.96, z: 0.05 }, '#193240');
+    detail.box({ x: 0, y: 2.02, z: 3.71 }, { x: 0.04, y: 0.94, z: 0.04 }, '#111820'); // split windshield mullion
+    detail.box({ x: 0, y: 2.62, z: 3.70 }, { x: 1.72, y: 0.24, z: 0.05 }, '#102419');
     detail.box({ x: 0, y: 2.06, z: -3.69 }, { x: 1.98, y: 0.78, z: 0.05 }, '#193240');
+    // Dark wheel-well cutouts & visible RHD bus driver behind windshield
+    for (const wz of [2.35, -2.25]) {
+      for (const sx of [-1.18, 1.18]) {
+        detail.box({ x: sx, y: 0.56, z: wz }, { x: 0.06, y: 0.64, z: 1.06 }, '#16191d');
+      }
+    }
+    detail.box({ x: -0.62, y: 1.88, z: 3.12 }, { x: 0.40, y: 0.48, z: 0.28 }, '#e2e8f0');
+    detail.cylinder({ x: -0.62, y: 2.22, z: 3.12 }, 0.11, 0.20, '#8d5b3c');
     for (let wz = -2.8; wz <= 2.6; wz += 1.05) {
       detail.box({ x: -1.19, y: 2.06, z: wz }, { x: 0.04, y: 0.74, z: 0.84 }, '#1a3544');
+      detail.box({ x: -1.20, y: 2.30, z: wz }, { x: 0.045, y: 0.04, z: 0.84 }, '#cfd6de'); // upper vent bar
       if (wz < 1.6) {
         detail.box({ x: 1.19, y: 2.06, z: wz }, { x: 0.04, y: 0.74, z: 0.84 }, '#1a3544');
+        detail.box({ x: 1.20, y: 2.30, z: wz }, { x: 0.045, y: 0.04, z: 0.84 }, '#cfd6de');
       }
     }
     detail.box({ x: 1.16, y: 1.48, z: 2.35 }, { x: 0.08, y: 1.75, z: 0.86 }, '#111920');
-    detail.box({ x: 0, y: 0.92, z: 3.73 }, { x: 1.36, y: 0.42, z: 0.04 }, '#22282e');
+    detail.box({ x: 0, y: 0.92, z: 3.73 }, { x: 1.38, y: 0.42, z: 0.04 }, '#22282e');
+    detail.box({ x: 0, y: 0.98, z: 3.75 }, { x: 1.24, y: 0.06, z: 0.04 }, '#cfd6de');
+    detail.box({ x: 0, y: 0.86, z: 3.75 }, { x: 1.24, y: 0.06, z: 0.04 }, '#cfd6de');
     addHead(0, 2.62, 3.73, 1.48, 0.12, 0.03, '#ffd65a');
     for (const sx of [-1, 1]) {
       addHead(sx * 0.88, 0.88, 3.73, 0.34, 0.20, 0.04, '#fff3c4');
@@ -348,10 +390,18 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     primary.box({ x: 0, y: 1.38, z: 1.98 }, { x: 2.14, y: 1.48, z: 1.86 }, '#ffffff');
 
     detail.box({ x: 0, y: 0.56, z: 0 }, { x: 1.86, y: 0.20, z: 6.1 }, '#262b30');
-    detail.box({ x: 0, y: 2.36, z: 1.88 }, { x: 2.18, y: 0.52, z: 1.42 }, '#f2b938');
-    detail.box({ x: 0, y: 2.42, z: 2.60 }, { x: 1.86, y: 0.34, z: 0.06 }, '#b31329');
+    // Ornate Bangladeshi painted truck `Taj` crown + sun visor + side windows + chrome grille
+    detail.box({ x: 0, y: 2.38, z: 1.92 }, { x: 2.20, y: 0.56, z: 1.48 }, '#f2b938', { x: -0.08 });
+    detail.box({ x: 0, y: 2.70, z: 2.24 }, { x: 1.54, y: 0.22, z: 0.48 }, '#16a34a');
+    detail.box({ x: 0, y: 2.42, z: 2.66 }, { x: 1.92, y: 0.36, z: 0.06 }, '#b31329');
+    detail.box({ x: 0, y: 1.98, z: 2.96 }, { x: 2.08, y: 0.12, z: 0.24 }, '#d97706', { x: 0.22 }); // brow visor
     detail.box({ x: 0, y: 1.62, z: 2.92 }, { x: 1.86, y: 0.64, z: 0.04 }, '#1d3746');
+    for (const sx of [-1.08, 1.08]) {
+      detail.box({ x: sx, y: 1.62, z: 2.12 }, { x: 0.04, y: 0.58, z: 0.92 }, '#1d3746');
+      detail.box({ x: sx * 1.08, y: 1.68, z: 2.72 }, { x: 0.12, y: 0.28, z: 0.06 }, '#262b30');
+    }
     detail.box({ x: 0, y: 0.94, z: 2.93 }, { x: 1.48, y: 0.46, z: 0.05 }, '#cfd6de');
+    detail.box({ x: 0, y: 0.52, z: 2.96 }, { x: 2.16, y: 0.24, z: 0.14 }, '#dce3ea');
     detail.box({ x: 0, y: 1.48, z: -1.08 }, { x: 2.22, y: 1.68, z: 4.02 }, '#1f5f4b');
     for (let s = 0; s < 4; s++) {
       detail.box({ x: 0, y: 0.88 + s * 0.38, z: -1.08 }, { x: 2.26, y: 0.08, z: 4.06 }, '#f2c14e');
@@ -374,12 +424,25 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     halfWidth = 0.88;
     radius = 1.62;
     schemeHexes = ['#f2f4f7', '#1d6fa5', '#e8a829', '#2b8a62'];
+    // Sculpted pickup nose + slanted cab roof
     primary.box({ x: 0, y: 0.62, z: 0.98 }, { x: 1.68, y: 0.62, z: 1.72 }, '#ffffff');
-    primary.box({ x: 0, y: 1.24, z: 0.78 }, { x: 1.60, y: 0.68, z: 1.18 }, '#ffffff');
+    primary.box({ x: 0, y: 1.24, z: 0.76 }, { x: 1.58, y: 0.68, z: 1.18 }, '#ffffff');
 
-    detail.box({ x: 0, y: 1.26, z: 1.38 }, { x: 1.44, y: 0.52, z: 0.04 }, '#1d3746', { x: -0.26 });
+    detail.box({ x: 0, y: 0.42, z: 1.86 }, { x: 1.72, y: 0.22, z: 0.12 }, '#262c34');
+    detail.box({ x: 0, y: 0.66, z: 1.85 }, { x: 0.92, y: 0.22, z: 0.04 }, '#222830');
+    detail.box({ x: 0, y: 1.26, z: 1.36 }, { x: 1.44, y: 0.52, z: 0.04 }, '#1d3746', { x: -0.26 });
+    for (const sx of [-0.80, 0.80]) {
+      detail.box({ x: sx, y: 1.24, z: 0.78 }, { x: 0.04, y: 0.48, z: 0.82 }, '#1d3746');
+      detail.box({ x: sx * 1.08, y: 1.18, z: 1.12 }, { x: 0.11, y: 0.16, z: 0.05 }, '#262c34');
+    }
+    // Ribbed covered parcel box + rear barn doors & latch rods
     detail.box({ x: 0, y: 1.18, z: -0.78 }, { x: 1.76, y: 1.56, z: 2.48 }, '#e9edf2');
+    for (const rz of [-1.55, -0.80, -0.05]) {
+      detail.box({ x: 0, y: 1.18, z: rz }, { x: 1.79, y: 1.58, z: 0.05 }, '#d0d7e0');
+    }
     detail.box({ x: 0, y: 1.18, z: -2.03 }, { x: 1.62, y: 1.42, z: 0.03 }, '#cfd6de');
+    detail.box({ x: -0.22, y: 1.18, z: -2.05 }, { x: 0.03, y: 1.32, z: 0.03 }, '#64748b');
+    detail.box({ x: 0.22, y: 1.18, z: -2.05 }, { x: 0.03, y: 1.32, z: 0.03 }, '#64748b');
     for (const sx of [-0.62, 0.62]) {
       addHead(sx, 0.66, 1.85, 0.24, 0.14, 0.04, '#fff3c4');
       addBrake(sx, 0.62, -2.04, 0.22, 0.12, 0.04);
@@ -397,16 +460,24 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     halfWidth = 0.25;
     radius = 0.72;
     schemeHexes = ['#d62828', '#1d3557', '#2a9d8f', '#f77f00'];
-    primary.box({ x: 0, y: 0.74, z: 0.18 }, { x: 0.28, y: 0.22, z: 0.48 }, '#ffffff', { x: -0.12 });
-    primary.cylinder({ x: 0, y: 1.40, z: 0.02 }, 0.12, 0.22, '#ffffff');
+    // Sculpted 150cc tank, headlight bikini cowl & matching helmet
+    primary.box({ x: 0, y: 0.76, z: 0.18 }, { x: 0.28, y: 0.22, z: 0.48 }, '#ffffff', { x: -0.14 });
+    primary.box({ x: 0, y: 0.84, z: 0.56 }, { x: 0.22, y: 0.20, z: 0.18 }, '#ffffff', { x: -0.22 });
+    primary.cylinder({ x: 0, y: 1.42, z: 0.04 }, 0.125, 0.23, '#ffffff');
 
-    detail.box({ x: 0, y: 0.48, z: 0 }, { x: 0.14, y: 0.26, z: 0.86 }, '#2a2f35');
+    detail.box({ x: 0, y: 0.48, z: 0.04 }, { x: 0.16, y: 0.26, z: 0.78 }, '#2a2f35');
     detail.cylinder({ x: 0.11, y: 0.34, z: -0.32 }, 0.038, 0.92, '#cfd6de', { x: Math.PI / 2 - 0.08 });
     detail.box({ x: 0, y: 0.70, z: -0.34 }, { x: 0.24, y: 0.12, z: 0.62 }, '#1e2024');
     detail.cylinder({ x: 0, y: 0.62, z: 0.56 }, 0.024, 0.66, '#dce3ea', { x: -0.34 });
-    detail.cylinder({ x: 0, y: 0.95, z: 0.44 }, 0.015, 0.58, '#dce3ea', { z: Math.PI / 2 });
-    detail.box({ x: 0, y: 1.08, z: -0.10 }, { x: 0.36, y: 0.46, z: 0.24 }, '#264653', { x: 0.32 });
-    detail.box({ x: 0, y: 1.40, z: 0.12 }, { x: 0.18, y: 0.09, z: 0.04 }, '#142430');
+    detail.cylinder({ x: 0, y: 0.95, z: 0.44 }, 0.016, 0.60, '#dce3ea', { z: Math.PI / 2 });
+    // Rider jacket, bent legs on footpegs, and attached arms + hands gripping handlebars!
+    detail.box({ x: 0, y: 1.08, z: -0.10 }, { x: 0.36, y: 0.44, z: 0.22 }, '#264653', { x: 0.30 });
+    for (const sx of [-1, 1]) {
+      detail.cylinder({ x: sx * 0.20, y: 1.06, z: 0.18 }, 0.036, 0.48, '#264653', { x: -1.18, z: sx * -0.10 });
+      detail.box({ x: sx * 0.23, y: 0.95, z: 0.43 }, { x: 0.05, y: 0.05, z: 0.06 }, '#1c1917');
+      detail.cylinder({ x: sx * 0.13, y: 0.66, z: -0.04 }, 0.052, 0.44, '#1e293b', { x: 0.42 });
+    }
+    detail.box({ x: 0, y: 1.41, z: 0.15 }, { x: 0.19, y: 0.09, z: 0.04 }, '#142430');
     addHead(0, 0.80, 0.64, 0.13, 0.13, 0.04, '#fff6d1');
     addBrake(0, 0.72, -0.72, 0.10, 0.06, 0.03);
     wheelMounts.push(
@@ -414,25 +485,44 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
       { x: 0, y: wheelRadius, z: -0.64, width: 0.09 },
     );
   } else {
-    // Dhaka Private Sedan (Toyota Premio / Corolla Allion street staple!)
+    // Dhaka Private Sedan (Toyota Premio / Corolla Allion street staple — sharper greenhouse & trim!)
     wheelRadius = 0.32;
     halfLength = 2.04;
     halfWidth = 0.86;
     radius = 1.58;
     schemeHexes = ['#e8ecef', '#25323f', '#8a2020', '#1e4e79', '#d6cfc2'];
-    primary.box({ x: 0, y: 0.54, z: 0 }, { x: 1.72, y: 0.48, z: 4.02 }, '#ffffff');
+    // Sculpted waist body + gently sloped hood & trunk deck + greenhouse roof cap
+    primary.box({ x: 0, y: 0.54, z: 0 }, { x: 1.72, y: 0.44, z: 3.98 }, '#ffffff');
+    primary.box({ x: 0, y: 0.76, z: 1.36 }, { x: 1.64, y: 0.12, z: 1.16 }, '#ffffff', { x: 0.09 });
+    primary.box({ x: 0, y: 0.78, z: -1.46 }, { x: 1.62, y: 0.12, z: 0.96 }, '#ffffff', { x: -0.06 });
     primary.box({ x: 0, y: 0.38, z: 1.98 }, { x: 1.74, y: 0.24, z: 0.22 }, '#ffffff');
     primary.box({ x: 0, y: 0.38, z: -1.98 }, { x: 1.74, y: 0.24, z: 0.22 }, '#ffffff');
-    primary.box({ x: 0, y: 1.06, z: -0.14 }, { x: 1.48, y: 0.56, z: 2.02 }, '#ffffff');
+    primary.box({ x: 0, y: 1.29, z: -0.14 }, { x: 1.38, y: 0.08, z: 1.68 }, '#ffffff');
     for (const sx of [-1, 1]) {
+      // Slanted A-pillars & C-pillars + wing mirrors
+      primary.box({ x: sx * 0.69, y: 1.04, z: 0.82 }, { x: 0.07, y: 0.52, z: 0.09 }, '#ffffff', { x: -0.58 });
+      primary.box({ x: sx * 0.69, y: 1.04, z: -1.08 }, { x: 0.09, y: 0.50, z: 0.14 }, '#ffffff', { x: 0.54 });
       primary.box({ x: sx * 0.90, y: 0.92, z: 0.62 }, { x: 0.14, y: 0.09, z: 0.12 }, '#ffffff');
       addHead(sx * 0.62, 0.60, 2.02, 0.30, 0.14, 0.04, '#fff6d6');
       addBrake(sx * 0.62, 0.64, -2.02, 0.34, 0.14, 0.04);
     }
-    detail.box({ x: 0, y: 1.04, z: 0.92 }, { x: 1.38, y: 0.52, z: 0.05 }, '#1c3544', { x: -0.62 });
-    detail.box({ x: 0, y: 1.04, z: -1.18 }, { x: 1.34, y: 0.48, z: 0.05 }, '#1c3544', { x: 0.58 });
-    detail.box({ x: 0, y: 1.06, z: -0.14 }, { x: 1.50, y: 0.42, z: 1.58 }, '#1c3544');
-    detail.box({ x: 0, y: 0.54, z: 2.02 }, { x: 0.88, y: 0.20, z: 0.04 }, '#cfd6de');
+    // Tinted glass cabin, B-pillars, chrome grille, lower air dam, plates & dark wheel wells!
+    detail.box({ x: 0, y: 1.03, z: -0.14 }, { x: 1.44, y: 0.46, z: 1.72 }, '#1b3240');
+    detail.box({ x: 0, y: 1.04, z: 0.88 }, { x: 1.38, y: 0.52, z: 0.05 }, '#1c3544', { x: -0.60 });
+    detail.box({ x: 0, y: 1.04, z: -1.14 }, { x: 1.34, y: 0.48, z: 0.05 }, '#1c3544', { x: 0.56 });
+    detail.box({ x: 0, y: 0.56, z: 2.02 }, { x: 0.88, y: 0.20, z: 0.04 }, '#cfd6de');
+    detail.box({ x: 0, y: 0.33, z: 2.03 }, { x: 1.18, y: 0.10, z: 0.05 }, '#1e2228');
+    detail.box({ x: 0, y: 0.38, z: 2.09 }, { x: 0.44, y: 0.11, z: 0.02 }, '#f8fafc');
+    detail.box({ x: 0, y: 0.62, z: -2.01 }, { x: 0.44, y: 0.11, z: 0.02 }, '#f8fafc');
+    // Visible RHD driver silhouette inside cabin
+    detail.cylinder({ x: -0.34, y: 1.10, z: 0.08 }, 0.095, 0.18, '#6b442a');
+    for (const sx of [-1, 1]) {
+      detail.box({ x: sx * 0.73, y: 1.04, z: -0.10 }, { x: 0.03, y: 0.46, z: 0.10 }, '#11161c'); // B-pillar
+      detail.box({ x: sx * 0.87, y: 0.74, z: 0.15 }, { x: 0.02, y: 0.04, z: 0.14 }, '#cfd6de'); // door handle
+      detail.box({ x: sx * 0.87, y: 0.74, z: -0.58 }, { x: 0.02, y: 0.04, z: 0.14 }, '#cfd6de');
+      detail.box({ x: sx * 0.84, y: 0.42, z: 1.24 }, { x: 0.08, y: 0.42, z: 0.74 }, '#15181c');
+      detail.box({ x: sx * 0.84, y: 0.42, z: -1.24 }, { x: 0.08, y: 0.42, z: 0.74 }, '#15181c');
+    }
     wheelMounts.push(
       { x: 0.78, y: wheelRadius, z: 1.24, width: 0.21 },
       { x: -0.78, y: wheelRadius, z: 1.24, width: 0.21 },

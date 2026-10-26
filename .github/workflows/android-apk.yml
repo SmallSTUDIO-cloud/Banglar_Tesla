@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publish APK to GitHub Release v0.5.0'
+        description: 'Publish APK to GitHub Release v0.5.1'
         required: false
         default: 'true'
 
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build Debug Android APK (v0.5.0)
+    name: Build Debug Android APK (v0.5.1)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -67,8 +67,8 @@ jobs:
             --java "$WORK_DIR/gen" \
             --min-sdk-version 24 \
             --target-sdk-version 34 \
-            --version-code 5 \
-            --version-name 0.5.0 \
+            --version-code 6 \
+            --version-name 0.5.1 \
             -0 .ttf -0 .png -0 .jpg -0 .webp -0 .mp3 -0 .ogg -0 .wav \
             --auto-add-overlay \
             "$WORK_DIR/res.zip"
@@ -89,7 +89,7 @@ jobs:
             -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-          OUT_APK="artifacts/banglar-tesla-v0.5.0-debug.apk"
+          OUT_APK="artifacts/banglar-tesla-v0.5.1-debug.apk"
           STABLE_APK="artifacts/Banglar-Tesla.apk"
           "$BUILD_TOOLS/apksigner" sign \
             --ks "$KEYSTORE" \
@@ -110,40 +110,43 @@ jobs:
       - name: Upload APK build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: banglar-tesla-v0.5.0-android-apk
+          name: banglar-tesla-v0.5.1-android-apk
           path: |
-            artifacts/banglar-tesla-v0.5.0-debug.apk
+            artifacts/banglar-tesla-v0.5.1-debug.apk
             artifacts/Banglar-Tesla.apk
           if-no-files-found: error
 
-      - name: Publish APK assets to GitHub Release v0.5.0
-        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.5.0]')
+      - name: Publish APK assets to GitHub Release v0.5.1
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.5.1]')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v0.5.0"
-          APK="artifacts/banglar-tesla-v0.5.0-debug.apk"
+          TAG="v0.5.1"
+          APK="artifacts/banglar-tesla-v0.5.1-debug.apk"
           STABLE="artifacts/Banglar-Tesla.apk"
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
           SIZE="$(stat -c%s "$APK")"
           NOTES=$(cat <<EOF
-          ## Banglar Tesla — বাংলার টেসলা (\`v0.5.0\`)
+          ## Banglar Tesla — বাংলার টেসলা (\`v0.5.1\`)
 
-          Major arcade street-progression, physics & OBB hitbox overhaul, hold-to-boost \`টার্বো\`, **Rickshaw Blacklist (#10 → #1)**, **5-Heat Police Pursuit & Roadblocks**, **Dynamic In-Game Clock**, and authentic Bengali speech upgrade for **Banglar Tesla**, built Android-first and verified against the \`v0.4.0\` performance baseline on **Samsung Galaxy M21** (\`Exynos 9611 / Mali-G72 MP3\`) budgets.
+          The **Master Upgrade v4** release: purpose-built Mohammadpur **Race-Map design**, full **4-Rickshaw Race mode** (you + 3 distinct AI rivals), **Printed-Photo Winner Snapshot**, visible rival-driver characters, per-rival skippable intro cinematics, NPC & world graphics quality passes, and a **Web/PC High** quality profile — on top of every \`v0.5.0\` system (physics, \`টার্বো\`, Blacklist #10→#1, 5-Heat Police Pursuit, Dynamic Clock, authentic Bengali speech).
 
-          ### What's New in \`v0.5.0\`
-          - **Calibrated Rickshaw Physics & Tight OBB Hitboxes:** Overhauled 60 Hz cycle/electric rickshaw handling (~20 km/h classic cruise, ~39 km/h \`টান\` boost, speed-sensitive steering, separate longitudinal/lateral grip, progressive braking, weight transfer, slope grounding) and exact 2-circle capsule vs rotated OBB colliders for buildings, props, traffic, rivals, police SUVs, and roadblocks — zero phantom air hits and zero \`0 km/h\` stuck soft-locks.
-          - **Hold-to-Boost \`টার্বো\` + Exaggerated Arcade VFX:** Distinct hold-only \`টার্বো\` boost (~60 km/h peak, instant stop on release/pause/menu/empty, auto-recharge + near-miss/clean-driving/checkpoint/escape rewards), pooled twin rear exhaust flames, camera acceleration lag & FOV surge, and fast-recovery tiered crash bursts (\`minor\` / \`medium\` / \`major\`).
-          - **Rickshaw Blacklist (#10 → #1), Skippable Intro Cinematic & 7 Event Types:** Original Mohammadpur rival roster (#10 → #1), once-only skippable 18s first-entry intro cinematic, 7 street event types (street race, sprint, circuit, time trial, checkpoint rush, traffic weave, pursuit escape), REP + টাকা progression, \`turboCap\`/\`turboRecharge\` upgrades, and \`v0.4.0 → v0.5.0\` save migration.
-          - **5-Heat Police Pursuit & Smashable Roadblocks:** Serious 5-Heat police chase FSM (pursuit, line-of-sight break, cooldown, evade, bust), narrow-\`gali\` rickshaw maneuverability advantage, and pooled road-graph-aware roadblocks with guaranteed rickshaw gaps and smashable sawhorse barricades.
-          - **Dynamic In-Game Time System & Authentic Bangla Speech:** Accelerated 24-hour HUD clock (\`07:30 AM\` / \`06:45 PM\` in both Bangla & English modes, synced with \`morning\`/\`noon\`/\`golden\`/\`blue\`/\`night\`, paused in menus/modals, persisted in saves, zero per-frame DOM churn) and strict Bengali voice verification (\`bn-BD\`/\`bn-IN\`/\`bn\`) with intelligible offline phonetic WAV fallback (26 bundled \`.wav\` assets, \`3.08 MB\` total).
+          ### What's New in \`v0.5.1\`
+          - **Purpose-Built Race-Map Courses:** 17 validated Mohammadpur race blueprints (sprints, 2-lap circuits incl. Tajmahal–Shia Mosque & Asad Gate Grand Circuit) authored over the real OSM road graph — clear start/finish gantry, readable racing lines, wide overtaking/Turbo straights, tight \`gali\` corners, Box-Culvert/Overpass elevation crests (Beribadh, Ring Rd Shia Mosque overpass, Babar Rd canal bridge, Satmasjid culvert), and documented high-risk shortcuts (Kacha Bazar back-alley, Krishi Market diagonal, Aziz Moholla, Lalmatia cut, Chanmia bypass, Johuri chicane) that measurably save distance. Every course auto-validates grid clearance, carriageway bounds, gate reachability and AI waypoints.
+          - **4-Rickshaw Race Mode:** Exactly 3 distinct AI rivals + you on a collision-free staggered 2x2 grid under a Dhaka bamboo festoon arch — data-driven rivals with complementary tendencies (\`clean_line\` / \`aggressive_overtaker\` / \`shortcut_seeker\`), traffic- & roadblock-aware overtaking without teleporting, checkpoint/lap-based \`1/4\`-\`4/4\` standings HUD, safe course respawning, single-fire rewards, and clean pause/retry/quit handling.
+          - **Printed-Photo Winner Snapshot (Victory Only):** Original scrapbook-style photo frame (paper border, tape marks, Dhaka stamp) around the live 3D winning rickshaw with the driver's celebratory raised-fist pose, finish time, top speed, টাকা/REP rewards and full 4-racer final standings — with Continue / Race Again / Free Roam actions. Defeats use a separate non-photo results screen.
+          - **Visible Rival Characters & Per-Rival Cinematics:** All 10 Blacklist rivals now ride with recognizable drivers (expressive faces, eyes/brows/mouth, 10 distinct hair/headwear silhouettes, eyewear, 6 outfit styles, articulated arms/hands gripping the handlebar, animated pedal legs), crisp inline-SVG profile portraits in the Blacklist roster, and a skippable 6.5s per-rival character intro with voiced Bangla/English taunt.
+          - **NPC & World Graphics Quality Pass:** Pedestrians rebuilt with visible faces, hair/topi/orna silhouettes, swinging arms with attached hands, legs & sandals (9 shared instanced draw calls, LOD-throttled AI); traffic fleet resculpted (bus/truck/van/sedan/CNG/easybike/motorbike silhouettes, cabin drivers, plates, wheel wells); building facades gained floor-slab stringcourses, side windows with sunshades, shop pilasters, balcony sliding doors/planters, foundation plinths & gate pillars; sparse non-collidable instanced street litter (136 scraps, 1 draw call, wind-reactive) with zero collision impact.
+          - **Quality Profiles:** \`Performance\` / \`Balanced\` / \`High\` / \`Web/PC High\` presets (shadows, crowd, traffic, draw distance, texture quality) without ever forcing Low or altering physics/collisions.
+
+          All \`v0.5.0\` systems are included: calibrated ~20 km/h classic / ~39 km/h \`টান\` / ~60 km/h hold-to-boost \`টার্বো\` physics, tight OBB hitboxes, 5-Heat Police Pursuit & smashable roadblocks, Dynamic In-Game Clock (\`07:30 AM\` / \`06:45 PM\`), authentic Bengali speech (\`bn-BD\`/\`bn-IN\`/\`bn\` + 26 offline WAVs), REP + টাকা economy, and \`v0.4.0\`+ save migration.
 
           ### APK Details
           - **Direct Download (Stable Latest URL):** \`Banglar-Tesla.apk\` (\`$SIZE\` bytes)
-          - **Versioned Asset:** \`banglar-tesla-v0.5.0-debug.apk\` (\`$SIZE\` bytes)
+          - **Versioned Asset:** \`banglar-tesla-v0.5.1-debug.apk\` (\`$SIZE\` bytes)
           - **App Name:** \`Banglar Tesla\`
           - **Application ID:** \`com.shostalab.banglartesla\`
-          - **Version:** \`0.5.0\` (\`versionCode: 5\`)
+          - **Version:** \`0.5.1\` (\`versionCode: 6\`)
           - **Android Compatibility:** Android 7.0+ (\`minSdkVersion 24\`, \`targetSdkVersion 34\`)
           - **Permissions Requested:** None (\`0\` \`<uses-permission>\` entries; runs 100% offline)
           - **Signing:** Android debug signature (\`APK Signature Scheme v1 + v2 + v3\`)
@@ -152,11 +155,11 @@ jobs:
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" "$STABLE" --clobber
-            gh release edit "$TAG" --latest --title "Banglar Tesla v0.5.0 — Rickshaw Blacklist, Hold-to-Boost টার্বো, Police Pursuit & Dynamic Time" --notes "$NOTES"
+            gh release edit "$TAG" --latest --title "Banglar Tesla v0.5.1 — 4-Rickshaw Race, Race-Map Design & Winner Snapshot" --notes "$NOTES"
           else
             gh release create "$TAG" "$APK" "$STABLE" \
               --latest \
               --target "${{ github.sha }}" \
-              --title "Banglar Tesla v0.5.0 — Rickshaw Blacklist, Hold-to-Boost টার্বো, Police Pursuit & Dynamic Time" \
+              --title "Banglar Tesla v0.5.1 — 4-Rickshaw Race, Race-Map Design & Winner Snapshot" \
               --notes "$NOTES"
           fi

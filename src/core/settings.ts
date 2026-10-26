@@ -109,7 +109,12 @@ export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS
   };
 
   if (raw.language === 'bn' || raw.language === 'en') out.language = raw.language;
-  if (raw.quality === 'low' || raw.quality === 'balanced' || raw.quality === 'high') {
+  if (
+    raw.quality === 'low' ||
+    raw.quality === 'balanced' ||
+    raw.quality === 'high' ||
+    raw.quality === 'pc_high'
+  ) {
     out.quality = raw.quality;
   }
   if (raw.radioMode === 'both' || raw.radioMode === 'music' || raw.radioMode === 'street') {

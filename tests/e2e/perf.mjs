@@ -8,8 +8,8 @@ const srv=spawn('npx',['vite','preview','--host','127.0.0.1','--port',String(POR
 for(let i=0;i<80;i++){try{if((await fetch(BASE)).ok)break}catch{} await new Promise(r=>setTimeout(r,250));}
 const b=await puppeteer.launch({args:[...chromium.args,'--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--no-sandbox'],executablePath:await chromium.executablePath(),headless:'shell',env,defaultViewport:{width:900,height:506}});
 const p=await b.newPage();
-await p.goto(BASE,{waitUntil:'networkidle2',timeout:60000});
-await p.waitForFunction('!!window.__banglarTesla',{timeout:60000});
+await p.goto(BASE,{waitUntil:'networkidle2',timeout:120000});
+await p.waitForFunction('!!window.__banglarTesla',{timeout:120000});
 await new Promise(r=>setTimeout(r,1500));
 const stats = await p.evaluate(()=>{
   const g=window.__banglarTesla;

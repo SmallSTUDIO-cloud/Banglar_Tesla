@@ -3,7 +3,7 @@
  * Keeping numbers in one module makes balancing, testing and profiling trivial.
  */
 
-export type QualityPreset = 'low' | 'balanced' | 'high';
+export type QualityPreset = 'low' | 'balanced' | 'high' | 'pc_high';
 
 export const CAMERA_MODES = [
   'chase',
@@ -39,20 +39,20 @@ export type QualitySettings = QualityConfig;
 
 export const QUALITY: Record<QualityPreset, QualityConfig> = {
   low: {
-    label: 'Low',
+    label: 'Performance',
     pixelRatioCap: 1.0,
     shadows: false,
     shadowMapSize: 512,
     shadowDistance: 24,
-    trafficCount: 18,
-    pedestrianCount: 36,
-    pedestrians: 36,
-    propDensity: 0.78,
-    rainParticles: 160,
+    trafficCount: 24,
+    pedestrianCount: 48,
+    pedestrians: 48,
+    propDensity: 0.90,
+    rainParticles: 180,
     particles: 'minimal',
     lampLights: 0,
-    drawDistance: 175,
-    viewDistance: 135,
+    drawDistance: 195,
+    viewDistance: 155,
     antialias: false,
   },
   balanced: {
@@ -64,7 +64,7 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     trafficCount: 32,
     pedestrianCount: 68,
     pedestrians: 68,
-    propDensity: 0.92,
+    propDensity: 0.94,
     rainParticles: 340,
     particles: 'moderate',
     lampLights: 4,
@@ -87,6 +87,23 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     lampLights: 6,
     drawDistance: 300,
     viewDistance: 260,
+    antialias: true,
+  },
+  pc_high: {
+    label: 'Web/PC High',
+    pixelRatioCap: 2.0,
+    shadows: true,
+    shadowMapSize: 2048,
+    shadowDistance: 56,
+    trafficCount: 50,
+    pedestrianCount: 104,
+    pedestrians: 104,
+    propDensity: 1.0,
+    rainParticles: 640,
+    particles: 'rich',
+    lampLights: 8,
+    drawDistance: 320,
+    viewDistance: 280,
     antialias: true,
   },
 };

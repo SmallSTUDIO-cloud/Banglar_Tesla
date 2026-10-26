@@ -7,6 +7,7 @@
 import { t, getLocale, setLocale, STRING_KEYS, type Locale } from '../core/i18n';
 import { formatDistance, formatTaka, clamp, clamp01 } from '../core/mathx';
 import { QUALITY, type CameraMode, type QualityPreset } from '../core/config';
+import { APP_VERSION } from '../core/version';
 import type { Settings, SettingsStore } from '../core/settings';
 import type { GameState } from '../core/gameState';
 import type { InputManager } from '../core/input';
@@ -30,6 +31,7 @@ import type { MissionOffer } from '../missions/mission';
 import {
   BLACKLIST_RIVALS,
   OPEN_STREET_EVENTS,
+  renderRivalPortraitSvg,
   type RivalEventSpec,
 } from '../blacklist/blacklistCatalog';
 import type { CinematicUiState } from '../blacklist/cinematic';
@@ -75,15 +77,18 @@ export interface HudState {
     active: boolean;
     countdownText: string;
     title: string;
-    pos: 1 | 2;
+    pos: 1 | 2 | 3 | 4;
     cpCur: number;
     cpTot: number;
+    lapCur?: number;
+    lapTot?: number;
     remSec: number;
     targetX: number;
     targetZ: number;
     rivalX: number;
     rivalZ: number;
     hasRival: boolean;
+    rivals?: readonly { x: number; z: number; accentHex: string }[];
   } | null;
 }
 
@@ -113,6 +118,8 @@ export interface UIBridge {
   refuseRoadRagePay(): void;
   openBlacklist(from: 'menu' | 'hud' | 'pause'): void;
   startRivalEvent(eventId: string): void;
+  playRivalIntro(rank: number, launchRaceAfter?: boolean): void;
+  stopWinnerPhoto(): void;
   retryLastEvent(): void;
   exitRaceToFreeRide(): void;
   replayBlacklistIntro(): void;
@@ -444,7 +451,7 @@ export class AppUI {
     );
 
     const meta = h('div', { class: 'menu-meta' },
-      h('span', { text: `v0.5.0` }),
+      h('span', { text: `v${APP_VERSION}` }),
       h('span', { text: '·' }),
       h('span', { text: t('menu.district') }),
       h('span', { text: '·' }),
@@ -1185,11 +1192,15 @@ export class AppUI {
       const remS = Math.max(0, Math.ceil(race.remSec));
       const mm = String(Math.floor(remS / 60)).padStart(2, '0');
       const ss = String(remS % 60).padStart(2, '0');
-      const sumKey = `${race.pos}:${race.cpCur}/${race.cpTot}:${mm}:${ss}`;
+      const lapCur = race.lapCur ?? 1;
+      const lapTot = race.lapTot ?? 1;
+      const sumKey = `${race.pos}/4:${lapCur}/${lapTot}:${race.cpCur}/${race.cpTot}:${mm}:${ss}`;
       if (sumKey !== this.prevRaceSummary) {
         this.prevRaceSummary = sumKey;
-        this.hudRacePosEl.textContent = race.pos === 1 ? t('race.pos1') : t('race.pos2');
-        this.hudRaceCpEl.textContent = t('race.cp', { cur: race.cpCur, tot: race.cpTot });
+        this.hudRacePosEl.textContent = t('race.posOf4', { pos: race.pos });
+        const cpStr = t('race.cp', { cur: race.cpCur, tot: race.cpTot });
+        this.hudRaceCpEl.textContent =
+          lapTot > 1 ? `${t('race.lap', { cur: lapCur, tot: lapTot })} · ${cpStr}` : cpStr;
         this.hudRaceTimerEl.textContent = `${mm}:${ss}`;
       }
     }
@@ -1368,7 +1379,7 @@ export class AppUI {
       }
     }
 
-    // 4d. Rival Rickshaw & Race Checkpoint marker
+    // 4d. All 3 Rival Rickshaws & Race Checkpoint marker
     if (state.race && state.race.active) {
       const tx = clamp(cx + (state.race.targetX - px) * scale, 7, w - 7);
       const ty = clamp(cy + (state.race.targetZ - pz) * scale, 7, hgt - 7);
@@ -1378,7 +1389,17 @@ export class AppUI {
       ctx.arc(tx, ty, 5.5, 0, Math.PI * 2);
       ctx.stroke();
 
-      if (state.race.hasRival) {
+      if (state.race.rivals && state.race.rivals.length > 0) {
+        for (let i = 0; i < state.race.rivals.length; i++) {
+          const rv = state.race.rivals[i];
+          const rvx = clamp(cx + (rv.x - px) * scale, 6, w - 6);
+          const rvy = clamp(cy + (rv.z - pz) * scale, 6, hgt - 6);
+          ctx.fillStyle = rv.accentHex || '#f472b6';
+          ctx.beginPath();
+          ctx.arc(rvx, rvy, 4.1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (state.race.hasRival) {
         const rvx = clamp(cx + (state.race.rivalX - px) * scale, 6, w - 6);
         const rvy = clamp(cy + (state.race.rivalZ - pz) * scale, 6, hgt - 6);
         ctx.fillStyle = '#f472b6';
@@ -2109,6 +2130,7 @@ export class AppUI {
         { value: 'low', label: t('quality.low') },
         { value: 'balanced', label: t('quality.balanced') },
         { value: 'high', label: t('quality.high') },
+        { value: 'pc_high', label: t('quality.pc_high') },
       ],
       onChange: (v) => {
         patch({ quality: v, shadows: QUALITY[v].shadows });
@@ -2595,6 +2617,24 @@ export class AppUI {
             ? t('blacklist.ready')
             : t('blacklist.lockedRep', { rep: rival.repRequired });
 
+        const portraitEl = h('div', {
+          class: 'bl-portrait',
+          attrs: { 'data-rival-portrait': rival.id },
+        });
+        portraitEl.innerHTML = renderRivalPortraitSvg(rival);
+
+        const introBtn = button(t('blacklist.watchIntro'), {
+          variant: 'ghost',
+          small: true,
+          attrs: {
+            'data-intro-rank': String(rival.rank),
+          },
+          onClick: () => {
+            this.bridge.audio.uiTap();
+            this.bridge.playRivalIntro(rival.rank, false);
+          },
+        });
+
         const challengeBtn = button(t('blacklist.challengeBtn'), {
           variant: canChallenge ? (defeated ? 'ghost' : 'primary') : 'ghost',
           small: true,
@@ -2620,6 +2660,7 @@ export class AppUI {
           h(
             'div',
             { class: 'bl-card-head' },
+            portraitEl,
             h(
               'span',
               {
@@ -2632,7 +2673,10 @@ export class AppUI {
               'div',
               { class: 'bl-title-col' },
               h('strong', { text: name }),
-              h('span', { class: 'tiny muted', text: `${arch} · ${terr}` }),
+              h('span', {
+                class: 'tiny muted',
+                text: `${arch} · ${t(`race.tendency.${rival.tendency}`)} · ${terr}`,
+              }),
             ),
             h('span', { class: `pill ${defeated ? '' : canChallenge ? 'gold' : ''}`, text: badgeLabel }),
           ),
@@ -2654,7 +2698,7 @@ export class AppUI {
                 text: t('blacklist.lossNote', { fee: formatTaka(ev.lossFee) }),
               }),
             ),
-            challengeBtn,
+            h('div', { class: 'bl-action-row' }, introBtn, challengeBtn),
           ),
         );
         listWrap.append(card);
@@ -2718,10 +2762,165 @@ export class AppUI {
     }
     const loc = getLocale();
     const evTitle = loc === 'en' ? summary.event.titleEn : summary.event.titleBn;
-    const { wrap, body } = sheet(summary.won ? t('race.wonTitle') : t('race.lostTitle'), {
-      subtitle: evTitle,
+
+    const buildStandingsList = () => {
+      const wrapList = h('div', { class: 'winner-standings-list' });
+      for (const st of summary.standings) {
+        const displayName = st.isPlayer
+          ? loc === 'en'
+            ? 'You (Player)'
+            : 'আপনি (প্লেয়ার)'
+          : loc === 'en'
+            ? st.nameEn
+            : st.nameBn;
+        wrapList.append(
+          h(
+            'div',
+            { class: `standing-pill${st.isPlayer ? ' is-player' : ''}` },
+            h('span', {
+              class: 'standing-pos',
+              style: `color:${st.accentHex}`,
+              text: `#${st.position}`,
+            }),
+            h('span', { class: 'standing-name', text: displayName }),
+          ),
+        );
+      }
+      return wrapList;
+    };
+
+    const continueBtn = button(t('race.continueBtn'), {
+      variant: summary.won ? 'primary' : 'ghost',
+      wide: !summary.won,
+      attrs: { id: 'race-blacklist-btn' },
+      onClick: () => {
+        this.bridge.audio.uiTap();
+        this.bridge.stopWinnerPhoto();
+        this.openBlacklistView('hud');
+      },
+    });
+    const retryBtn = button(t('race.raceAgainBtn'), {
+      variant: summary.won ? 'ghost' : 'primary',
+      wide: !summary.won,
+      attrs: { id: 'race-retry-btn' },
+      onClick: () => {
+        this.bridge.audio.uiConfirm();
+        this.bridge.stopWinnerPhoto();
+        this.bridge.retryLastEvent();
+      },
+    });
+    const freeRoamBtn = button(t('race.returnFreeRoamBtn'), {
+      variant: 'ghost',
+      wide: !summary.won,
+      attrs: { id: 'race-freeride-btn' },
+      onClick: () => {
+        this.bridge.audio.uiTap();
+        this.bridge.stopWinnerPhoto();
+        this.bridge.exitRaceToFreeRide();
+      },
+    });
+
+    if (summary.won) {
+      // §27 Victory-Only Original Banglar Tesla Printed-Photo / Scrapbook Snapshot
+      const rankPill =
+        summary.unlockedNextRank !== null
+          ? h('span', {
+              class: 'pill gold',
+              text:
+                summary.unlockedNextRank === 0
+                  ? t('race.crowned')
+                  : t('race.rankUp', { rank: summary.unlockedNextRank }),
+            })
+          : null;
+
+      const photoCard = h(
+        'div',
+        {
+          class: 'winner-photo-frame',
+          attrs: { id: 'race-result-sheet', 'data-result-mode': 'winner-photo' },
+        },
+        h('span', { class: 'photo-tape photo-tape-tl', attrs: { 'aria-hidden': 'true' } }),
+        h('span', { class: 'photo-tape photo-tape-tr', attrs: { 'aria-hidden': 'true' } }),
+        h(
+          'div',
+          { class: 'winner-photo-top' },
+          h(
+            'div',
+            { class: 'winner-photo-stamp' },
+            h('strong', { text: t('race.photoStamp') }),
+            h('span', { text: t('race.photoSub') }),
+          ),
+          h('span', {
+            class: 'winner-pos-badge',
+            text: t('race.posOf4', { pos: summary.playerPosition }),
+          }),
+        ),
+        // Clear center viewport window showing the live 3D winning rickshaw + celebratory driver!
+        h('div', { class: 'winner-photo-window', attrs: { 'data-testid': 'winner-photo-window' } }),
+        h(
+          'div',
+          { class: 'winner-photo-dock' },
+          h(
+            'div',
+            { class: 'winner-dock-header' },
+            h(
+              'div',
+              {},
+              h('h2', { class: 'winner-dock-title', text: t('race.wonTitle') }),
+              h('div', { class: 'tiny muted', text: evTitle }),
+            ),
+            rankPill,
+          ),
+          h(
+            'div',
+            { class: 'winner-stats-grid' },
+            h(
+              'div',
+              { class: 'winner-stat-cell' },
+              h('span', { class: 'tiny muted', text: t('race.timeTaken') }),
+              h('strong', { text: `${summary.timeSeconds.toFixed(1)}s` }),
+            ),
+            h(
+              'div',
+              { class: 'winner-stat-cell' },
+              h('span', { class: 'tiny muted', text: t('race.topSpeed') }),
+              h('strong', { text: `${Math.max(18, Math.round(summary.topSpeedKmh))} km/h` }),
+            ),
+            h(
+              'div',
+              { class: 'winner-stat-cell' },
+              h('span', { class: 'tiny muted', text: t('race.cashDelta') }),
+              h('strong', { class: 'gold-txt', text: `+${formatTaka(summary.cashDelta)}` }),
+            ),
+            h(
+              'div',
+              { class: 'winner-stat-cell' },
+              h('span', { class: 'tiny muted', text: t('race.repEarned') }),
+              h('strong', { class: 'teal-txt', text: `+${summary.repEarned} REP` }),
+            ),
+          ),
+          h(
+            'div',
+            { class: 'winner-standings-wrap' },
+            h('span', { class: 'tiny muted', text: t('race.standingsTitle') }),
+            buildStandingsList(),
+          ),
+          h('div', { class: 'winner-actions-row' }, continueBtn, retryBtn, freeRoamBtn),
+        ),
+      );
+
+      this.raceResultEl = h('div', { class: 'screen winner-photo-screen' }, photoCard);
+      this.register('raceResult', this.raceResultEl);
+      this.show('raceResult');
+      return;
+    }
+
+    // Separate Non-Photo Defeat Result Screen (Losses NEVER trigger Winner Snapshot!)
+    const { wrap, body } = sheet(t('race.lostTitle'), {
+      subtitle: `${evTitle} · ${t('race.posOf4', { pos: summary.playerPosition })}`,
     });
     wrap.id = 'race-result-sheet';
+    wrap.setAttribute('data-result-mode', 'defeat');
 
     const rows = h(
       'div',
@@ -2730,8 +2929,20 @@ export class AppUI {
       h(
         'div',
         { class: 'brow' },
+        h('span', { text: t('race.finalPosition') }),
+        h('span', { text: t('race.posOf4', { pos: summary.playerPosition }) }),
+      ),
+      h(
+        'div',
+        { class: 'brow' },
         h('span', { text: t('race.timeTaken') }),
         h('span', { text: `${summary.timeSeconds.toFixed(1)}s` }),
+      ),
+      h(
+        'div',
+        { class: 'brow' },
+        h('span', { text: t('race.topSpeed') }),
+        h('span', { text: `${Math.round(summary.topSpeedKmh)} km/h` }),
       ),
       row(t('race.cashDelta'), summary.cashDelta, summary.cashDelta < 0),
       h(
@@ -2740,53 +2951,11 @@ export class AppUI {
         h('span', { text: t('race.repEarned') }),
         h('span', { text: `+${summary.repEarned} REP` }),
       ),
+      h('div', { class: 'tiny muted', style: 'margin-top:0.35rem', text: t('race.standingsTitle') }),
+      buildStandingsList(),
     );
 
-    if (summary.won && summary.unlockedNextRank !== null) {
-      rows.append(
-        h('div', {
-          class: 'pill gold',
-          style: 'margin-top:0.4rem;align-self:flex-start',
-          text:
-            summary.unlockedNextRank === 0
-              ? t('race.crowned')
-              : t('race.rankUp', { rank: summary.unlockedNextRank }),
-        }),
-      );
-    }
-
-    const btnCol = h(
-      'div',
-      { class: 'btn-stack' },
-      button(t('race.retry'), {
-        variant: summary.won ? 'ghost' : 'primary',
-        wide: true,
-        attrs: { id: 'race-retry-btn' },
-        onClick: () => {
-          this.bridge.audio.uiConfirm();
-          this.bridge.retryLastEvent();
-        },
-      }),
-      button(t('race.backBlacklist'), {
-        variant: summary.won ? 'primary' : 'ghost',
-        wide: true,
-        attrs: { id: 'race-blacklist-btn' },
-        onClick: () => {
-          this.bridge.audio.uiTap();
-          this.openBlacklistView('hud');
-        },
-      }),
-      button(t('race.freeRide'), {
-        variant: 'ghost',
-        wide: true,
-        attrs: { id: 'race-freeride-btn' },
-        onClick: () => {
-          this.bridge.audio.uiTap();
-          this.bridge.exitRaceToFreeRide();
-        },
-      }),
-    );
-
+    const btnCol = h('div', { class: 'btn-stack' }, retryBtn, continueBtn, freeRoamBtn);
     body.append(rows, btnCol);
     this.raceResultEl = h('div', { class: 'screen' }, wrap);
     this.register('raceResult', this.raceResultEl);

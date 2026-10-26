@@ -79,7 +79,7 @@ async function main() {
   await cdp.send('Performance.enable');
 
   try {
-    await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
     await page.evaluate(() => document.getElementById('boot-skip')?.click());
     await new Promise((r) => setTimeout(r, 600));

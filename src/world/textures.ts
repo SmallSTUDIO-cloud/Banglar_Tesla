@@ -53,6 +53,14 @@ function makeTexture(
   const hit = cache.get(key);
   if (hit) return hit;
 
+  if (typeof document === 'undefined') {
+    const fallbackBytes = new Uint8Array([220, 220, 220, 255]);
+    const fallbackTex = new THREE.DataTexture(fallbackBytes, 1, 1, THREE.RGBAFormat);
+    fallbackTex.needsUpdate = true;
+    cache.set(key, fallbackTex);
+    return fallbackTex;
+  }
+
   const ctx = getScratchContext(width, height);
   draw(ctx, width, height);
   const imageData = ctx.getImageData(0, 0, width, height);

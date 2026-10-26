@@ -114,6 +114,10 @@ export class Game implements UIBridge {
   private lastEventId: string | null = null;
   private pendingBlacklistFrom: 'menu' | 'hud' | 'pause' = 'menu';
   private phaseLockedForDebug = false;
+  private winnerPhotoActive = false;
+  private winnerPhotoTimer = 0;
+  private lastRaceTargetX = 0;
+  private lastRaceTargetZ = 0;
   private pendingOffer: MissionOffer | null = null;
   private currentOffer: MissionOffer | null = null;
   private frameCount = 0;
@@ -356,12 +360,20 @@ export class Game implements UIBridge {
         if (this.raceSystem.isActive && this.raceSystem.currentEvent) {
           const ev = this.raceSystem.currentEvent;
           const rv = this.raceSystem.currentRival;
+          const standings = this.raceSystem.getStandings(this.controller.x, this.controller.z);
+          const laps = this.raceSystem.lapCount;
+          this.stopWinnerPhoto();
           this.raceSystem.cancel();
           this.ui.openRaceResult({
             won: false,
             event: ev,
             rival: rv,
             timeSeconds: 0,
+            topSpeedKmh: 0,
+            playerPosition: 4,
+            totalRacers: 4,
+            laps,
+            standings,
             cashDelta: -paid,
             repEarned: 0,
             unlockedNextRank: null,
@@ -380,7 +392,14 @@ export class Game implements UIBridge {
     this.scene.add(this.raceSystem.group);
     this.raceSystem.onCountdownTick = () => this.audio.uiTap();
     this.raceSystem.onRaceGo = () => this.audio.uiConfirm();
-    this.raceSystem.onCheckpointPassed = () => this.audio.coin();
+    this.raceSystem.onCheckpointPassed = () => {
+      this.audio.coin();
+      this.controller.addTurboCharge(TURBO.checkpointGain * 0.45);
+    };
+    this.raceSystem.onLapCompleted = (lap, tot) => {
+      this.audio.successStinger();
+      this.ui.toast(t('toast.lapComplete', { cur: lap, tot }), 'good');
+    };
     this.raceSystem.onRaceFinished = (summary) => this.handleRaceFinished(summary);
 
     this.chase = new ChaseCamera(this.camera);
@@ -641,6 +660,9 @@ export class Game implements UIBridge {
     else {
       this.audio.setVehicleSpeed(0, 0);
       this.audio.setTurboBoostAudio(false, 0);
+      if (this.winnerPhotoActive) {
+        this.updateWinnerPhotoCamera(dt);
+      }
     }
 
     this.render();
@@ -695,6 +717,10 @@ export class Game implements UIBridge {
     this.audio.update(dt, this.controller.x, this.controller.z);
     this.tmpPlayerVec.set(this.controller.x, 0, this.controller.z);
     this.env.update(dt, this.tmpPlayerVec);
+    const curWeather = this.env.getWeather();
+    const windStrength =
+      curWeather === 'rain' ? 0.85 : curWeather === 'overcast' ? 0.38 : 0;
+    this.city.updateStreetLitter(dt, windStrength, this.controller.x, this.controller.z);
     this.destruction.update(dt);
     this.city.updateShadowFocus(
       this.controller.x,
@@ -867,13 +893,25 @@ export class Game implements UIBridge {
       this.audio.setPoliceSirenAudio(false, 0, 0);
     }
 
+    this.raceSystem.recordPlayerSpeed(this.controller.speed);
     const raceSnap = this.raceSystem.update(
       dt,
       this.controller.x,
       this.controller.z,
       this.controller.hits,
       this.simClockSec,
+      this.traffic.obstacles(),
+      this.roadblocks.getActiveObbs(),
     );
+    if (
+      raceSnap.active &&
+      (Math.abs(raceSnap.targetX - this.lastRaceTargetX) > 1.5 ||
+        Math.abs(raceSnap.targetZ - this.lastRaceTargetZ) > 1.5)
+    ) {
+      this.lastRaceTargetX = raceSnap.targetX;
+      this.lastRaceTargetZ = raceSnap.targetZ;
+      this.recomputeRoute({ x: raceSnap.targetX, z: raceSnap.targetZ });
+    }
 
     // Reckless ultra-high-speed driving in Free Ride gradually attracts police attention!
     if (
@@ -1077,6 +1115,7 @@ export class Game implements UIBridge {
   startMode(mode: 'duty' | 'free' | 'daily'): void {
     void this.audio.init();
     this.phaseLockedForDebug = false;
+    this.stopWinnerPhoto();
     this.cinematic.stop(false);
     this.raceSystem.cancel();
     this.police.stopPursuit(true);
@@ -1239,16 +1278,23 @@ export class Game implements UIBridge {
   recoverRickshaw(): void {
     if (this.roadRage.isControlLocked) return;
     this.roadRage.cancel(8);
-    const free = this.mode === 'free';
+    const free = this.mode === 'free' || this.raceSystem.isActive;
     const fee = free ? 0 : 45;
     if (fee > 0) this.state.spend(fee);
-    const snapped = snapToNearestRoad(this.controller.x, this.controller.z, false);
-    let rx = snapped.x;
-    let rz = snapped.z;
+
+    const raceRespawn = this.raceSystem.isActive ? this.raceSystem.getSafeRespawnPose() : null;
+    const snapped = snapToNearestRoad(
+      raceRespawn ? raceRespawn.x : this.controller.x,
+      raceRespawn ? raceRespawn.z : this.controller.z,
+      false,
+    );
+    let rx = raceRespawn ? raceRespawn.x : snapped.x;
+    let rz = raceRespawn ? raceRespawn.z : snapped.z;
+    const targetYaw = raceRespawn ? raceRespawn.yaw : snapped.yaw;
     const seg = snapped.segment;
-    const fx = Math.sin(snapped.yaw);
-    const fz = Math.cos(snapped.yaw);
-    const baseAlong = (snapped.x - seg.ax) * seg.ux + (snapped.z - seg.az) * seg.uz;
+    const fx = Math.sin(targetYaw);
+    const fz = Math.cos(targetYaw);
+    const baseAlong = (rx - seg.ax) * seg.ux + (rz - seg.az) * seg.uz;
     // Ensure recovery places the player well inside the road segment and clear of traffic
     for (const shift of [0, -8, 8, -16, 16, -24, 24, -32, 32]) {
       const along = clamp(baseAlong + shift, Math.min(12, seg.length * 0.3), Math.max(seg.length - 12, seg.length * 0.7));
@@ -1260,8 +1306,8 @@ export class Game implements UIBridge {
         break;
       }
     }
-    this.controller.reset(rx, rz, snapped.yaw);
-    this.chase.snapTo(rx, rz, snapped.yaw, this.controller.y);
+    this.controller.reset(rx, rz, targetYaw);
+    this.chase.snapTo(rx, rz, targetYaw, this.controller.y);
     this.player.root.position.set(rx, this.controller.y, rz);
     this.ui.toast(t('toast.recovered'), 'good');
     this.audio.uiConfirm();
@@ -1279,6 +1325,7 @@ export class Game implements UIBridge {
   }
 
   returnToMenu(): void {
+    this.stopWinnerPhoto();
     this.cinematic.stop(false);
     this.raceSystem.cancel();
     this.police.stopPursuit(true);
@@ -1325,11 +1372,13 @@ export class Game implements UIBridge {
   // --------------------------------------------------- garage & Dokan showroom
   openGarage(from: 'menu' | 'pause' | 'result'): void {
     void from;
+    this.stopWinnerPhoto();
     this.refreshShowroom();
     this.showroomVisible = true;
   }
 
   openShowroomFromMenu(): void {
+    this.stopWinnerPhoto();
     this.refreshShowroom();
     this.showroomVisible = true;
   }
@@ -1706,6 +1755,90 @@ export class Game implements UIBridge {
     );
   }
 
+  playRivalIntro(rank: number, launchRaceAfter = false): void {
+    const rival = rivalByRank(rank);
+    if (!rival) return;
+    void this.audio.init();
+    this.stopWinnerPhoto();
+    this.showroomVisible = false;
+    this.paused = false;
+    this.ui.show(null);
+    const prevPhase = this.env.getPhase();
+    this.env.setPhase('golden');
+    this.cinematic.startRivalIntro(
+      rival,
+      {
+        x: this.controller.x,
+        y: this.controller.y,
+        z: this.controller.z,
+        yaw: this.controller.yaw,
+      },
+      () => {
+        if (!this.phaseLockedForDebug) {
+          this.env.setPhase(this.mode === 'menu' ? prevPhase : this.gameTime.phase);
+        }
+        if (launchRaceAfter) {
+          this.startRivalEvent(rival.bossEvent.id);
+        } else {
+          if (this.pendingBlacklistFrom === 'hud' && this.mode !== 'menu') {
+            this.paused = true;
+          }
+          this.ui.openBlacklistView(this.pendingBlacklistFrom);
+        }
+      },
+    );
+  }
+
+  stopWinnerPhoto(): void {
+    if (!this.winnerPhotoActive) return;
+    this.winnerPhotoActive = false;
+    this.winnerPhotoTimer = 0;
+    this.player.setCharacterPose('riding', 0);
+    this.player.setCockpitVisibility(this.mode !== 'menu' && this.settings.get().cameraMode === 'cockpit');
+    this.chase.snapTo(this.controller.x, this.controller.z, this.controller.yaw, this.controller.y);
+  }
+
+  private startWinnerPhoto(): void {
+    this.winnerPhotoActive = true;
+    this.winnerPhotoTimer = 0;
+    const snapped = snapToNearestRoad(this.controller.x, this.controller.z, false);
+    const gx = snapped.x;
+    const gz = snapped.z;
+    const gy = this.city.heightAt(gx, gz);
+    this.controller.x = gx;
+    this.controller.z = gz;
+    this.controller.y = gy;
+    this.player.root.position.set(gx, gy, gz);
+    this.player.root.rotation.set(0, this.controller.yaw, 0, 'YXZ');
+    this.player.setCockpitVisibility(false);
+    this.player.setCharacterPose('victory', 0.25);
+    this.player.updateVisual(1 / 60, 0, 0.14, 0, 0, gy, 0);
+    this.updateWinnerPhotoCamera(0);
+  }
+
+  private updateWinnerPhotoCamera(dt: number): void {
+    this.winnerPhotoTimer += dt;
+    const px = this.player.root.position.x;
+    const py = this.player.root.position.y;
+    const pz = this.player.root.position.z;
+    // Low three-quarter front-side hero angle showcasing rickshaw wheels, art, celebratory driver & Dhaka street!
+    const sway = Math.sin(this.winnerPhotoTimer * 0.65) * 0.12;
+    const heroAngle = this.controller.yaw + 0.72 + sway;
+    const dist = 3.85;
+    const camX = px + Math.sin(heroAngle) * dist;
+    const camZ = pz + Math.cos(heroAngle) * dist;
+    const camY = py + 1.44;
+    this.camera.position.set(camX, camY, camZ);
+    // Aim slightly below center so the rickshaw + driver sit right inside the upper-middle photo window!
+    this.camera.lookAt(px, py + 0.78, pz);
+    if (this.camera.fov !== 40) {
+      this.camera.fov = 40;
+      this.camera.updateProjectionMatrix();
+    }
+    this.player.setCharacterPose('victory', this.winnerPhotoTimer);
+    this.player.updateVisual(Math.max(1 / 120, dt), 0, 0.14, 0, 0, py, 0);
+  }
+
   skipBlacklistIntro(): void {
     this.cinematic.skip();
   }
@@ -1715,6 +1848,7 @@ export class Game implements UIBridge {
     if (!ev) return;
     void this.audio.init();
     this.lastEventId = eventId;
+    this.stopWinnerPhoto();
     this.cinematic.stop(false);
     this.roadRage.cancel();
     this.missions.cancel();
@@ -1735,9 +1869,11 @@ export class Game implements UIBridge {
 
     const rival = ev.blacklistRank ? rivalByRank(ev.blacklistRank) ?? null : null;
     const grid = this.raceSystem.startEvent(ev, rival, this.controller.hits);
+    this.traffic.clearStartZone(grid.x, grid.z, 19);
     this.controller.reset(grid.x, grid.z, grid.yaw);
     this.controller.restoreStamina(100);
     this.controller.addTurboCharge(100);
+    this.player.setCharacterPose('riding', 0);
     this.player.root.position.set(grid.x, this.controller.y, grid.z);
     this.chase.snapTo(grid.x, grid.z, grid.yaw, this.controller.y);
     this.ui.show('hud');
@@ -1762,12 +1898,12 @@ export class Game implements UIBridge {
       }
     }
 
-    // Spawn event roadblocks & police pursuit if specified!
+    // Spawn event roadblocks & police pursuit if specified (well ahead of the 4-racer grid!)
     if (ev.roadblockCount && ev.roadblockCount > 0) {
       for (let i = 0; i < ev.roadblockCount; i++) {
         this.roadblocks.trySpawnAhead(
-          grid.x + Math.sin(grid.yaw) * i * 38,
-          grid.z + Math.cos(grid.yaw) * i * 38,
+          grid.x + Math.sin(grid.yaw) * (24 + i * 38),
+          grid.z + Math.cos(grid.yaw) * (24 + i * 38),
           Math.sin(grid.yaw),
           Math.cos(grid.yaw),
           ev.heatLevel ?? 2,
@@ -1778,8 +1914,18 @@ export class Game implements UIBridge {
       this.police.startPursuit(ev.heatLevel, grid.x, grid.z, grid.yaw);
     }
 
-    const snap = this.raceSystem.update(0, grid.x, grid.z, this.controller.hits, this.simClockSec);
+    const snap = this.raceSystem.update(
+      0,
+      grid.x,
+      grid.z,
+      this.controller.hits,
+      this.simClockSec,
+      this.traffic.obstacles(),
+      this.roadblocks.getActiveObbs(),
+    );
     if (snap.active) {
+      this.lastRaceTargetX = snap.targetX;
+      this.lastRaceTargetZ = snap.targetZ;
       this.recomputeRoute({ x: snap.targetX, z: snap.targetZ });
     }
     this.hudTick = 1;
@@ -1787,6 +1933,7 @@ export class Game implements UIBridge {
   }
 
   retryLastEvent(): void {
+    this.stopWinnerPhoto();
     if (this.lastEventId) {
       this.startRivalEvent(this.lastEventId);
     } else {
@@ -1795,6 +1942,7 @@ export class Game implements UIBridge {
   }
 
   exitRaceToFreeRide(): void {
+    this.stopWinnerPhoto();
     this.raceSystem.cancel();
     this.police.stopPursuit(true);
     this.roadblocks.clearAll();
@@ -1824,11 +1972,14 @@ export class Game implements UIBridge {
         repReward: summary.repEarned,
         blacklistRank: summary.rival?.rank,
       });
+      this.startWinnerPhoto();
     } else if (summary.cashDelta < 0) {
+      this.stopWinnerPhoto();
       this.audio.failStinger();
       const actualPaid = this.state.deductPenalty(Math.abs(summary.cashDelta));
       summary.cashDelta = -actualPaid;
     } else {
+      this.stopWinnerPhoto();
       this.audio.failStinger();
     }
 
@@ -1967,12 +2118,15 @@ export class Game implements UIBridge {
               pos: raceSnap.playerRank,
               cpCur: raceSnap.checkpointIndex,
               cpTot: raceSnap.checkpointTotal,
+              lapCur: raceSnap.lapIndex,
+              lapTot: raceSnap.lapTotal,
               remSec: raceSnap.remainingSeconds,
               targetX: raceSnap.targetX,
               targetZ: raceSnap.targetZ,
               rivalX: raceSnap.rivalX,
               rivalZ: raceSnap.rivalZ,
               hasRival: raceSnap.hasRival,
+              rivals: raceSnap.rivals,
             }
           : null,
     };
@@ -2031,7 +2185,9 @@ export class Game implements UIBridge {
     this.player.setCockpitVisibility(this.mode !== 'menu' && s.cameraMode === 'cockpit');
     this.ui.updateCameraBadge(s.cameraMode);
     this.renderer.toneMappingExposure = s.reduceEffects ? 0.98 : 1.04;
-    setTextureQuality(s.quality === 'high' ? 8 : s.quality === 'balanced' ? 4 : 1);
+    setTextureQuality(
+      s.quality === 'pc_high' ? 16 : s.quality === 'high' ? 8 : s.quality === 'balanced' ? 4 : 1,
+    );
     if (s.quality === 'low' && this.scene.environment) this.scene.environment = null;
     else if (this.envMap && !this.scene.environment) this.scene.environment = this.envMap;
     this.city.updateShadowFocus(
