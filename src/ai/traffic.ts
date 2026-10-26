@@ -85,6 +85,7 @@ export class TrafficSystem {
   private obstaclePool: TrafficObstacle[] = [];
   private activeObstacles: TrafficObstacle[] = [];
   private rng = mulberry32(88421);
+  private debugSimFrozen = false;
   private tmpPt: LanePoint = { x: 0, z: 0, yaw: 0 };
 
   private clock = 0;
@@ -301,7 +302,18 @@ export class TrafficSystem {
     }
   }
 
+  /**
+   * Test/analysis hook (same family as `debugPositionAgentForTest`): hold the
+   * entire ambient fleet perfectly still while a deterministic physics/input
+   * measurement window runs — recycled agents can otherwise respawn into the
+   * measurement corridor mid-window. Never used by shipping gameplay.
+   */
+  debugSetSimulationFrozen(frozen: boolean): void {
+    this.debugSimFrozen = frozen;
+  }
+
   update(dt: number): void {
+    if (this.debugSimFrozen) return;
     this.clock += dt;
     this.hornCooldown = Math.max(0, this.hornCooldown - dt);
 

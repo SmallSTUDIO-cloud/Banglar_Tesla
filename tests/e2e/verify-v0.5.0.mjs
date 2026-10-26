@@ -92,6 +92,7 @@ async function main() {
   try {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction('Boolean(window.__banglarTesla)', { timeout: 25000 });
+    await page.evaluate(() => document.fonts.ready); // settle web fonts before UI measurement / reload (prevents font-abort races on slow runners)
     await page.click('body');
     await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === 26', { timeout: 15000 });
 

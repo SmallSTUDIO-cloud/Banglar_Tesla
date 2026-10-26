@@ -83,6 +83,7 @@ async function main() {
   try {
     await page.goto(URL_BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
+    await page.evaluate(() => document.fonts.ready); // settle web fonts before UI measurement / reload (prevents font-abort races on slow runners)
     await new Promise((r) => setTimeout(r, 1500));
 
     // ---------------------------------------------------------- boot/menu

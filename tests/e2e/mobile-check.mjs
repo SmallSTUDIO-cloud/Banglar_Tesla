@@ -99,6 +99,7 @@ async function main() {
 
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 120000 });
     await page.waitForFunction('!!window.__banglarTesla', { timeout: 60000 });
+    await page.evaluate(() => document.fonts.ready); // settle web fonts before UI measurement / reload (prevents font-abort races on slow runners)
     await page.evaluate(() => document.getElementById('boot-skip')?.click());
     await new Promise((r) => setTimeout(r, 800));
 
@@ -163,6 +164,16 @@ async function main() {
       const brake = document.querySelector('.touch-btn.brake');
       if (!pedal || !steerR || !brake) return { error: 'missing touch buttons' };
 
+      // Drive on a verified clear Asad Avenue centreline (`asad_4`, 6.1m inside the
+      // carriageway) so procedural lamp/building placement can never block the
+      // touch-handling assertions — same anchor as verify-upgrade-v2 speed tests.
+      // Clear all ambient traffic within 36m: no vehicle can re-enter the 2.2s
+      // drive window (max closing distance 15.3 m/s × 2.2s ≈ 34m), so the
+      // touch-input assertions can never be crushed by a random passing car.
+      g.debugTeleport(80, 95, 1.853);
+      g.traffic.clearStartZone(80, 95, 36);
+      g.traffic.debugSetSimulationFrozen(true); // deterministic window: no recycled traffic can enter
+
       const beforeYaw = g.controller.yaw;
       // Finger 1 holds PEDAL; simulate thumb micro-roll firing pointerleave while held
       pedal.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, pointerType: 'touch' }));
@@ -170,9 +181,25 @@ async function main() {
       // Finger 2 holds STEER RIGHT simultaneously
       steerR.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 2, pointerType: 'touch' }));
 
-      g.debugStepSim(2.2);
+      // Pin to the centreline during measurement: asserts concern INPUT HANDLING
+      // (throttle builds speed, steer turns the wheel, brake reverses), not free
+      // flight — a 2.2s full-lock arc would otherwise leave the carriageway and
+      // grind along a legitimate roadside building.
+      for (let i = 0; i < 132; i++) {
+        g.controller.x = 80;
+        g.controller.z = 95;
+        g.update(1 / 60);
+      }
       const forwardSpeed = g.controller.speed;
       const turnedYaw = Math.abs(g.controller.yaw - beforeYaw);
+      const diag = {
+        x: +g.controller.x.toFixed(1),
+        z: +g.controller.z.toFixed(1),
+        stuck: g.controller.stuck,
+        hits: g.controller.hits,
+        roadRage: g.debugSnapshot().roadRageState,
+        contact: g.controller.lastContact?.active ?? false,
+      };
 
       steerR.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 2, pointerType: 'touch' }));
       pedal.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, pointerType: 'touch' }));
@@ -180,11 +207,16 @@ async function main() {
       // Now hold BRAKE until stopped and into deliberate REVERSE
       brake.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 3, pointerType: 'touch' }));
       brake.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, pointerId: 3, pointerType: 'touch' }));
-      g.debugStepSim(3.0);
+      for (let i = 0; i < 180; i++) {
+        g.controller.x = 80;
+        g.controller.z = 95;
+        g.update(1 / 60);
+      }
       const reverseSpeed = g.controller.speed;
       brake.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 3, pointerType: 'touch' }));
 
-      return { forwardSpeed, turnedYaw, reverseSpeed };
+      g.traffic.debugSetSimulationFrozen(false);
+      return { forwardSpeed, turnedYaw, reverseSpeed, diag };
     });
     check(
       'touch pedal accelerates smoothly (survives thumb roll)',
@@ -226,7 +258,13 @@ async function main() {
       pedal.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 11, pointerType: 'touch' }));
       // Releasing another pointer must NOT cancel wheel steering
       ring.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 99, pointerType: 'touch' }));
-      g.debugStepSim(2.2);
+      const pinX = g.controller.x;
+      const pinZ = g.controller.z;
+      for (let i = 0; i < 132; i++) {
+        g.controller.x = pinX;
+        g.controller.z = pinZ;
+        g.update(1 / 60);
+      }
       const speedInWheel = g.controller.speed;
       const yawDeltaInWheel = Math.abs(g.controller.yaw - startYaw);
       pedal.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 11, pointerType: 'touch' }));
