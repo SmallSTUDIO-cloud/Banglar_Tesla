@@ -38,12 +38,13 @@ jobs:
           npm run typecheck
           npm test
 
-      - name: Build baseline bundle & run E2E / Mobile / Spec suites
+      - name: Build baseline bundle & run E2E / Mobile / Spec / vNext suites
         run: |
           npm run build
           npm run test:e2e
           npm run test:mobile
           npm run test:spec
+          npm run test:vnext
 
       - name: Build production GitHub Pages bundle (/Banglar_Tesla/)
         env:

@@ -2518,3 +2518,167 @@ input[type='range']::-moz-range-thumb {
 
 
 
+
+
+/* --- vNext §4 dynamic weather overlays (event-driven, compositor-friendly) --- */
+.sun-glare {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 520px;
+  height: 520px;
+  margin: -260px 0 0 -260px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  background: radial-gradient(circle, rgba(255, 236, 170, 0.34) 0%, rgba(255, 226, 150, 0.12) 38%, rgba(255, 220, 140, 0) 72%);
+  transition: opacity 0.55s ease;
+}
+.sun-glare.on { mix-blend-mode: screen; }
+
+.lightning-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  background: linear-gradient(180deg, rgba(232, 240, 255, 0.95), rgba(198, 216, 255, 0.7));
+  opacity: 0;
+  transition: opacity 0.42s ease-out;
+}
+
+.rain-drop {
+  position: absolute;
+  width: 7px;
+  height: 22px;
+  border-radius: 40% 40% 55% 55%;
+  background: linear-gradient(180deg, rgba(190, 214, 235, 0), rgba(190, 214, 235, 0.32) 55%, rgba(190, 214, 235, 0.55));
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+}
+.rain-drop.on {
+  opacity: 1;
+  animation-name: rain-drip;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+@keyframes rain-drip {
+  0% { transform: translateY(0) scaleY(0.9); opacity: 0; }
+  12% { opacity: 0.85; }
+  88% { opacity: 0.55; }
+  100% { transform: translateY(112vh) scaleY(1.25); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rain-drop.on { animation-duration: 6s !important; }
+}
+
+
+/* --- vNext §7–§10: stunt chip, rival challenge card, career scrapbook --- */
+.stunt-chip {
+  position: absolute;
+  top: calc(var(--safe-t) + 4.2rem);
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  padding: 0.34rem 0.95rem;
+  border-radius: 99px;
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.92), rgba(234, 88, 12, 0.92));
+  color: #1c1408;
+  font-weight: 900;
+  font-size: calc(0.86rem * var(--text-scale));
+  pointer-events: none;
+  z-index: 22;
+  opacity: 0;
+  transition: opacity 0.32s ease, transform 0.32s ease;
+}
+.stunt-chip.on {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.rival-challenge {
+  position: absolute;
+  top: calc(var(--safe-t) + 3.4rem);
+  right: calc(var(--safe-r) + 0.75rem);
+  width: min(272px, 82vw);
+  padding: 0.62rem 0.8rem 0.72rem;
+  border-radius: 16px;
+  background: linear-gradient(160deg, rgba(28, 22, 40, 0.96), rgba(14, 16, 26, 0.97));
+  border: 1.5px solid rgba(236, 72, 153, 0.72);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  z-index: 26;
+  pointer-events: auto;
+}
+.rival-challenge .rc-head {
+  font-size: calc(0.72rem * var(--text-scale));
+  letter-spacing: 0.07em;
+  color: #f9a8d4;
+  font-weight: 800;
+}
+.rival-challenge .rc-name {
+  font-size: calc(0.98rem * var(--text-scale));
+  font-weight: 900;
+  color: #fff;
+  margin: 0.18rem 0;
+}
+.rival-challenge .rc-actions {
+  display: flex;
+  gap: 0.42rem;
+  margin-top: 0.52rem;
+}
+
+.scrapbook-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.62rem;
+}
+.scrapbook-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 52dvh;
+  overflow-y: auto;
+  padding-right: 0.15rem;
+}
+.scrapbook-card {
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(232, 178, 90, 0.22);
+  align-items: center;
+}
+.scrapbook-thumb {
+  flex: 0 0 84px;
+  width: 84px;
+  height: 52px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 3px solid #f2e3c2;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+  background: #1a2230;
+  display: grid;
+  place-items: center;
+}
+.scrapbook-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.scrapbook-thumb.placeholder {
+  color: rgba(242, 227, 194, 0.5);
+  font-size: 1.15rem;
+}
+.scrapbook-card-body {
+  min-width: 0;
+}
+
+
+.menu-playrow {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}

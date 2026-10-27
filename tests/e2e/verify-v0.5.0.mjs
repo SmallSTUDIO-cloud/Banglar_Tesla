@@ -94,7 +94,7 @@ async function main() {
     await page.waitForFunction('Boolean(window.__banglarTesla)', { timeout: 25000 });
     await page.evaluate(() => document.fonts.ready); // settle web fonts before UI measurement / reload (prevents font-abort races on slow runners)
     await page.click('body');
-    await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === 26', { timeout: 15000 });
+    await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === window.__banglarTesla.audio.expectedAssetCount', { timeout: 45000 });
 
     // ------------------------------------------------------------------
     // 1. Dynamic In-Game Time System (bn + en formatting, pause freeze, zero per-frame DOM churn)

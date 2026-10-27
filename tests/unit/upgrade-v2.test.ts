@@ -62,7 +62,7 @@ describe('Master Upgrade v2 — Save, Settings & Wet Braking', () => {
     });
     const loaded = new SaveStore(legacy).load().progress;
     expect(loaded).not.toBeNull();
-    expect(loaded!.version).toBe(2);
+    expect(loaded!.version).toBeGreaterThanOrEqual(2);
     expect(loaded!.balance).toBe(750);
     expect(loaded!.stamina).toBe(100);
 

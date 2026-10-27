@@ -36,6 +36,7 @@ import {
 } from '../blacklist/blacklistCatalog';
 import type { CinematicUiState } from '../blacklist/cinematic';
 import type { RaceResultSummary } from '../blacklist/raceSystem';
+import type { ScrapbookRecord, ScrapbookSnapshot } from '../career/scrapbook';
 
 export interface HudState {
   speed: number;
@@ -117,6 +118,7 @@ export interface UIBridge {
   settleRoadRagePay(): void;
   refuseRoadRagePay(): void;
   openBlacklist(from: 'menu' | 'hud' | 'pause'): void;
+  openCareerScrapbook(): void;
   startRivalEvent(eventId: string): void;
   playRivalIntro(rank: number, launchRaceAfter?: boolean): void;
   stopWinnerPhoto(): void;
@@ -174,6 +176,15 @@ export class AppUI {
   private blacklistTab: 'rivals' | 'events' = 'rivals';
   private blacklistFrom: 'menu' | 'hud' | 'pause' = 'menu';
   private toastLastAt = new Map<string, number>();
+  // vNext §4 weather overlays: event-driven writes only (no per-frame DOM churn)
+  private sunGlareEl: HTMLElement | null = null;
+  private sunGlareState = '';
+  private lightningEl: HTMLElement | null = null;
+  private rainDropEls: HTMLElement[] = [];
+  private rainDropsActive = false;
+  private stuntChipEl: HTMLElement | null = null;
+  private rivalChallengeEl: HTMLElement | null = null;
+  private scrapbookEl: HTMLElement | null = null;
   private busy = false;
   private installEvent: Event | null = null;
   private currentTape: 'cassette' | 'radio' | 'brishti' = 'cassette';
@@ -186,6 +197,7 @@ export class AppUI {
     this.root = document.getElementById('ui-root') ?? document.body;
     this.toastStack = h('div', { class: 'toast-stack' });
     this.root.append(this.toastStack);
+    this.buildWeatherOverlays();
     this.buildMenu();
     this.buildHud();
     this.buildPause();
@@ -450,6 +462,17 @@ export class AppUI {
       button(t('common.credits'), { variant: 'ghost', attrs: { 'data-action': 'open-credits' }, onClick: () => this.openCredits() }),
     );
 
+    // Career scrapbook sits beside Continue (career-history context) — keeps the
+    // 4-button secondary row intact for 915x412 landscape clipping budgets.
+    const scrapbookBtn = button(t('scrapbook.open'), {
+      variant: 'ghost',
+      attrs: { 'data-action': 'open-scrapbook', id: 'menu-scrapbook-btn' },
+      onClick: () => {
+        this.bridge.audio.uiTap();
+        this.bridge.openCareerScrapbook();
+      },
+    });
+
     const meta = h('div', { class: 'menu-meta' },
       h('span', { text: `v${APP_VERSION}` }),
       h('span', { text: '·' }),
@@ -461,7 +484,7 @@ export class AppUI {
     const actions = h('div', { class: 'menu-actions' },
       playBtn,
       blacklistBtn,
-      h('div', { class: 'menu-playrow' }, continueBtn),
+      h('div', { class: 'menu-playrow' }, continueBtn, scrapbookBtn),
       secondary,
       meta,
     );
@@ -2245,6 +2268,7 @@ export class AppUI {
       display: (v) => `${Math.round(v * 100)}%`,
     }));
     body.append(toggle({ label: t('settings.cameraShake'), value: s.cameraShake, onChange: (v) => patch({ cameraShake: v }) }));
+    body.append(toggle({ label: t('settings.lowFlash'), value: s.lowFlash, onChange: (v) => patch({ lowFlash: v }) }));
     body.append(toggle({ label: t('settings.haptics'), value: s.haptics, note: t('settings.hapticsNote'), onChange: (v) => patch({ haptics: v }) }));
 
     // language + accessibility
@@ -2752,6 +2776,194 @@ export class AppUI {
         }),
       ),
     );
+  }
+
+  /** Pooled weather overlays — created ONCE at boot, mutated only on weather events. */
+  private buildWeatherOverlays(): void {
+    this.sunGlareEl = h('div', { class: 'sun-glare', attrs: { 'aria-hidden': 'true' } });
+    this.lightningEl = h('div', { class: 'lightning-flash', attrs: { 'aria-hidden': 'true' } });
+    this.root.append(this.sunGlareEl, this.lightningEl);
+    // 10 pooled screen droplets with compositor-driven CSS drip animation
+    for (let i = 0; i < 10; i++) {
+      const drop = h('div', {
+        class: 'rain-drop',
+        attrs: {
+          'aria-hidden': 'true',
+          style: `left:${(i * 9.7 + 5) % 96}%;top:${-6 - (i % 4) * 5}%;animation-delay:${(i * 0.47).toFixed(2)}s;animation-duration:${(2.1 + (i % 3) * 0.7).toFixed(2)}s`,
+        },
+      });
+      this.rainDropEls.push(drop);
+      this.root.append(drop);
+    }
+    this.setRainDrops(false);
+  }
+
+  /** Angle-dependent sun glare overlay (vNext §4 Sunny state). Dirty-checked. */
+  setSunGlare(strength: number, screenX: number, screenY: number): void {
+    if (!this.sunGlareEl) return;
+    const s = Math.max(0, Math.min(1, strength));
+    const key = `${s.toFixed(2)}|${Math.round(screenX / 24)}|${Math.round(screenY / 24)}`;
+    if (key === this.sunGlareState) return;
+    this.sunGlareState = key;
+    this.sunGlareEl.style.opacity = s.toFixed(2);
+    this.sunGlareEl.style.transform = `translate(${Math.round(screenX)}px, ${Math.round(screenY)}px)`;
+    this.sunGlareEl.classList.toggle('on', s > 0.02);
+  }
+
+  /** Lightning flash overlay — one style write per strike, CSS handles the fade. */
+  triggerLightningFlash(strength: number, flashAllowed: boolean): void {
+    if (!this.lightningEl) return;
+    const s = flashAllowed ? Math.max(0.12, Math.min(0.55, strength)) : Math.min(0.12, strength * 0.2);
+    this.lightningEl.style.opacity = String(s);
+    // Force style flush so the CSS fade transition retriggers per strike
+    void this.lightningEl.getBoundingClientRect();
+    this.lightningEl.style.opacity = '0';
+  }
+
+  /** Toggle the pooled rain droplets (event-driven, zero per-frame cost). */
+  setRainDrops(active: boolean): void {
+    if (active === this.rainDropsActive) return;
+    this.rainDropsActive = active;
+    for (const drop of this.rainDropEls) drop.classList.toggle('on', active);
+  }
+
+  /** Bounded stunt/score HUD chip (vNext §9). One node, dirty text writes only. */
+  showStuntChip(text: string, points: number, combo: number): void {
+    if (!this.stuntChipEl) {
+      this.stuntChipEl = h('div', { class: 'stunt-chip', attrs: { 'aria-live': 'polite' } });
+      this.root.append(this.stuntChipEl);
+    }
+    this.stuntChipEl.textContent = `${text} +${points}${combo > 1 ? ` ×${combo}` : ''}`;
+    this.stuntChipEl.classList.add('on');
+    window.clearTimeout(this.stuntChipTimer);
+    this.stuntChipTimer = window.setTimeout(() => {
+      this.stuntChipEl?.classList.remove('on');
+    }, 1700);
+  }
+  private stuntChipTimer = 0;
+
+  /**
+   * §8 spontaneous rival challenge offer (accept/decline). Replaces nothing;
+   * only shown from free-roam recognition with cooldowns in the game layer.
+   */
+  showRivalChallenge(
+    name: string,
+    territory: string,
+    onAccept: () => void,
+    onDecline: () => void,
+  ): void {
+    this.hideRivalChallenge();
+    const card = h(
+      'div',
+      { class: 'rival-challenge', attrs: { role: 'dialog', 'aria-label': name } },
+      h('div', { class: 'rc-head', text: t('rival.challengeTitle') }),
+      h('div', { class: 'rc-name', text: name }),
+      h('div', { class: 'tiny muted', text: territory }),
+      h(
+        'div',
+        { class: 'rc-actions' },
+        button(t('rival.accept'), {
+          variant: 'primary',
+          small: true,
+          attrs: { id: 'rival-accept-btn' },
+          onClick: () => {
+            this.hideRivalChallenge();
+            onAccept();
+          },
+        }),
+        button(t('rival.decline'), {
+          variant: 'ghost',
+          small: true,
+          attrs: { id: 'rival-decline-btn' },
+          onClick: () => {
+            this.hideRivalChallenge();
+            onDecline();
+          },
+        }),
+      ),
+    );
+    this.rivalChallengeEl = card;
+    this.root.append(card);
+  }
+
+  hideRivalChallenge(): void {
+    if (this.rivalChallengeEl) {
+      this.rivalChallengeEl.remove();
+      this.rivalChallengeEl = null;
+    }
+  }
+
+  /** §10 permanent career scrapbook screen (metadata + bounded framed photos). */
+  openScrapbook(snapshot: ScrapbookSnapshot, records: readonly ScrapbookRecord[]): void {
+    if (this.scrapbookEl) {
+      this.scrapbookEl.remove();
+      this.screens.delete('scrapbook');
+      this.scrapbookEl = null;
+    }
+    const { wrap, body } = sheet(t('scrapbook.title'), {
+      subtitle: t('scrapbook.subtitle'),
+      onClose: () => this.closeScrapbook(),
+    });
+    wrap.id = 'scrapbook-sheet';
+
+    const stats = h(
+      'div',
+      { class: 'scrapbook-stats' },
+      h('span', { class: 'pill gold', text: `${t('scrapbook.wins')}: ${snapshot.raceWins}` }),
+      h('span', { class: 'pill', text: `${t('scrapbook.losses')}: ${snapshot.raceLosses}` }),
+      h('span', { class: 'pill', text: `${t('scrapbook.topSpeed')}: ${Math.round(snapshot.topSpeedKmh)} km/h` }),
+      h('span', { class: 'pill', text: `${t('scrapbook.escapes')}: ${snapshot.policeEscapes}` }),
+      h('span', { class: 'pill', text: `${t('scrapbook.nearMisses')}: ${snapshot.nearMisses}` }),
+      h('span', { class: 'pill', text: `${t('scrapbook.stunts')}: ${snapshot.stunts}` }),
+    );
+
+    const listWrap = h('div', { class: 'scrapbook-list' });
+    for (const rec of [...records].reverse().slice(0, 80)) {
+      const card = h(
+        'div',
+        { class: 'scrapbook-card', attrs: { 'data-record-id': rec.id } },
+        rec.photoThumb
+          ? (() => {
+              const thumb = h('div', { class: 'scrapbook-thumb' });
+              const img = document.createElement('img');
+              img.src = rec.photoThumb;
+              img.alt = rec.titleEn;
+              img.loading = 'lazy';
+              thumb.append(img);
+              return thumb;
+            })()
+          : h('div', { class: 'scrapbook-thumb placeholder', text: '🖼' }),
+        h(
+          'div',
+          { class: 'scrapbook-card-body' },
+          h('strong', { text: getLocale() === 'en' ? rec.titleEn : rec.titleBn }),
+          h('div', { class: 'tiny muted', text: getLocale() === 'en' ? rec.detailEn : rec.detailBn }),
+          h('div', {
+            class: 'tiny muted',
+            text: `${rec.vehicleId} · ${String(Math.floor(rec.minutesOfDay / 60)).padStart(2, '0')}:${String(
+              Math.floor(rec.minutesOfDay % 60),
+            ).padStart(2, '0')}${rec.topSpeedKmh ? ` · ${Math.round(rec.topSpeedKmh)} km/h` : ''}${
+              rec.takaDelta ? ` · ${rec.takaDelta > 0 ? '+' : ''}${rec.takaDelta}৳` : ''
+            }`,
+          }),
+        ),
+      );
+      listWrap.append(card);
+    }
+
+    body.append(stats, listWrap, button(t('common.back'), { variant: 'ghost', wide: true, onClick: () => this.closeScrapbook() }));
+    this.scrapbookEl = h('div', { class: 'screen' }, wrap);
+    this.register('scrapbook', this.scrapbookEl);
+    this.show('scrapbook');
+  }
+
+  closeScrapbook(): void {
+    if (this.scrapbookEl) {
+      this.scrapbookEl.remove();
+      this.screens.delete('scrapbook');
+      this.scrapbookEl = null;
+    }
+    this.show('menu');
   }
 
   openRaceResult(summary: RaceResultSummary): void {

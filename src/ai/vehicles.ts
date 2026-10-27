@@ -21,6 +21,7 @@
 
 import * as THREE from 'three';
 import { Bucket } from '../world/geo';
+import { buildDriverArms, type ArmChainPose } from '../characters/limbRig';
 
 export type TrafficType =
   | 'cng'
@@ -119,6 +120,108 @@ const lampInstMat = new THREE.MeshBasicMaterial({
 
 const BRAKE_ON = new THREE.Color('#ff2b24');
 const BRAKE_OFF = new THREE.Color('#4f0d0d');
+
+// ---------------------------------------------------------------------------
+// Shared driver limb chains (Master Upgrade vNext §2 — one authoritative pose
+// per character; eliminates the "extra/duplicated hands" misaligned-arm bug).
+// Pure data: unit tests assert wrist-to-hand continuity and grip seating.
+// ---------------------------------------------------------------------------
+
+/** NPC traffic rickshaw puller gripping the handlebar cross-bar at ±0.205. */
+export const NPC_RICKSHAW_PULLER_ARMS = buildDriverArms({
+  shoulderX: 0.185,
+  shoulderY: 1.40,
+  shoulderZ: 0.10,
+  gripLeft: { x: 0.205, y: 1.155, z: 0.725 },
+  gripRight: { x: -0.205, y: 1.155, z: 0.725 },
+  upperRadius: 0.038,
+  foreRadius: 0.034,
+  handSize: { x: 0.062, y: 0.058, z: 0.088 },
+  elbowBend: 0.085,
+  elbowLift: 0.05,
+  handRotLeft: { x: 0.12, y: 0, z: -0.1 },
+  handRotRight: { x: 0.12, y: 0, z: 0.1 },
+});
+
+/** NPC traffic rickshaw passenger — both hands resting naturally on the lap. */
+export const NPC_RICKSHAW_PASSENGER_ARMS = buildDriverArms({
+  shoulderX: 0.215,
+  shoulderY: 1.26,
+  shoulderZ: -0.72,
+  gripLeft: { x: 0.175, y: 0.965, z: -0.575 },
+  gripRight: { x: -0.055, y: 0.965, z: -0.575 },
+  upperRadius: 0.036,
+  foreRadius: 0.032,
+  handSize: { x: 0.085, y: 0.05, z: 0.11 },
+  elbowBend: 0.055,
+  elbowLift: 0.02,
+});
+
+/** CNG driver gripping the steering wheel at (±0.165, 1.155, 0.70). */
+export const NPC_CNG_DRIVER_ARMS = buildDriverArms({
+  shoulderX: 0.155,
+  shoulderY: 1.23,
+  shoulderZ: 0.36,
+  gripLeft: { x: 0.165, y: 1.155, z: 0.70 },
+  gripRight: { x: -0.165, y: 1.155, z: 0.70 },
+  upperRadius: 0.036,
+  foreRadius: 0.032,
+  handSize: { x: 0.058, y: 0.052, z: 0.078 },
+  elbowBend: 0.07,
+  elbowLift: 0.04,
+  handRotLeft: { x: 0.5, y: 0, z: -0.35 },
+  handRotRight: { x: 0.5, y: 0, z: 0.35 },
+});
+
+/** EasyBike driver gripping the cabin handlebar at (±0.175, 1.09, 0.84). */
+export const NPC_EASYBIKE_DRIVER_ARMS = buildDriverArms({
+  shoulderX: 0.165,
+  shoulderY: 1.22,
+  shoulderZ: 0.52,
+  gripLeft: { x: 0.175, y: 1.09, z: 0.84 },
+  gripRight: { x: -0.175, y: 1.09, z: 0.84 },
+  upperRadius: 0.036,
+  foreRadius: 0.032,
+  handSize: { x: 0.058, y: 0.052, z: 0.078 },
+  elbowBend: 0.06,
+  elbowLift: 0.03,
+  handRotLeft: { x: 0.18, y: 0, z: -0.12 },
+  handRotRight: { x: 0.18, y: 0, z: 0.12 },
+});
+
+/**
+ * Emit one contiguous arm chain into a fleet detail bucket: upper arm, elbow
+ * ball, forearm (ending INSIDE the hand) and the hand box seated on the grip.
+ */
+function emitArmChain(bucket: Bucket, chain: ArmChainPose, skinHex: string, sleeveHex: string): void {
+  const u = chain.upper;
+  bucket.cylinder(u.mid, u.radius, u.length, sleeveHex, u.rot);
+  bucket.cylinder(chain.elbowCap.center, chain.elbowCap.radius, chain.elbowCap.radius * 1.15, skinHex, u.rot);
+  const f = chain.fore;
+  bucket.cylinder(f.mid, f.radius, f.length, skinHex, f.rot);
+  // Hand box seated on the grip — forearm's rounded end stays buried inside it.
+  bucket.box(chain.hand.center, chain.hand.size, skinHex, chain.hand.rot);
+  // Small curled-knuckle ridge so the grip reads as a closed hand, not a cube.
+  const gripDir = normalizeGripDir(chain);
+  bucket.box(
+    {
+      x: chain.hand.center.x + gripDir.x * 0.024,
+      y: chain.hand.center.y + gripDir.y * 0.024,
+      z: chain.hand.center.z + gripDir.z * 0.024,
+    },
+    { x: chain.hand.size.x * 0.86, y: chain.hand.size.y * 0.72, z: chain.hand.size.z * 0.62 },
+    skinHex,
+    chain.hand.rot,
+  );
+}
+
+function normalizeGripDir(chain: ArmChainPose): { x: number; y: number; z: number } {
+  const dx = chain.grip.x - chain.elbow.x;
+  const dy = chain.grip.y - chain.elbow.y;
+  const dz = chain.grip.z - chain.elbow.z;
+  const l = Math.hypot(dx, dy, dz) || 1;
+  return { x: dx / l, y: dy / l, z: dz / l };
+}
 
 const archetypeCache = new Map<TrafficType, TrafficArchetype>();
 
@@ -220,13 +323,17 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
       }
       detail.box({ x: sx * 1.12, y: 1.12, z: 0.76 }, { x: 0.10, y: 0.08, z: 0.03 }, '#cfd6de');
     }
-    // Upholstered bench + visible CNG driver with head, hair & arms gripping handlebar!
+    // Upholstered bench + visible CNG driver with head, hair & steering wheel grip!
     detail.box({ x: 0, y: 0.68, z: -0.58 }, { x: 1.08, y: 0.28, z: 0.45 }, '#542a1c');
     detail.box({ x: 0, y: 0.98, z: 0.24 }, { x: 0.34, y: 0.42, z: 0.22 }, '#2b4c72');
     detail.cylinder({ x: 0, y: 1.26, z: 0.25 }, 0.095, 0.19, '#8d5b3c');
     detail.cylinder({ x: 0, y: 1.34, z: 0.24 }, 0.098, 0.07, '#18181b');
-    detail.cylinder({ x: -0.15, y: 1.02, z: 0.42 }, 0.035, 0.34, '#8d5b3c', { x: -1.1 });
-    detail.cylinder({ x: 0.15, y: 1.02, z: 0.42 }, 0.035, 0.34, '#8d5b3c', { x: -1.1 });
+    // Compact steering wheel the two hands wrap (one hand per side).
+    detail.torus({ x: 0, y: 1.155, z: 0.70 }, 0.175, '#22282d', { x: 0.72 });
+    detail.cylinder({ x: 0, y: 1.08, z: 0.60 }, 0.018, 0.24, '#3a4046', { x: 1.12 });
+    for (const chain of NPC_CNG_DRIVER_ARMS) {
+      emitArmChain(detail, chain, '#8d5b3c', '#2b4c72');
+    }
     detail.cylinder({ x: 0, y: 0.86, z: -1.07 }, 0.22, 0.11, '#1a1c1f', { x: Math.PI / 2 });
     addHead(0, 0.64, 1.15, 0.16, 0.16, 0.04, '#fff6cf');
     for (const sx of [-0.34, 0.34]) {
@@ -267,10 +374,13 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     detail.box({ x: 0, y: 1.02, z: -0.98 }, { x: 0.88, y: 0.56, z: 0.06 }, '#f2b938');
     for (const side of [-1, 1]) {
       detail.box({ x: side * 0.52, y: 0.72, z: -0.66 }, { x: 0.12, y: 0.06, z: 0.72 }, '#145a44');
-      // Puller attached arms + hands reaching forward to handlebar grips!
-      detail.cylinder({ x: side * 0.19, y: 1.24, z: 0.36 }, 0.036, 0.56, '#8b5e3c', { x: -1.24, z: side * -0.06 });
-      detail.box({ x: side * 0.20, y: 1.15, z: 0.71 }, { x: 0.05, y: 0.05, z: 0.07 }, '#7a5032');
+      // Pedalling leg (thigh + calf) — feet reach the crank below.
       detail.cylinder({ x: side * 0.10, y: 0.82, z: 0.05 }, 0.055, 0.44, '#1f4e70', { x: 0.16 });
+      detail.box({ x: side * 0.11, y: 0.58, z: 0.12 }, { x: 0.075, y: 0.05, z: 0.16 }, '#2c2622');
+    }
+    // Contiguous shoulder->elbow->forearm->hand chains: exactly one hand per grip.
+    for (const chain of NPC_RICKSHAW_PULLER_ARMS) {
+      emitArmChain(detail, chain, '#8b5e3c', '#d98236');
     }
     detail.box({ x: 0, y: 1.71, z: -0.64 }, { x: 0.98, y: 0.025, z: 0.12 }, '#f2b938');
     detail.box({ x: 0, y: 1.52, z: -0.26 }, { x: 0.96, y: 0.09, z: 0.03 }, '#f2b938');
@@ -278,10 +388,13 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     detail.cylinder({ x: 0, y: 1.49, z: 0.14 }, 0.095, 0.19, '#8b5e3c');
     detail.cylinder({ x: 0, y: 1.57, z: 0.13 }, 0.098, 0.07, '#18181b');
     detail.cylinder({ x: 0, y: 1.54, z: 0.14 }, 0.102, 0.03, '#c92a2a'); // red gamcha headband!
-    // Seated passenger with hair & arms
+    // Seated passenger with hair + resting arms/hands on the lap
     detail.box({ x: 0.06, y: 1.10, z: -0.74 }, { x: 0.32, y: 0.38, z: 0.22 }, '#f0b429');
     detail.cylinder({ x: 0.06, y: 1.38, z: -0.74 }, 0.09, 0.18, '#8b5e3c');
     detail.cylinder({ x: 0.06, y: 1.46, z: -0.75 }, 0.093, 0.07, '#18181b');
+    for (const passArm of NPC_RICKSHAW_PASSENGER_ARMS) {
+      emitArmChain(detail, passArm, '#8b5e3c', '#f0b429');
+    }
     addHead(0, 0.90, 0.85, 0.08, 0.08, 0.03, '#ffe7a8');
     addBrake(-0.32, 0.60, -1.03, 0.06, 0.05, 0.025);
     addBrake(0.32, 0.60, -1.03, 0.06, 0.05, 0.025);
@@ -311,12 +424,15 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     detail.box({ x: 0, y: 0.32, z: -0.35 }, { x: 0.96, y: 0.16, z: 0.95 }, '#1d242b');
     detail.box({ x: 0, y: 0.72, z: -0.82 }, { x: 1.16, y: 0.18, z: 0.42 }, '#7a2323');
     detail.box({ x: 0, y: 0.72, z: -0.12 }, { x: 1.16, y: 0.18, z: 0.38 }, '#7a2323');
-    // Visible EasyBike driver with head, cap & arms
+    // Visible EasyBike driver with head, cap & hands on the cabin handlebar
     detail.box({ x: 0, y: 1.02, z: 0.46 }, { x: 0.34, y: 0.42, z: 0.22 }, '#1e3a8a');
     detail.cylinder({ x: 0, y: 1.31, z: 0.47 }, 0.095, 0.18, '#8d5b3c');
     detail.cylinder({ x: 0, y: 1.39, z: 0.47 }, 0.098, 0.07, '#f8fafc');
-    detail.cylinder({ x: -0.16, y: 1.06, z: 0.65 }, 0.035, 0.34, '#8d5b3c', { x: -1.15 });
-    detail.cylinder({ x: 0.16, y: 1.06, z: 0.65 }, 0.035, 0.34, '#8d5b3c', { x: -1.15 });
+    detail.cylinder({ x: 0, y: 1.09, z: 0.84 }, 0.016, 0.42, '#cfd6de', { z: Math.PI / 2 });
+    detail.cylinder({ x: 0, y: 1.04, z: 0.80 }, 0.018, 0.12, '#8a929c', { x: 1.15 });
+    for (const chain of NPC_EASYBIKE_DRIVER_ARMS) {
+      emitArmChain(detail, chain, '#8d5b3c', '#1e3a8a');
+    }
     addHead(0, 0.74, 1.25, 0.16, 0.14, 0.04, '#e8fbff');
     addBrake(-0.46, 0.56, -1.18, 0.16, 0.08, 0.03);
     addBrake(0.46, 0.56, -1.18, 0.16, 0.08, 0.03);

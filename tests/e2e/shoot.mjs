@@ -80,7 +80,7 @@ for (const shot of shots) {
     await page.screenshot({ path: path.join(out, 'shot-chase.png') });
   } else if (shot === 'night') {
     await page.evaluate(() => window.__banglarTesla.debugStartMode('free'));
-    await page.evaluate(() => window.__banglarTesla.debugSetPhase('night', 'clear'));
+    await page.evaluate(() => window.__banglarTesla.debugSetPhase('night', 'sunny'));
     await new Promise((r) => setTimeout(r, 1400));
     await page.screenshot({ path: path.join(out, 'shot-night.png') });
   } else if (shot === 'rain') {

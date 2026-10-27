@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import type { DayPhase, QualitySettings, WeatherKind } from '../core/config';
 import { clamp, damp } from '../core/mathx';
 import { radialSprite } from './textures';
+import { targetBlendFor, type WeatherBlend } from './weatherDirector';
 
 interface PhaseConfig {
   zenith: string;
@@ -137,7 +138,7 @@ export class EnvironmentSystem {
   private scene: THREE.Scene;
   private quality: QualitySettings;
   private phase: DayPhase = 'morning';
-  private weather: WeatherKind = 'clear';
+  private weather: WeatherKind = 'sunny';
   private rain: THREE.Points | null = null;
   private rainVel: Float32Array = new Float32Array(0);
   private rainDrops: Float32Array = new Float32Array(0);
@@ -155,9 +156,18 @@ export class EnvironmentSystem {
   };
   wetness = 0;
   targetWetness = 0;
+
+  /** Live weather blend (vNext §4) — damped toward state targets, never snapped. */
+  private blend: WeatherBlend = { overcast: 0, wet: 0, wind: 0.15, rain: 0, lightning: 0 };
+  private blendDirty = false;
+  private applyAccum = 0;
+  private lightningFlash = 0;
+
   /** Set by the world so the road can darken and shimmer when wet. */
   onWetnessChange: ((wet: number) => void) | null = null;
   onPhaseChange: ((phase: DayPhase) => void) | null = null;
+  /** Lightning strike visuals: DOM overlay + thunder scheduling (no new lights!). */
+  onLightningFlash?: (strength: number, flashAllowed: boolean) => void;
 
   constructor(scene: THREE.Scene, quality: QualitySettings) {
     this.scene = scene;
@@ -324,9 +334,49 @@ export class EnvironmentSystem {
 
   setWeather(weather: WeatherKind): void {
     this.weather = weather;
-    this.targetWetness = weather === 'rain' ? 1 : weather === 'overcast' ? 0.12 : 0;
+    this.blend = { ...targetBlendFor(weather) };
+    this.targetWetness = this.blend.wet;
     this.rebuildRain();
     this.apply();
+  }
+
+  /**
+   * Gradual weather-blend input from the WeatherDirector (vNext §4). Visuals are
+   * recomputed on a bounded throttle (~8 Hz) inside `update`, never per-frame.
+   */
+  setWeatherBlend(blend: WeatherBlend, wetTarget: number): void {
+    this.blend = {
+      overcast: blend.overcast,
+      wet: blend.wet,
+      wind: blend.wind,
+      rain: blend.rain,
+      lightning: blend.lightning,
+    };
+    this.targetWetness = wetTarget;
+    this.blendDirty = true;
+    this.rebuildRain();
+  }
+
+  /** Bounded lightning strike: brief world/sky illumination WITHOUT new lights. */
+  strike(intensity: number, flashAllowed: boolean): void {
+    this.lightningFlash = (flashAllowed ? 0.62 : 0.13) * clamp(intensity, 0, 1);
+    this.applyAccum = 1; // force immediate visual response
+    this.blendDirty = true;
+    this.onLightningFlash?.(this.lightningFlash, flashAllowed);
+  }
+
+  /** 0..1.35 wind strength for litter/canopy sway and wind ambience. */
+  getWindStrength(): number {
+    return this.blend.wind;
+  }
+
+  /** Latest lightning flash level (for screen overlay decay tests). */
+  get lightningLevel(): number {
+    return this.lightningFlash;
+  }
+
+  get weatherBlend(): Readonly<WeatherBlend> {
+    return this.blend;
   }
 
   getPhase(): DayPhase {
@@ -339,8 +389,10 @@ export class EnvironmentSystem {
 
   private apply(): void {
     const cfg = PHASES[this.phase];
-    const overcast = this.weather === 'overcast' ? 0.55 : this.weather === 'rain' ? 0.42 : 1;
-    const wetFog = this.weather === 'rain' ? 1.55 : 1;
+    // Blend-driven sun/sky multipliers: sunny 1.0, overcast ~0.55, rain ~0.41, storm ~0.18.
+    const overcast = clamp(1 - 0.82 * this.blend.overcast, 0.14, 1.05);
+    const wetFog = 1 + 0.55 * this.blend.rain + 0.2 * this.blend.overcast + 0.12 * this.blend.wind;
+    const flash = this.lightningFlash;
     this.skyUniforms.uZenith.value.set(cfg.zenith).multiplyScalar(overcast * 0.96 + 0.04);
     this.skyUniforms.uHorizon.value.set(cfg.horizon).multiplyScalar(overcast * 0.9 + 0.1);
     this.skyUniforms.uSunColor.value.set(cfg.sunColor).multiplyScalar(overcast);
@@ -351,22 +403,33 @@ export class EnvironmentSystem {
     const dir = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)).normalize();
     this.skyUniforms.uSunDir.value.copy(dir);
 
-    this.sun.color.set(this.phase === 'night' ? '#7f9ad0' : cfg.sunColor);
+    this.sun.color.set(flash > 0.02 ? '#dfe9ff' : this.phase === 'night' ? '#7f9ad0' : cfg.sunColor);
     this.sun.intensity = cfg.sunIntensity * overcast;
     // Night keeps a cool moonlight key so silhouettes never read as black cards.
     if (this.phase === 'night') this.sun.intensity = 0.22;
-    this.hemi.intensity = cfg.ambient * (this.weather === 'overcast' ? 1.25 : 1);
+    this.hemi.intensity = cfg.ambient * (this.blend.overcast > 0.35 ? 1.1 + this.blend.overcast * 0.3 : 1);
     if (this.phase === 'night') this.hemi.intensity = 0.16;
     if (this.phase === 'blue') this.hemi.intensity = 0.34;
+    // Lightning: bounded sun/hemi/exposure surge (zero new lights, zero shader variants).
+    if (flash > 0.002) {
+      this.sun.intensity += flash * 7.5;
+      this.hemi.intensity += flash * 1.65;
+      this.ambient.intensity += flash * 0.55;
+    }
     this.hemi.color.set(this.phase === 'night' ? '#2b3a52' : '#bcd6ee');
     this.hemi.groundColor.set(this.phase === 'night' ? '#0f1518' : '#6b5a44');
     this.ambient.intensity = this.phase === 'night' ? 0.08 : 0.3;
 
     if (this.scene.fog instanceof THREE.FogExp2) {
       this.scene.fog.color.set(cfg.fog);
-      if (this.weather === 'overcast') this.scene.fog.color.lerp(new THREE.Color('#9aa8ac'), 0.5);
-      if (this.weather === 'rain') this.scene.fog.color.lerp(new THREE.Color('#7d8f94'), 0.55);
-      this.scene.fog.density = cfg.fogDensity * wetFog * (this.quality.viewDistance < 140 ? 1.45 : 1);
+      if (this.blend.overcast > 0.3) {
+        this.scene.fog.color.lerp(new THREE.Color('#9aa8ac'), Math.min(0.62, this.blend.overcast * 0.62));
+      }
+      if (this.blend.rain > 0.25) {
+        this.scene.fog.color.lerp(new THREE.Color('#7d8f94'), Math.min(0.62, this.blend.rain * 0.62));
+      }
+      this.scene.fog.density =
+        cfg.fogDensity * wetFog * (this.quality.viewDistance < 140 ? 1.45 : 1) + (this.lightningFlash > 0.02 ? -0.0006 : 0);
     }
     if (this.scene.background instanceof THREE.Color) {
       this.scene.background.copy(this.skyUniforms.uHorizon.value);
@@ -391,13 +454,17 @@ export class EnvironmentSystem {
 
   private rebuildRain(): void {
     if (!this.rain || !this.rainGeo) return;
-    if (this.weather !== 'rain') {
+    const rainAmt = Math.max(this.blend.rain, this.weather === 'rain' || this.weather === 'storm' ? 0.45 : 0);
+    if (rainAmt <= 0.03) {
       this.rain.visible = false;
       this.activeRainDrops = 0;
       return;
     }
     const maxDrops = this.rainVel.length;
-    const count = Math.min(maxDrops, Math.max(90, this.quality.rainParticles));
+    const count = Math.min(
+      maxDrops,
+      Math.max(60, Math.round(this.quality.rainParticles * clamp(0.5 + rainAmt * 0.7, 0.5, 1.3))),
+    );
     this.activeRainDrops = count;
     this.rainGeo.setDrawRange(0, count * 2);
     this.rain.visible = true;
@@ -426,8 +493,21 @@ export class EnvironmentSystem {
     const previousWet = this.wetness;
     this.wetness = damp(this.wetness, this.targetWetness, 0.8, dt);
     if (Math.abs(this.wetness - previousWet) > 0.0008) this.onWetnessChange?.(this.wetness);
+
+    // Lightning flash decay (brief, bounded) + throttled blend application (~8 Hz max)
+    if (this.lightningFlash > 0) {
+      this.lightningFlash = Math.max(0, this.lightningFlash - dt * 2.35);
+    }
+    this.applyAccum += dt;
+    if (this.blendDirty && (this.lightningFlash > 0 || this.applyAccum >= 0.12)) {
+      this.applyAccum = 0;
+      this.blendDirty = false;
+      this.apply();
+    }
+
     const cfg = PHASES[this.phase];
-    const lampTarget = cfg.lamps * (this.weather === 'rain' && this.phase !== 'night' ? 0.5 : 1);
+    const lampTarget =
+      cfg.lamps * ((this.blend.rain > 0.25 || this.blend.overcast > 0.6) && this.phase !== 'night' ? 0.62 : 1);
 
     if (this.lampPositions.length > 0 && this.glowSprites.length > 0) {
       if (lampTarget <= 0.02) {

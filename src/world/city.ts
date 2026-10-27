@@ -38,6 +38,7 @@ import {
   shutterTexture,
   sidewalkTexture,
 } from './textures';
+import { isDrmcKeepClear } from './drmcGeo';
 
 export interface Collider {
   minX: number;
@@ -494,7 +495,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       const curbDist = seg.halfWidth + Math.min(seg.sidewalk * 0.72, 1.55);
       const lx = seg.ax + seg.ux * d + seg.leftX * curbDist * side;
       const lz = seg.az + seg.uz * d + seg.leftZ * curbDist * side;
-      if (!isClearOfRoads(lx, lz, 0.95)) continue;
+      if (!isClearOfRoads(lx, lz, 0.95) || isDrmcKeepClear(lx, lz, 0.2)) continue;
 
       // Inward normal toward road centre: (-leftX * side, -leftZ * side)
       const inX = -seg.leftX * side;
@@ -569,7 +570,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       if (td <= seg.length - 10) {
         const tx = seg.ax + seg.ux * td + seg.leftX * (curbDist + 0.18) * side;
         const tz = seg.az + seg.uz * td + seg.leftZ * (curbDist + 0.18) * side;
-        if (isClearOfRoads(tx, tz, 1.15)) {
+        if (isClearOfRoads(tx, tz, 1.15) && !isDrmcKeepClear(tx, tz, 0.5)) {
           const sec = sectorDetails[sectorIndex(tx, tz)];
           const treeH = 3.2 + rng() * 1.4;
           sec.cylinder({ x: tx, y: treeH * 0.42, z: tz }, 0.16, treeH * 0.84, '#5a402a');
@@ -611,6 +612,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     depth: number,
     yaw: number,
   ): boolean => {
+    if (isDrmcKeepClear(cx, cz, 1.0)) return false; // DRMC campus grounds (vNext §1)
     if (!isFootprintClearOfCorridor(cx, cz, width, depth, yaw, 0.55)) return false;
     const rad = Math.hypot(width * 0.5, depth * 0.5) * 0.84;
     for (let i = 0; i < placedBuildings.length; i++) {

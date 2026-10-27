@@ -312,6 +312,23 @@ export class TrafficSystem {
     this.debugSimFrozen = frozen;
   }
 
+  /**
+   * Induce a bounded slow zone / jam near (x, z) — used by the event director's
+   * traffic-accident & broken-vehicle zones (vNext §7). Congestion decays
+   * exponentially in `update`, so cleanup is guaranteed with no extra calls.
+   */
+  induceCongestionNear(x: number, z: number, amount = 1.6, radius = 24): void {
+    const rSq = radius * radius;
+    for (const lane of this.graph.lanes) {
+      const mx = (lane.ax + lane.bx) * 0.5;
+      const mz = (lane.az + lane.bz) * 0.5;
+      if ((mx - x) * (mx - x) + (mz - z) * (mz - z) <= rSq) {
+        const prev = this.segmentCongestion.get(lane.segmentId) ?? 1.0;
+        this.segmentCongestion.set(lane.segmentId, Math.min(4.8, prev + amount));
+      }
+    }
+  }
+
   update(dt: number): void {
     if (this.debugSimFrozen) return;
     this.clock += dt;

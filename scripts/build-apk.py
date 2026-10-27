@@ -29,7 +29,7 @@ SMALI_DIR = ANDROID_MAIN / "smali"
 ASSETS_DIR = ANDROID_MAIN / "assets"
 PUBLIC_ASSETS_DIR = ASSETS_DIR / "public"
 ARTIFACTS_DIR = ROOT / "artifacts"
-OUT_APK = ARTIFACTS_DIR / "banglar-tesla-v0.5.1-debug.apk"
+OUT_APK = ARTIFACTS_DIR / "banglar-tesla-v0.6.0-debug.apk"
 STABLE_APK = ARTIFACTS_DIR / "Banglar-Tesla.apk"
 
 TOOLS_DIR = Path("/tmp/android-tools")
@@ -475,7 +475,7 @@ def build_and_verify() -> None:
                 "--version-code",
                 "5",
                 "--version-name",
-                "0.5.1",
+                "0.6.0",
                 "-0",
                 ".ttf",
                 "-0",
@@ -568,8 +568,8 @@ def build_and_verify() -> None:
         text=True,
     )
     print(badging.stdout.strip())
-    assert "versionCode='6'" in badging.stdout and "versionName='0.5.1'" in badging.stdout, (
-        "APK badging version mismatch: expected versionCode='6' versionName='0.5.1'"
+    assert "versionCode='7'" in badging.stdout and "versionName='0.6.0'" in badging.stdout, (
+        "APK badging version mismatch: expected versionCode='7' versionName='0.6.0'"
     )
 
     # 7. Byte-for-byte asset verification inside signed APK

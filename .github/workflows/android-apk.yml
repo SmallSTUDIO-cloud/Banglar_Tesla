@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publish APK to GitHub Release v0.5.1'
+        description: 'Publish APK to GitHub Release v0.6.0'
         required: false
         default: 'true'
 
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build Debug Android APK (v0.5.1)
+    name: Build Debug Android APK (v0.6.0)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -67,8 +67,8 @@ jobs:
             --java "$WORK_DIR/gen" \
             --min-sdk-version 24 \
             --target-sdk-version 34 \
-            --version-code 6 \
-            --version-name 0.5.1 \
+            --version-code 7 \
+            --version-name 0.6.0 \
             -0 .ttf -0 .png -0 .jpg -0 .webp -0 .mp3 -0 .ogg -0 .wav \
             --auto-add-overlay \
             "$WORK_DIR/res.zip"
@@ -89,7 +89,7 @@ jobs:
             -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-          OUT_APK="artifacts/banglar-tesla-v0.5.1-debug.apk"
+          OUT_APK="artifacts/banglar-tesla-v0.6.0-debug.apk"
           STABLE_APK="artifacts/Banglar-Tesla.apk"
           "$BUILD_TOOLS/apksigner" sign \
             --ks "$KEYSTORE" \
@@ -110,43 +110,43 @@ jobs:
       - name: Upload APK build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: banglar-tesla-v0.5.1-android-apk
+          name: banglar-tesla-v0.6.0-android-apk
           path: |
-            artifacts/banglar-tesla-v0.5.1-debug.apk
+            artifacts/banglar-tesla-v0.6.0-debug.apk
             artifacts/Banglar-Tesla.apk
           if-no-files-found: error
 
-      - name: Publish APK assets to GitHub Release v0.5.1
-        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.5.1]')
+      - name: Publish APK assets to GitHub Release v0.6.0
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.6.0]')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v0.5.1"
-          APK="artifacts/banglar-tesla-v0.5.1-debug.apk"
+          TAG="v0.6.0"
+          APK="artifacts/banglar-tesla-v0.6.0-debug.apk"
           STABLE="artifacts/Banglar-Tesla.apk"
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
           SIZE="$(stat -c%s "$APK")"
           NOTES=$(cat <<EOF
-          ## Banglar Tesla — বাংলার টেসলা (\`v0.5.1\`)
+          ## Banglar Tesla — বাংলার টেসলা (\`v0.6.0\`)
 
-          The **Master Upgrade v4** release: purpose-built Mohammadpur **Race-Map design**, full **4-Rickshaw Race mode** (you + 3 distinct AI rivals), **Printed-Photo Winner Snapshot**, visible rival-driver characters, per-rival skippable intro cinematics, NPC & world graphics quality passes, and a **Web/PC High** quality profile — on top of every \`v0.5.0\` system (physics, \`টার্বো\`, Blacklist #10→#1, 5-Heat Police Pursuit, Dynamic Clock, authentic Bengali speech).
+          **Master Upgrade vNext** — the Bangla-voice release: every intended Blacklist line now plays with per-character Bengali voices and distinct original music stings, plus the five-state dynamic weather system, the map-accurate **Dhaka Residential Model College (DRMC)** landmark, the permanent career scrapbook, a bounded Dhaka-life event director, rival recognition, stunt/combos, and full NPC/character rig integrity — on top of every \`v0.5.x\` system.
 
-          ### What's New in \`v0.5.1\`
-          - **Purpose-Built Race-Map Courses:** 17 validated Mohammadpur race blueprints (sprints, 2-lap circuits incl. Tajmahal–Shia Mosque & Asad Gate Grand Circuit) authored over the real OSM road graph — clear start/finish gantry, readable racing lines, wide overtaking/Turbo straights, tight \`gali\` corners, Box-Culvert/Overpass elevation crests (Beribadh, Ring Rd Shia Mosque overpass, Babar Rd canal bridge, Satmasjid culvert), and documented high-risk shortcuts (Kacha Bazar back-alley, Krishi Market diagonal, Aziz Moholla, Lalmatia cut, Chanmia bypass, Johuri chicane) that measurably save distance. Every course auto-validates grid clearance, carriageway bounds, gate reachability and AI waypoints.
-          - **4-Rickshaw Race Mode:** Exactly 3 distinct AI rivals + you on a collision-free staggered 2x2 grid under a Dhaka bamboo festoon arch — data-driven rivals with complementary tendencies (\`clean_line\` / \`aggressive_overtaker\` / \`shortcut_seeker\`), traffic- & roadblock-aware overtaking without teleporting, checkpoint/lap-based \`1/4\`-\`4/4\` standings HUD, safe course respawning, single-fire rewards, and clean pause/retry/quit handling.
-          - **Printed-Photo Winner Snapshot (Victory Only):** Original scrapbook-style photo frame (paper border, tape marks, Dhaka stamp) around the live 3D winning rickshaw with the driver's celebratory raised-fist pose, finish time, top speed, টাকা/REP rewards and full 4-racer final standings — with Continue / Race Again / Free Roam actions. Defeats use a separate non-photo results screen.
-          - **Visible Rival Characters & Per-Rival Cinematics:** All 10 Blacklist rivals now ride with recognizable drivers (expressive faces, eyes/brows/mouth, 10 distinct hair/headwear silhouettes, eyewear, 6 outfit styles, articulated arms/hands gripping the handlebar, animated pedal legs), crisp inline-SVG profile portraits in the Blacklist roster, and a skippable 6.5s per-rival character intro with voiced Bangla/English taunt.
-          - **NPC & World Graphics Quality Pass:** Pedestrians rebuilt with visible faces, hair/topi/orna silhouettes, swinging arms with attached hands, legs & sandals (9 shared instanced draw calls, LOD-throttled AI); traffic fleet resculpted (bus/truck/van/sedan/CNG/easybike/motorbike silhouettes, cabin drivers, plates, wheel wells); building facades gained floor-slab stringcourses, side windows with sunshades, shop pilasters, balcony sliding doors/planters, foundation plinths & gate pillars; sparse non-collidable instanced street litter (136 scraps, 1 draw call, wind-reactive) with zero collision impact.
-          - **Quality Profiles:** \`Performance\` / \`Balanced\` / \`High\` / \`Web/PC High\` presets (shadows, crowd, traffic, draw distance, texture quality) without ever forcing Low or altering physics/collisions.
+          ### What's New in \`v0.6.0\`
+          - **Bangla Voice Overhaul (release gate):** complete dialogue manifest (`src/audio/dialogueManifest.json`) with stable IDs — 39 Bangla + 32 English clips synthesized offline via libespeak-ng with manual hasant/ZWNJ Bengali shaping and a distinct pitch/rate identity per character. All **10 Blacklist intros** play sequenced voice (intro + taunt + matching subtitles) under a **distinct original music sting per rival**, skippable with clean audio/camera/rig cleanup. Honest QA status: synthesized speech requires human/device listening sign-off.
+          - **Five-State Dynamic Weather:** Sunny / Overcast / Rainy / Windy / Thunderstorm event-driven director with gradual blends (never instant swaps), camera sun-glare on sunny approaches, camera-anchored rain droplets, wind-driven litter sway, lightning + delayed thunder with a **low-flash comfort setting**, wet-road handling sync, race-finish protection and full save migration (\`clear\` → \`sunny\`).
+          - **DRMC on the Map (accuracy-gated):** OSM way 1008314351 campus boundary + way 1386522766 gate placed via a 10-control-point validated geographic fit (RMS 46 m characterized stylization) anchored to the real Shahjahan-Road boundary; bilingual gate signage, perimeter wall, white academic blocks, sports grounds, trees; route guidance reaches the gate from 3 districts; DEV accuracy overlay + keep-clear guarantees (no road ever blocked).
+          - **Career Scrapbook:** permanent deduplicated history (race wins/losses, Blacklist milestones, rival encounters, framed victory photo thumbnails, police escapes/Heat, near misses/stunts/combos, weather moments, purchases/upgrades, landmark visits) with write-once stable IDs, bounded storage (≤240 records, ≤8 photo thumbs), full save migration and a reopenable framed-photo UI.
+          - **Character & NPC Rig Integrity:** every driver now has exactly two contiguous arms and two hands wrapped on one handlebar (fixed the duplicated-hand misalignment at root-cause level with shared, unit-tested limb-chain math), plus passenger lap hands, CNG steering-wheel grip, EasyBike cabin grip, visible eyes/expressive faces and 10 rival hair/headwear identities.
+          - **Dhaka Life & Stunts:** bounded event director (traffic accident/jam, broken vehicle, construction, vendor blockage, police checkpoint, weather shift, rival challenge, rare photo moments) with hard caps, spacing rules and guaranteed cleanup; rival recognition cards in free roam; tilt/drift/speed/impact stunt combos with bounded HUD feedback; brief cinematic crash slow-mo + impact zoom (reduced-motion aware).
 
-          All \`v0.5.0\` systems are included: calibrated ~20 km/h classic / ~39 km/h \`টান\` / ~60 km/h hold-to-boost \`টার্বো\` physics, tight OBB hitboxes, 5-Heat Police Pursuit & smashable roadblocks, Dynamic In-Game Clock (\`07:30 AM\` / \`06:45 PM\`), authentic Bengali speech (\`bn-BD\`/\`bn-IN\`/\`bn\` + 26 offline WAVs), REP + টাকা economy, and \`v0.4.0\`+ save migration.
+          All \`v0.5.x\` systems are included: calibrated physics (20 / 39 / ~60 km/h), tight OBB hitboxes, 5-Heat police pursuit, roadblocks, Dynamic In-Game Clock, টান/টার্বো, REP + টাকা economy, and \`v0.4.0\`+ save migration.
 
           ### APK Details
           - **Direct Download (Stable Latest URL):** \`Banglar-Tesla.apk\` (\`$SIZE\` bytes)
-          - **Versioned Asset:** \`banglar-tesla-v0.5.1-debug.apk\` (\`$SIZE\` bytes)
+          - **Versioned Asset:** \`banglar-tesla-v0.6.0-debug.apk\` (\`$SIZE\` bytes)
           - **App Name:** \`Banglar Tesla\`
           - **Application ID:** \`com.shostalab.banglartesla\`
-          - **Version:** \`0.5.1\` (\`versionCode: 6\`)
+          - **Version:** \`0.6.0\` (\`versionCode: 7\`)
           - **Android Compatibility:** Android 7.0+ (\`minSdkVersion 24\`, \`targetSdkVersion 34\`)
           - **Permissions Requested:** None (\`0\` \`<uses-permission>\` entries; runs 100% offline)
           - **Signing:** Android debug signature (\`APK Signature Scheme v1 + v2 + v3\`)
@@ -155,11 +155,11 @@ jobs:
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" "$STABLE" --clobber
-            gh release edit "$TAG" --latest --title "Banglar Tesla v0.5.1 — 4-Rickshaw Race, Race-Map Design & Winner Snapshot" --notes "$NOTES"
+            gh release edit "$TAG" --latest --title "Banglar Tesla v0.6.0 — Bangla Voice Release, Dynamic Weather & DRMC" --notes "$NOTES"
           else
             gh release create "$TAG" "$APK" "$STABLE" \
               --latest \
               --target "${{ github.sha }}" \
-              --title "Banglar Tesla v0.5.1 — 4-Rickshaw Race, Race-Map Design & Winner Snapshot" \
+              --title "Banglar Tesla v0.6.0 — Bangla Voice Release, Dynamic Weather & DRMC" \
               --notes "$NOTES"
           fi
