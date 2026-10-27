@@ -1,5 +1,5 @@
 /* Banglar Tesla — offline cache so the installed PWA runs without a network. */
-const CACHE = 'banglar-tesla-v6';
+const CACHE = 'banglar-tesla-v7';
 const CORE = [
   './',
   './index.html',
@@ -33,6 +33,42 @@ const CORE = [
   './audio/dialogue/rival-taunt-en.wav',
   './audio/dialogue/police-alert-bn.wav',
   './audio/dialogue/police-alert-en.wav',
+  // vNext: Blacklist-critical Bangla lines + stings + weather beds (offline-first)
+  './audio/dialogue/intro-league-1-bn.wav',
+  './audio/dialogue/intro-league-2-bn.wav',
+  './audio/dialogue/rival-raju-intro-bn.wav',
+  './audio/dialogue/rival-raju-taunt-bn.wav',
+  './audio/dialogue/rival-sumon-intro-bn.wav',
+  './audio/dialogue/rival-sumon-taunt-bn.wav',
+  './audio/dialogue/rival-tarek-intro-bn.wav',
+  './audio/dialogue/rival-tarek-taunt-bn.wav',
+  './audio/dialogue/rival-nabila-intro-bn.wav',
+  './audio/dialogue/rival-nabila-taunt-bn.wav',
+  './audio/dialogue/rival-halim-intro-bn.wav',
+  './audio/dialogue/rival-halim-taunt-bn.wav',
+  './audio/dialogue/rival-faisal-intro-bn.wav',
+  './audio/dialogue/rival-faisal-taunt-bn.wav',
+  './audio/dialogue/rival-badol-intro-bn.wav',
+  './audio/dialogue/rival-badol-taunt-bn.wav',
+  './audio/dialogue/rival-sakib-intro-bn.wav',
+  './audio/dialogue/rival-sakib-taunt-bn.wav',
+  './audio/dialogue/rival-ranga-intro-bn.wav',
+  './audio/dialogue/rival-ranga-taunt-bn.wav',
+  './audio/dialogue/rival-samrat-intro-bn.wav',
+  './audio/dialogue/rival-samrat-taunt-bn.wav',
+  './audio/music/sting-raju.wav',
+  './audio/music/sting-sumon.wav',
+  './audio/music/sting-tarek.wav',
+  './audio/music/sting-nabila.wav',
+  './audio/music/sting-halim.wav',
+  './audio/music/sting-faisal.wav',
+  './audio/music/sting-badol.wav',
+  './audio/music/sting-sakib.wav',
+  './audio/music/sting-ranga.wav',
+  './audio/music/sting-samrat.wav',
+  './audio/ambience/wind-gust-loop.wav',
+  './audio/sfx/thunder-rumble-1.wav',
+  './audio/sfx/thunder-rumble-2.wav',
 ];
 
 self.addEventListener('install', (event) => {

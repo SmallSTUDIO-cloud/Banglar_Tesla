@@ -37,6 +37,8 @@ export interface Settings {
   sensitivity: number;
   deadzone: number;
   cameraShake: boolean;
+  /** Reduce/eliminate lightning flash intensity (vNext §4 comfort option). */
+  lowFlash: boolean;
   haptics: boolean;
   textScale: number;
   hudScale: number;
@@ -70,6 +72,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sensitivity: 0.9,
   deadzone: 0.12,
   cameraShake: true,
+  lowFlash: false,
   haptics: true,
   textScale: 1,
   hudScale: 1,
@@ -145,6 +148,7 @@ export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS
   bool('sfxEnabled', base.sfxEnabled);
   bool('reduceNoisyAmbience', base.reduceNoisyAmbience);
   bool('cameraShake', base.cameraShake);
+  bool('lowFlash', base.lowFlash);
   bool('haptics', base.haptics);
   bool('reduceEffects', base.reduceEffects);
   bool('subtitles', base.subtitles);

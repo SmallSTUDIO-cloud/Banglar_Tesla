@@ -23,6 +23,7 @@ import { RickshawVisual } from '../vehicle/rickshawModel';
 import { vehicleById } from '../economy/catalog';
 import type { AudioEngine } from '../audio/audio';
 import type { BanglaSpeechService } from '../audio/speech';
+import { dialogueText, ttsPitchRate, dialogueLine } from '../audio/dialogueManifest';
 
 export interface CinematicUiState {
   active: boolean;
@@ -41,6 +42,8 @@ export class BlacklistIntroCinematic {
   private rivalActor: RickshawVisual | null = null;
   private bellPlayed = false;
   private tauntSpoken = false;
+  private readonly spokenFlags = new Set<string>();
+  private activeStingRivalId: string | null = null;
   private onCompleteCallback: (() => void) | null = null;
 
   private savedPlayerPos = { x: 0, y: 0, z: 0, yaw: 0 };
@@ -69,6 +72,39 @@ export class BlacklistIntroCinematic {
 
   get activeRival(): BlacklistRival | null {
     return this.featuredRival;
+  }
+
+  /** Id of the rival whose intro music sting is currently playing (diagnostics/tests). */
+  get activeStingId(): string | null {
+    return this.activeStingRivalId;
+  }
+
+  /**
+   * Speak one exact manifest line with its subtitle + per-character voice identity
+   * (vNext §3). Deduplicated per sequence so double-updates never double-play.
+   */
+  private speakManifestLine(lineId: string, locale: 'bn' | 'en'): void {
+    if (this.spokenFlags.has(lineId)) return;
+    this.spokenFlags.add(lineId);
+    const line = dialogueLine(lineId);
+    const dlg = this.getDialogueOpts();
+    const spec = locale === 'en' ? line?.voiceEn ?? line?.voice : line?.voice;
+    const tr = ttsPitchRate(spec);
+    this.speech.speak({
+      speaker: 'rival',
+      text: locale === 'en' ? line?.en ?? '' : line?.bn ?? '',
+      locale,
+      priority: 3,
+      volume: dlg.volume,
+      muted: dlg.muted,
+      lineId,
+      voicePitch: tr.pitch,
+      voiceRate: tr.rate,
+    });
+  }
+
+  private subtitleFor(lineId: string, locale: 'bn' | 'en'): string {
+    return dialogueText(lineId, locale) ?? '';
   }
 
   start(
@@ -106,6 +142,7 @@ export class BlacklistIntroCinematic {
     this.elapsed = 0;
     this.bellPlayed = false;
     this.tauntSpoken = false;
+    this.spokenFlags.clear();
 
     const firstWp = rival.bossEvent.waypointPlaceIds[0];
     const stagePlace =
@@ -139,6 +176,20 @@ export class BlacklistIntroCinematic {
 
     this.camera.fov = 48;
     this.camera.updateProjectionMatrix();
+
+    // Distinct original music identity per Blacklist rival (league intro uses the
+    // featured rival's sting — #1 Samrat for the league opener).
+    this.activeStingRivalId = rival.id;
+    this.audio.playIntroSting(rival.id);
+    if (mode === 'rival') {
+      this.audio.prefetchDialogueLine(`rival.${rival.id}.intro`);
+      this.audio.prefetchDialogueLine(`rival.${rival.id}.taunt`);
+    } else {
+      this.audio.prefetchDialogueLine('intro.league.1');
+      this.audio.prefetchDialogueLine('intro.league.2');
+      this.audio.prefetchDialogueLine('rival.bl_01_samrat.taunt');
+    }
+
     this.update(0.016);
   }
 
@@ -219,6 +270,7 @@ export class BlacklistIntroCinematic {
     if (t < 3.2) {
       // Shot 1: Atmospheric Mohammadpur evening street sweep
       shotIndex = 1;
+      if (t > 0.35) this.speakManifestLine('intro.league.1', loc);
       const u = clamp01(t / 3.2);
       this.camPos.set(
         this.stageX + lx * lerp(7.5, 4.2, u) + fx * lerp(8.5, 4.5, u),
@@ -255,19 +307,7 @@ export class BlacklistIntroCinematic {
       shotIndex = 3;
       if (!this.tauntSpoken) {
         this.tauntSpoken = true;
-        const dlg = this.getDialogueOpts();
-        const tauntText =
-          loc === 'en'
-            ? "Mohammadpur's streets belong to me tonight! Catch me if you can!"
-            : 'মোহাম্মদপুরের রাস্তা আজ আমার দখলে! পারলে ধরে দেখা!';
-        this.speech.speak({
-          speaker: 'rival',
-          text: tauntText,
-          locale: loc,
-          priority: 3,
-          volume: dlg.volume,
-          muted: dlg.muted,
-        });
+        this.speakManifestLine('rival.bl_01_samrat.taunt', loc);
       }
       const u = clamp01((t - 6.4) / 5.2);
       this.camPos.set(
@@ -278,10 +318,7 @@ export class BlacklistIntroCinematic {
       this.camLook.set(this.stageX + fx * 0.14, this.stageY + 1.48, this.stageZ + fz * 0.14);
       rankBadge = loc === 'en' ? '#1 · Asad Gate-er Samrat' : '#১ · আসাদ গেটের সম্রাট';
       headline = loc === 'en' ? 'ASAD GATE-ER SAMRAT (#1)' : 'আসাদ গেটের সম্রাট (#১)';
-      subline =
-        loc === 'en'
-          ? '"Mohammadpur\'s streets belong to me tonight! Catch me if you can!"'
-          : '“মোহাম্মদপুরের রাস্তা আজ আমার দখলে! পারলে ধরে দেখা!”';
+      subline = this.subtitleFor('rival.bl_01_samrat.taunt', loc);
     } else if (t < 15.0) {
       // Shot 4: Player rickshaw rolls forward into challenge stance
       shotIndex = 4;
@@ -351,15 +388,17 @@ export class BlacklistIntroCinematic {
     const name = loc === 'en' ? rival.nameEn : rival.nameBn;
     const arch = loc === 'en' ? rival.archetypeEn : rival.archetypeBn;
     const terr = loc === 'en' ? rival.territoryEn : rival.territoryBn;
-    const taunt = loc === 'en' ? rival.tauntEn : rival.tauntBn;
     const badge = `#${rival.rank} · ${arch}`;
 
     let shotIndex = 1;
     let subline = terr;
 
+    const introId = `rival.${rival.id}.intro`;
+    const tauntId = `rival.${rival.id}.taunt`;
     if (t < 2.1) {
       // Shot 1: Low hero sweep from custom rickshaw art & spoked wheel up to handlebar
       shotIndex = 1;
+      if (t > 0.12) this.speakManifestLine(introId, loc);
       if (!this.bellPlayed) {
         this.bellPlayed = true;
         this.audio.bell(rival.look.bell === 'double' ? 'double' : 'brass');
@@ -371,21 +410,13 @@ export class BlacklistIntroCinematic {
         this.stageZ + lz * lerp(2.2, 1.5, u) + fz * lerp(-1.2, 1.1, u),
       );
       this.camLook.set(this.stageX + fx * 0.15, this.stageY + lerp(0.85, 1.38, u), this.stageZ + fz * 0.15);
-      subline = terr;
+      subline = t > 0.12 ? this.subtitleFor(introId, loc) : terr;
     } else if (t < 4.7) {
       // Shot 2: Tight character face, headwear, outfit & handlebar grip framing + voiced taunt!
       shotIndex = 2;
       if (!this.tauntSpoken) {
         this.tauntSpoken = true;
-        const dlg = this.getDialogueOpts();
-        this.speech.speak({
-          speaker: 'rival',
-          text: taunt,
-          locale: loc,
-          priority: 3,
-          volume: dlg.volume,
-          muted: dlg.muted,
-        });
+        this.speakManifestLine(tauntId, loc);
       }
       const u = clamp01((t - 2.1) / 2.6);
       this.camPos.set(
@@ -394,7 +425,7 @@ export class BlacklistIntroCinematic {
         this.stageZ + fz * lerp(1.95, 2.45, u) - lz * lerp(0.95, 0.45, u),
       );
       this.camLook.set(this.stageX + fx * 0.14, this.stageY + 1.48, this.stageZ + fz * 0.14);
-      subline = loc === 'en' ? `"${taunt}"` : `“${taunt}”`;
+      subline = this.subtitleFor(tauntId, loc);
     } else {
       // Shot 3: Wide face-off framing both challenger & boss rickshaw before grid launch
       shotIndex = 3;

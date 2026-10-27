@@ -809,6 +809,256 @@ def gen_phonetic_dialogue_cues() -> None:
     )
 
 
+def gen_manifest_dialogue() -> None:
+    """
+    Render every line of `src/audio/dialogueManifest.json` (vNext §3) as a bundled
+    per-line WAV: Bengali via libespeak-ng with hasant/ZWNJ grapheme shaping and a
+    distinct pitch/rate voice identity per character; English companion clips for
+    bilingual Blacklist/cinematic lines. `radio: true` lines get the police
+    walkie-talkie band-pass + squelch treatment.
+    """
+    import array
+    import ctypes
+    import json
+
+    import espeakng_loader
+
+    manifest_path = ROOT / "src" / "audio" / "dialogueManifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    lines = manifest["lines"]
+
+    lib = ctypes.CDLL(espeakng_loader.get_library_path())
+    lib.espeak_Initialize.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    lib.espeak_Initialize.restype = ctypes.c_int
+    espeak_sr = lib.espeak_Initialize(2, 500, espeakng_loader.get_data_path().encode("utf-8"), 0)
+    if espeak_sr <= 0:
+        raise RuntimeError(f"espeak_Initialize failed: {espeak_sr}")
+
+    SYNTH_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(ctypes.c_short), ctypes.c_int, ctypes.c_void_p)
+    captured = array.array("h")
+
+    @SYNTH_CB
+    def on_synth(wav, numsamples, _events):
+        if wav and numsamples > 0:
+            for idx in range(numsamples):
+                captured.append(wav[idx])
+        return 0
+
+    lib.espeak_SetSynthCallback.argtypes = [SYNTH_CB]
+    lib.espeak_SetSynthCallback(on_synth)
+    lib.espeak_SetVoiceByName.argtypes = [ctypes.c_char_p]
+    lib.espeak_SetParameter.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+    lib.espeak_Synth.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_uint,
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+
+    def write_wav_pcm8(path: Path, samples: list[float], sr: int) -> None:
+        """Dithered 8-bit PCM WAV (companion EN clips) — universal WAV format 1."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        n = len(samples)
+        peak = max((abs(x) for x in samples), default=1e-6)
+        norm = 0.92 / max(peak, 0.92)
+        raw = bytearray(n)
+        for i, s in enumerate(samples):
+            v = max(-1.0, min(1.0, s * norm))
+            enc = math.tanh(v * 1.1) / math.tanh(1.1)
+            # TPDF dither at ~1 LSB keeps 8-bit speech clean on phone speakers
+            dither = (random.random() - random.random()) * (1.0 / 255.0)
+            q = int(round((enc + dither) * 127.0 + 128.0))
+            raw[i] = max(0, min(255, q))
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(1)
+            wf.setframerate(sr)
+            wf.writeframes(bytes(raw))
+        print(f"[audio-gen] Wrote {path.relative_to(ROOT)} ({path.stat().st_size:,} bytes, {n/sr:.2f}s @ {sr}Hz 8-bit)")
+
+    def resample_linear(src: list[float], src_sr: int, dst_sr: int) -> list[float]:
+        if src_sr == dst_sr:
+            return src
+        n_out = int(len(src) * dst_sr / src_sr)
+        out = [0.0] * n_out
+        for i in range(n_out):
+            pos = i * src_sr / dst_sr
+            j = int(pos)
+            frac = pos - j
+            a = src[j] if j < len(src) else 0.0
+            b = src[j + 1] if j + 1 < len(src) else a
+            out[i] = a + (b - a) * frac
+        return out
+
+    def render_manifest_clip(
+        filename: str,
+        voice: dict,
+        text: str,
+        radio_filter: bool,
+        sample_rate: int = 16000,
+        pcm8: bool = False,
+    ) -> None:
+        del captured[:]
+        variant = voice["variant"]
+        if lib.espeak_SetVoiceByName(variant.encode("utf-8")) != 0:
+            lib.espeak_SetVoiceByName(variant.split("+")[0].encode("utf-8"))
+        lib.espeak_SetParameter(1, int(voice["rate"]), 0)  # espeakRATE
+        lib.espeak_SetParameter(2, 185, 0)  # espeakVOLUME
+        lib.espeak_SetParameter(3, int(voice["pitch"]), 0)  # espeakPITCH
+        lib.espeak_SetParameter(4, int(voice.get("range", 64)), 0)  # espeakRANGE
+        payload = text.encode("utf-8")
+        lib.espeak_Synth(payload, len(payload) + 1, 0, 0, 0, 1, None, None)
+
+        raw = [s / 32768.0 for s in captured]
+        if len(raw) < 32:
+            raise RuntimeError(f"manifest line produced no audio: {filename}")
+        thr = 0.008
+        first = next((i for i, v in enumerate(raw) if abs(v) > thr), 0)
+        last = len(raw) - 1 - next((i for i, v in enumerate(reversed(raw)) if abs(v) > thr), 0)
+        pad = int(espeak_sr * 0.035)
+        trimmed = [0.0] * pad + raw[max(0, first - pad) : min(len(raw), last + pad)] + [0.0] * pad
+
+        out: list[float] = []
+        lp = 0.0
+        hp = 0.0
+        for v in trimmed:
+            lp += (0.38 if radio_filter else 0.52) * (v - lp)
+            if radio_filter:
+                hp += 0.065 * (lp - hp)
+                sig = math.tanh((lp - hp) * 2.1)
+            else:
+                hp += 0.008 * (lp - hp)
+                sig = math.tanh((lp - hp) * 1.45)
+            out.append(sig)
+
+        if radio_filter:
+            sq_n = min(len(out), int(espeak_sr * 0.045))
+            for i in range(sq_n):
+                t = i / espeak_sr
+                out[i] += 0.16 * math.sin(2 * math.pi * 1920.0 * t) * math.exp(-t * 55.0)
+                out[-1 - i] += 0.12 * math.sin(2 * math.pi * 1640.0 * t) * math.exp(-t * 55.0)
+
+        out = resample_linear(out, espeak_sr, sample_rate)
+        fname = filename.rsplit("/", 1)[-1]
+        if pcm8:
+            write_wav_pcm8(AUDIO_DIR / "dialogue" / fname, out, sample_rate)
+        else:
+            write_wav(AUDIO_DIR / "dialogue" / fname, out, sample_rate)
+
+    radio_seen = set()
+    bn_clips = 0
+    en_clips = 0
+    for line in lines:
+        if line.get("delivery") != "voiced":
+            continue
+        radio = bool(line.get("radio"))
+        bn_name = line["wavBn"].rsplit("/", 1)[-1]
+        if bn_name not in radio_seen:
+            radio_seen.add(bn_name)
+            # Bangla is the release-gate path: 16-bit for maximum intelligibility.
+            render_manifest_clip(bn_name, line["voice"], line["bn"], radio, sample_rate=16000, pcm8=False)
+            bn_clips += 1
+        if line.get("wavEn") and line.get("voiceEn"):
+            en_name = line["wavEn"].rsplit("/", 1)[-1]
+            # English companion clips are the fallback path (EN TTS is standard on
+            # target platforms): dithered 8-bit keeps the offline bundle compact.
+            render_manifest_clip(en_name, line["voiceEn"], line["en"], radio, sample_rate=16000, pcm8=True)
+            en_clips += 1
+
+    print(f"[audio-gen] Rendered {bn_clips} Bangla + {en_clips} English manifest dialogue clips.")
+
+
+def gen_intro_stings() -> None:
+    """
+    Ten original Blacklist intro music stings — one distinct musical identity per
+    rival (own key root, tempo and motif drift). 100% original synthesis (Karplus
+    plucks + tabla bol + drone), no third-party recordings.
+    """
+    import json
+
+    manifest_path = ROOT / "src" / "audio" / "dialogueManifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    sr = 22050
+    for sting in manifest["stings"]:
+        root = sting["root"]
+        tempo = sting["tempo"]
+        drift = sting["drift"]
+        beat = 60.0 / tempo
+        dur = 2.6
+        total = int(sr * dur)
+        buf = [0.0] * total
+
+        # Rhythmic tabla bed at the rival's tempo
+        for i, bol in enumerate(["dha", "tin", "tun", "ge"]):
+            start = int(i * beat * sr)
+            if start < total:
+                add_into(buf, start, synth_tabla_bol(sr, bol, seed=11 + drift + i), 0.42)
+
+        # Melodic motif: a 4-note plucked figure in the rival's own key root
+        motif = [0, 3, 7, 10] if drift % 2 == 0 else [0, 5, 7, 12]
+        for i, iv in enumerate(motif):
+            freq = midi_hz(root + iv)
+            start = int(i * beat * 0.92 * sr)
+            if start < total:
+                add_into(buf, start, karplus_pluck(sr, freq, min(1.25, dur - i * beat * 0.92), 0.5, seed=31 + drift * 7 + i), 0.62)
+
+        # Sustained root drone for identity under the motif
+        dlen = int(sr * dur)
+        drone = [0.0] * dlen
+        f1 = midi_hz(root - 12)
+        f2 = midi_hz(root - 5)
+        for i in range(dlen):
+            t = i / sr
+            drone[i] = 0.16 * math.sin(2 * math.pi * f1 * t) + 0.09 * math.sin(2 * math.pi * f2 * t + 0.7)
+        add_into(buf, 0, drone, 1.0)
+
+        write_wav(AUDIO_DIR / "music" / sting["wav"].rsplit("/", 1)[-1], buf, sr)
+
+    print(f"[audio-gen] Rendered {len(manifest['stings'])} distinct Blacklist intro stings.")
+
+
+def gen_weather_audio() -> None:
+    """Wind loop (seamless filtered noise) + two original thunder rumbles (vNext §4)."""
+    sr = 16000
+
+    # Seamless wind loop: band-passed noise with slow gust modulation
+    dur = 4.0
+    n = int(sr * dur)
+    rng = random.Random(20261027)
+    buf = [0.0] * n
+    lp = 0.0
+    hp = 0.0
+    for i in range(n):
+        t = i / sr
+        gust = 0.62 + 0.38 * (0.5 * math.sin(2 * math.pi * 0.23 * t) + 0.5 * math.sin(2 * math.pi * 0.071 * t + 1.2))
+        nz = rng.uniform(-1.0, 1.0)
+        lp += 0.075 * (nz - lp)  # ~190 Hz lowpass
+        hp += 0.022 * (lp - hp)
+        buf[i] = (lp - hp) * gust * 1.55
+    write_wav(AUDIO_DIR / "ambience" / "wind-gust-loop.wav", buf, sr, seamless_fade_ms=320.0)
+
+    # Thunder rumbles: decaying brown-noise rolls with 2 sub-bursts
+    for name, seed, loud in (("thunder-rumble-1.wav", 5, 1.0), ("thunder-rumble-2.wav", 17, 0.82)):
+        rng2 = random.Random(1000 + seed)
+        dur_t = 3.4
+        n = int(sr * dur_t)
+        out = [0.0] * n
+        lp2 = 0.0
+        for i in range(n):
+            t = i / sr
+            env = math.exp(-t * 0.95) * (1.0 + 0.7 * math.exp(-((t - 0.14) ** 2) / 0.008) + 0.45 * math.exp(-((t - 0.85) ** 2) / 0.045))
+            nz = rng2.uniform(-1.0, 1.0)
+            lp2 += 0.028 * (nz - lp2)  # ~72 Hz rumble lowpass
+            out[i] = lp2 * env * 9.5 * loud
+        write_wav(AUDIO_DIR / "sfx" / name, out, sr)
+
+    print("[audio-gen] Rendered weather wind loop + 2 thunder rumbles.")
+
+
 def main() -> None:
     gen_menu_music()
     gen_drive_music()
@@ -818,6 +1068,9 @@ def main() -> None:
     gen_tea_stall_clink()
     gen_hawker_and_construction()
     gen_sfx_and_dialogue()
+    gen_manifest_dialogue()
+    gen_intro_stings()
+    gen_weather_audio()
     wav_files = sorted(AUDIO_DIR.rglob("*.wav"))
     total_bytes = sum(p.stat().st_size for p in wav_files)
     print(f"\n[audio-gen] Generated all {len(wav_files)} bundled audio assets ({total_bytes / (1024 * 1024):.2f} MB total).")

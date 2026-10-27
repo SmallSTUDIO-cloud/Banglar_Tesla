@@ -12,7 +12,7 @@ import type { CosmeticCategory } from '../economy/catalog';
 import type { StorageLike } from './settings';
 import { canonicalMinutesForPhase, DEFAULT_START_MINUTES, normalizeMinutes } from '../world/timeSystem';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3; // v3: permanent scrapbook + five-state weather (vNext §10)
 export const SAVE_KEY = 'banglar-tesla.save';
 export const BACKUP_KEY = 'banglar-tesla.save.bak';
 
@@ -41,6 +41,8 @@ export interface Progress {
   dayPhase: DayPhase;
   clockMinutes: number;
   weather: WeatherKind;
+  /** vNext §10: bounded deduplicated permanent career scrapbook. */
+  scrapbook: unknown;
   /** Next Blacklist rank to defeat: 10 (#10) down to 1 (#1), 0 = Champion crowned. */
   blacklistNextRank: number;
   blacklistDefeated: number[];
@@ -54,6 +56,7 @@ export interface Progress {
 export function createDefaultProgress(now = Date.now()): Progress {
   return {
     version: SAVE_VERSION,
+    scrapbook: { records: [] },
     balance: 500,
     rep: 0,
     ownedVehicles: VEHICLES.filter((v) => v.ownedByDefault && !v.comingSoon).map((v) => v.id),
@@ -74,7 +77,7 @@ export function createDefaultProgress(now = Date.now()): Progress {
     spawn: null,
     dayPhase: 'morning',
     clockMinutes: DEFAULT_START_MINUTES,
-    weather: 'clear',
+    weather: 'sunny',
     blacklistNextRank: 10,
     blacklistDefeated: [],
     blacklistIntroSeen: false,
@@ -109,7 +112,7 @@ export function migrateProgress(raw: unknown): unknown {
     data.upgrades = isRecord(data.upgrades) ? data.upgrades : {};
   }
   if (version < 2) {
-    // v2 added cosmetics ownership tracking, daily date and the weather/phase state.
+    // v2 added cosmetics ownership tracking, daily date and the phase state.
     data.version = 2;
     const owned = strArray(data.ownedCosmetics);
     if (!owned.includes('bell.classic')) owned.push('bell.classic');
@@ -118,9 +121,20 @@ export function migrateProgress(raw: unknown): unknown {
     if (!['morning', 'noon', 'golden', 'blue', 'night'].includes(String(data.dayPhase))) {
       data.dayPhase = 'morning';
     }
-    if (!['clear', 'overcast', 'rain'].includes(String(data.weather))) data.weather = 'clear';
     if (data.lastMode !== 'duty' && data.lastMode !== 'free' && data.lastMode !== 'daily') {
       data.lastMode = 'duty';
+    }
+  }
+  if (version < 3) {
+    // v3 (Master Upgrade vNext): five-state weather rename + permanent scrapbook.
+    data.version = 3;
+    const legacyWeather = String(data.weather);
+    if (legacyWeather === 'clear') data.weather = 'sunny'; // v0.5.x -> v0.6.0 weather rename
+    if (!['sunny', 'overcast', 'rain', 'windy', 'storm'].includes(String(data.weather))) {
+      data.weather = 'sunny';
+    }
+    if (!isRecord(data.scrapbook)) {
+      data.scrapbook = { records: [] };
     }
   }
   return data;
@@ -231,7 +245,10 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
     spawn,
     dayPhase,
     clockMinutes: rawClock,
-    weather: (['clear', 'overcast', 'rain'] as const).find((w) => w === data.weather) ?? 'clear',
+    weather:
+      (['sunny', 'overcast', 'rain', 'windy', 'storm'] as const).find((w) => w === data.weather) ?? 'sunny',
+    scrapbook:
+      typeof data.scrapbook === 'object' && data.scrapbook !== null ? data.scrapbook : { records: [] },
     blacklistNextRank,
     blacklistDefeated,
     blacklistIntroSeen: data.blacklistIntroSeen === true,

@@ -23,11 +23,18 @@ import { GameState } from './core/gameState';
 import { getLocale, setLocale, t } from './core/i18n';
 import { audio } from './audio/audio';
 import { BanglaSpeechService } from './audio/speech';
+import { dialogueLine, dialogueText, ttsPitchRate } from './audio/dialogueManifest';
 
 import { buildCity, type CityResult } from './world/city';
 import { buildProps, type VendorSpot } from './world/props';
+import { buildDrmcCampus, type DrmcCampusResult } from './world/drmc';
+import { drmcOverlayReport } from './world/drmcGeo';
 import { DestructionSystem } from './world/destruction';
 import { EnvironmentSystem } from './world/environment';
+import { WeatherDirector } from './world/weatherDirector';
+import { Scrapbook } from './career/scrapbook';
+import { EventDirector, type SpawnedEvent } from './events/eventDirector';
+import { ScoreSystem, type StuntEvent } from './gameplay/scoreSystem';
 import { GameTimeSystem } from './world/timeSystem';
 import { ArcadeVfxSystem, classifyCrashTier } from './world/arcadeVfx';
 import { DevColliderDebugView } from './world/colliderDebug';
@@ -53,6 +60,7 @@ import { ROADRAGE_ESCAPED_TEXT, RoadRageSystem } from './ai/roadRage';
 import { RoadblockSystem } from './ai/roadblocks';
 import { PolicePursuitSystem } from './ai/police';
 import {
+  BLACKLIST_RIVALS,
   eventById,
   rivalByRank,
 } from './blacklist/blacklistCatalog';
@@ -81,8 +89,20 @@ export class Game implements UIBridge {
   readonly devPerf: DevPerfOverlay;
 
   private city: CityResult;
+  private drmc: DrmcCampusResult;
   private env: EnvironmentSystem;
   readonly gameTime: GameTimeSystem;
+  private weatherDirector: WeatherDirector;
+  private weatherBlendAccum = 0;
+  private sunGlareAccum = 0;
+  private stormToastAt = -999;
+  readonly scrapbook: Scrapbook;
+  readonly eventDirector: EventDirector;
+  readonly score: ScoreSystem;
+  private rivalEncounterAt = -999;
+  private stuntChipUntil = 0;
+  private slowmoScale = 1;
+  private impactZoom = 0;
   private arcadeVfx: ArcadeVfxSystem;
   private colliderDebug: DevColliderDebugView;
   private destruction: DestructionSystem;
@@ -176,16 +196,62 @@ export class Game implements UIBridge {
     this.city = buildCity(this.signAtlas, initialQuality);
     this.scene.add(this.city.group);
     this.env.setLampPositions(this.city.lampPositions);
+    this.weatherDirector = new WeatherDirector(this.state.progress.weather);
+    this.weatherDirector.onWeatherChange = (w) => {
+      this.env.setWeather(w);
+      this.state.progress.weather = w;
+      this.ui.setRainDrops(w === 'rain' || w === 'storm');
+      if (w === 'storm' && this.simClockSec - this.stormToastAt > 120) {
+        this.stormToastAt = this.simClockSec;
+        this.speakLine('weather.storm.1', 3);
+      }
+    };
+    this.weatherDirector.onLightning = (intensity, flashAllowed) => {
+      this.env.strike(intensity, flashAllowed);
+    };
+    this.env.onLightningFlash = (strength, flashAllowed) => {
+      this.ui.triggerLightningFlash(strength, flashAllowed);
+      // Spatially plausible delayed thunder (1.2–4.6 s) at bounded gain
+      this.audio.playThunder(1.2 + strength * 3.4, 0.45 + strength * 0.55);
+    };
+    // vNext §10 permanent scrapbook (deduplicated, bounded) + §7 event director + §9 score
+    this.scrapbook = Scrapbook.fromJSON(this.state.progress.scrapbook);
+    this.eventDirector = new EventDirector();
+    this.score = new ScoreSystem();
+    this.state.on('beforeSave', () => {
+      this.state.progress.scrapbook = this.scrapbook.toJSON();
+    });
+    this.eventDirector.onSpawn = (ev) => this.realizeDirectorEvent(ev);
+    this.eventDirector.onWeatherNudge = (suggestStorm) => {
+      if (suggestStorm) this.weatherDirector.setWeatherImmediate('storm');
+    };
+    this.score.onStunt = (ev) => this.handleStunt(ev);
+    this.state.onTransaction = (kind, id, level) => {
+      this.scrapbook.recordPurchase(`${kind}:${id}`, level, {
+        minutesOfDay: this.gameTime.minutesOfDay,
+        vehicleId: this.state.selectedVehicleId,
+        takaDelta: kind === 'repair' ? 0 : 1,
+      });
+    };
+    this.score.onComboEnd = (best) => {
+      this.scrapbook.recordBestCombo(best);
+    };
     this.env.onWetnessChange = (wet) => this.city.setWetness(wet);
     this.env.onPhaseChange = (phase) => this.city.setNight(phase === 'night' || phase === 'blue');
     this.env.setPhase(this.gameTime.phase);
 
     this.colliderDebug = new DevColliderDebugView(this.scene);
 
+    // DRMC campus exterior (vNext §1) — attached to the verified Shahjahan Road approach
+    this.drmc = buildDrmcCampus((x, z) => this.city.heightAt(x, z));
+    this.scene.add(this.drmc.group);
+    this.city.registerShadowCasters(this.drmc.group);
+
     const props = buildProps(this.signAtlas);
     this.scene.add(props.group);
     this.city.registerShadowCasters(props.group);
     this.city.colliders.push(...props.colliders);
+    this.city.colliders.push(...this.drmc.colliders);
     this.vendorSpots = props.vendorSpots;
     this.audio.setVendorSpots(props.vendorSpots);
     releaseScratchCanvas();
@@ -267,6 +333,16 @@ export class Game implements UIBridge {
       onEscaped: () => {
         this.ui.toast(ROADRAGE_ESCAPED_TEXT, 'good');
         this.audio.successStinger();
+        this.scrapbook.addRecord({
+          id: `rival:rage:${Math.floor(this.simClockSec / 45)}`,
+          category: 'rival',
+          titleBn: 'রাস্তার রাগ এড়ানো',
+          titleEn: 'Road-rage escaped',
+          detailBn: 'ব্যক্তিগত গাড়ির চালককে পেছনে ফেলে পালানো হলো!',
+          detailEn: 'Left the angry private-car driver behind!',
+          minutesOfDay: this.gameTime.minutesOfDay,
+          vehicleId: this.state.selectedVehicleId,
+        });
       },
       onOpenConfrontation: () => {
         this.controller.speed = 0;
@@ -341,6 +417,19 @@ export class Game implements UIBridge {
       onPursuitEscaped: (maxHeat, repReward) => {
         this.state.setHeat(0);
         this.state.addRep(repReward);
+        this.scrapbook.recordStat('policeEscapes');
+        this.scrapbook.recordHeat(maxHeat);
+        this.scrapbook.addRecord({
+          id: `police:escape:${Math.floor(this.simClockSec / 45)}`,
+          category: 'police',
+          titleBn: 'পুলিশের তাড়া এড়ানো!',
+          titleEn: 'Police pursuit escaped!',
+          detailBn: `সর্বোচ্চ হিট ${maxHeat} থেকে পালানো সম্পন্ন।`,
+          detailEn: `Escaped cleanly from Heat ${maxHeat}.`,
+          minutesOfDay: this.gameTime.minutesOfDay,
+          vehicleId: this.state.selectedVehicleId,
+          repDelta: repReward,
+        });
         void maxHeat;
         this.controller.addTurboCharge(TURBO.escapeGain);
         this.audio.setPoliceSirenAudio(false, 0, 0);
@@ -391,7 +480,10 @@ export class Game implements UIBridge {
     this.raceSystem = new RivalRaceSystem((x, z) => this.city.heightAt(x, z));
     this.scene.add(this.raceSystem.group);
     this.raceSystem.onCountdownTick = () => this.audio.uiTap();
-    this.raceSystem.onRaceGo = () => this.audio.uiConfirm();
+    this.raceSystem.onRaceGo = () => {
+      this.audio.uiConfirm();
+      this.speakLine('race.start.1', 3);
+    };
     this.raceSystem.onCheckpointPassed = () => {
       this.audio.coin();
       this.controller.addTurboCharge(TURBO.checkpointGain * 0.45);
@@ -460,6 +552,8 @@ export class Game implements UIBridge {
     (window as unknown as { __btToggleDevPerf?: () => boolean }).__btToggleDevPerf = () => this.devPerf.toggle();
     (window as unknown as { __btToggleColliderDebug?: () => boolean }).__btToggleColliderDebug = () =>
       this.colliderDebug.toggle();
+    (window as unknown as { __btToggleDrmcOverlay?: () => boolean }).__btToggleDrmcOverlay = () =>
+      this.toggleDrmcOverlay();
 
     // Pedestrian near-miss & bump Bengali reactions
     this.peds.onReaction = (ev) => {
@@ -470,6 +564,7 @@ export class Game implements UIBridge {
         this.ui.showPedestrianCallout(sx, sy, ev.textKey);
       }
       this.audio.pedestrianShout();
+      this.speakLine(ev.textKey, 1);
       if (ev.kind === 'bump') {
         this.controller.speed *= 0.68;
         this.chase.addTrauma(0.14);
@@ -688,6 +783,11 @@ export class Game implements UIBridge {
       this.audio.setTurboBoostAudio(false, 0);
       return;
     }
+    // §9 brief cinematic slow-motion on major crashes (reduced-motion: never).
+    if (this.slowmoScale < 1) {
+      this.slowmoScale = Math.min(1, this.slowmoScale + dt * 0.85);
+    }
+    dt *= this.slowmoScale;
     this.menuTime += dt;
     this.detourToastCooldown = Math.max(0, this.detourToastCooldown - dt);
     this.teaCooldown = Math.max(0, this.teaCooldown - dt);
@@ -716,10 +816,27 @@ export class Game implements UIBridge {
     this.audio.setSceneMode(this.mode === 'menu' ? 'menu' : 'driving');
     this.audio.update(dt, this.controller.x, this.controller.z);
     this.tmpPlayerVec.set(this.controller.x, 0, this.controller.z);
+    // vNext §4 dynamic weather director — bounded transitions, gradual blends
+    this.weatherDirector.update(dt, {
+      timeMinutes: this.gameTime.minutesOfDay,
+      inRace: this.raceSystem.isActive,
+      raceFinalStretch:
+        this.raceSystem.isActive &&
+        this.raceSystem.hudSnap.checkpointTotal > 0 &&
+        this.raceSystem.hudSnap.checkpointIndex / this.raceSystem.hudSnap.checkpointTotal > 0.65,
+      eventOverride: this.raceSystem.isActive && !!this.raceSystem.currentEvent?.weatherOverride,
+      reduceEffects: settings.reduceEffects,
+      lowFlash: settings.lowFlash,
+    });
+    this.weatherBlendAccum += dt;
+    if (this.weatherBlendAccum >= 0.12) {
+      this.weatherBlendAccum = 0;
+      const wb = this.weatherDirector.weatherBlend;
+      this.env.setWeatherBlend(wb, wb.wet);
+      this.audio.setWindAudio(wb.wind);
+    }
     this.env.update(dt, this.tmpPlayerVec);
-    const curWeather = this.env.getWeather();
-    const windStrength =
-      curWeather === 'rain' ? 0.85 : curWeather === 'overcast' ? 0.38 : 0;
+    const windStrength = this.weatherDirector.weatherBlend.wind;
     this.city.updateStreetLitter(dt, windStrength, this.controller.x, this.controller.z);
     this.destruction.update(dt);
     this.city.updateShadowFocus(
@@ -1040,8 +1157,58 @@ export class Game implements UIBridge {
     }
     if (this.mode === 'free' && this.currentOffer === null && !this.raceSystem.isActive) {
       this.freeRideInteractions(dt);
+      this.eventDirector.update(
+        dt,
+        {
+          x: this.controller.x,
+          z: this.controller.z,
+          timeMinutes: this.gameTime.minutesOfDay,
+          heat: this.police.heatLevel,
+          trafficDensity: clamp01(this.jammedList.length / 5 + (this.env.getWeather() === 'rain' ? 0.3 : 0)),
+          raining: this.weatherDirector.weatherBlend.rain > 0.3,
+          inMission: false,
+          inRace: false,
+          policeActive: this.police.isActive,
+          roadRageActive: this.roadRage.isActive,
+          cinematicActive: this.cinematic.isPlaying,
+          paused: false,
+          reduceEffects: settings.reduceEffects,
+        },
+      );
+      this.maybeTriggerRivalEncounter();
     }
+    this.score.update(dt, {
+      tilt: Math.abs(this.controller.roll ?? 0),
+      lateral: this.controller.lateralAccel ?? 0,
+      speed: Math.abs(this.controller.speed),
+    });
     if (input.horn) this.ringBell();
+
+    // -------- §9 impact zoom (chase resets fov each frame; apply a bounded additive punch)
+    if (this.impactZoom > 0.001) {
+      this.impactZoom = Math.max(0, this.impactZoom - dt * 0.85);
+      this.camera.fov = clamp(this.camera.fov + this.impactZoom * 26, 35, 92);
+      this.camera.updateProjectionMatrix();
+    }
+
+    // -------- sun glare (sunny states only; event-driven dirty DOM writes ≤6 Hz)
+    this.sunGlareAccum += dt;
+    if (this.sunGlareAccum >= 0.16) {
+      this.sunGlareAccum = 0;
+      const glareStrength = this.computeSunGlare();
+      if (glareStrength > 0.02) {
+        this.tmpProjVec.set(
+          this.camera.position.x + Math.sin(this.camera.rotation.y) * 60 + glareStrength,
+          60,
+          this.camera.position.z + Math.cos(this.camera.rotation.y) * 60,
+        ).project(this.camera);
+        const sx = (this.tmpProjVec.x * 0.5 + 0.5) * window.innerWidth;
+        const sy = (-this.tmpProjVec.y * 0.5 + 0.5) * window.innerHeight;
+        this.ui.setSunGlare(glareStrength, sx, sy);
+      } else {
+        this.ui.setSunGlare(0, 0, 0);
+      }
+    }
 
     // -------- audio
     this.audio.setVehicleSpeed(this.controller.speed, input.throttle);
@@ -1145,14 +1312,17 @@ export class Game implements UIBridge {
 
   private chooseAtmosphere(mode: Mode): void {
     const rides = this.state.progress.rides;
-    let weather: WeatherKind = rides > 0 && rides % 5 === 4 ? 'overcast' : 'clear';
+    let weather: WeatherKind = rides > 0 && rides % 5 === 4 ? 'overcast' : 'sunny';
     if (mode === 'daily') {
       const seed = dailySeed(new Date());
       weather = seed % 2 === 0 ? 'rain' : 'overcast';
     }
     const phase = this.gameTime.phase;
     this.env.setPhase(phase);
+    this.weatherDirector.setWeatherImmediate(weather);
     this.env.setWeather(weather);
+    const wNow = this.env.getWeather();
+    this.ui.setRainDrops(wNow === 'rain' || wNow === 'storm');
     this.state.progress.dayPhase = phase;
     this.state.progress.weather = weather;
   }
@@ -1211,6 +1381,7 @@ export class Game implements UIBridge {
     this.pendingOffer = null;
     this.missions.start(offer);
     this.ui.hideJobOffer();
+    this.speakLine('mission.start.1', 2);
   }
 
   nextJob(): void {
@@ -1370,11 +1541,17 @@ export class Game implements UIBridge {
   }
 
   // --------------------------------------------------- garage & Dokan showroom
+  private garageGreetAt = -99;
+
   openGarage(from: 'menu' | 'pause' | 'result'): void {
     void from;
     this.stopWinnerPhoto();
     this.refreshShowroom();
     this.showroomVisible = true;
+    if (this.simClockSec - this.garageGreetAt > 25) {
+      this.garageGreetAt = this.simClockSec;
+      this.speakLine('garage.ready.1', 1);
+    }
   }
 
   openShowroomFromMenu(): void {
@@ -1500,6 +1677,14 @@ export class Game implements UIBridge {
     this.lastImpactAt = now;
 
     const tier = classifyCrashTier(magnitude) ?? 'minor';
+    // §9 cinematic crash feedback: brief optional slow-mo + impact zoom (pooled,
+    // reduced-motion aware, fast recovery — physics always keeps simulating).
+    if (tier === 'major' && !this.settings.get().reduceEffects) {
+      this.slowmoScale = 0.42;
+      this.impactZoom = 0.22;
+    } else if (tier === 'medium' && !this.settings.get().reduceEffects) {
+      this.impactZoom = 0.12;
+    }
     this.chase.addTrauma(
       tier === 'major'
         ? clamp(magnitude * 0.25, 0.28, 0.62)
@@ -1678,6 +1863,7 @@ export class Game implements UIBridge {
     this.state.progress.stamina = this.controller.stamina;
     this.teaCooldown = 8;
     this.audio.playTeaSip();
+    this.speakLine('vendor.tea.1', 1);
     this.ui.toast(t('toast.teaRested'), 'good');
     this.state.saveNow();
     this.hudTick = 1;
@@ -1703,6 +1889,11 @@ export class Game implements UIBridge {
   }
 
   // ------------------------------------------------ Blacklist, Cinematic & Rival Races (v0.5.0)
+  /** §10 UI bridge — open the permanent career scrapbook from the menu. */
+  openCareerScrapbook(): void {
+    this.ui.openScrapbook(this.scrapbook.snapshot, this.scrapbook.snapshot.records);
+  }
+
   openBlacklist(from: 'menu' | 'hud' | 'pause'): void {
     void this.audio.init();
     this.input.clearAllHolds();
@@ -1801,6 +1992,22 @@ export class Game implements UIBridge {
   private startWinnerPhoto(): void {
     this.winnerPhotoActive = true;
     this.winnerPhotoTimer = 0;
+    // Render one composed frame, then capture the bounded scrapbook thumbnail.
+    this.updateWinnerPhotoCamera(0);
+    this.renderer.render(this.scene, this.camera);
+    const thumb = this.capturePhotoThumb();
+    const evId = this.lastEventId ?? 'race';
+    this.scrapbook.addRecord({
+      id: `photo:win:${evId}:${Math.floor(this.simClockSec / 30)}`,
+      category: 'photo',
+      titleBn: 'বিজয়ের স্মারক ছবি',
+      titleEn: 'Victory Photo',
+      detailBn: `রেস জয়ের স্মারক — ${evId}`,
+      detailEn: `Winner snapshot — ${evId}`,
+      minutesOfDay: this.gameTime.minutesOfDay,
+      vehicleId: this.state.selectedVehicleId,
+      photoThumb: thumb,
+    });
     const snapped = snapToNearestRoad(this.controller.x, this.controller.z, false);
     const gx = snapped.x;
     const gz = snapped.z;
@@ -1843,6 +2050,79 @@ export class Game implements UIBridge {
     this.cinematic.skip();
   }
 
+  // ---------------------------------------------- DRMC map-accuracy overlay (DEV)
+  private drmcOverlayGroup: THREE.Group | null = null;
+
+  /**
+   * DEV-only overlay comparing the OSM campus polygon projected through the
+   * validated similarity fit (red) against the in-game campus placement (green),
+   * with gate markers (gold). Used for the §1 accuracy screenshot evidence.
+   */
+  toggleDrmcOverlay(): boolean {
+    if (this.drmcOverlayGroup) {
+      this.scene.remove(this.drmcOverlayGroup);
+      this.drmcOverlayGroup.clear();
+      this.drmcOverlayGroup = null;
+      return false;
+    }
+    const report = drmcOverlayReport();
+    const g = new THREE.Group();
+    g.name = 'drmc-accuracy-overlay';
+    const line = (pts: Array<{ x: number; z: number }>, hex: number, yOff: number): void => {
+      const geo = new THREE.BufferGeometry().setFromPoints(
+        pts.map((p) => new THREE.Vector3(p.x, this.city.heightAt(p.x, p.z) + yOff, p.z)),
+      );
+      const m = new THREE.LineBasicMaterial({ color: hex, depthTest: false, transparent: true, opacity: 0.95 });
+      const l = new THREE.LineLoop(geo, m);
+      l.renderOrder = 2000;
+      g.add(l);
+    };
+    line(report.projectedOsmPolygon, 0xff3b30, 0.5); // OSM ground truth (fitted)
+    line(this.drmc.campusPolygon, 0x34c759, 0.85); // game placement
+    // Gate markers
+    const marker = (pt: { x: number; z: number }, hex: number, size: number): void => {
+      const geo = new THREE.SphereGeometry(size, 10, 8);
+      const m = new THREE.MeshBasicMaterial({ color: hex, depthTest: false, transparent: true, opacity: 0.95 });
+      const s = new THREE.Mesh(geo, m);
+      s.position.set(pt.x, this.city.heightAt(pt.x, pt.z) + 1.2, pt.z);
+      s.renderOrder = 2001;
+      g.add(s);
+    };
+    marker(report.projectedGate, 0xffd452, 1.1); // fitted OSM gate point
+    marker(this.drmc.gate, 0x22d3ee, 0.85); // in-game gate structure
+    this.drmcOverlayGroup = g;
+    this.scene.add(g);
+    return true;
+  }
+
+  /** DEV/report helper: geographic fit + placement comparison numbers. */
+  debugDrmcReport(): Record<string, unknown> {
+    const report = drmcOverlayReport();
+    return {
+      fitScale: +report.fit.scale.toFixed(4),
+      fitRotationDeg: +report.fit.rotationDeg.toFixed(2),
+      fitRms: +report.fit.rms.toFixed(1),
+      fitMaxResidual: +report.fit.maxResidual.toFixed(1),
+      projectedGate: {
+        x: +report.projectedGate.x.toFixed(1),
+        z: +report.projectedGate.z.toFixed(1),
+      },
+      gameGate: { x: this.drmc.gate.x, z: this.drmc.gate.z },
+      gateToWallDistance: +report.gateToWallDistance.toFixed(1),
+      campusPolygon: this.drmc.campusPolygon,
+    };
+  }
+
+  /** Route guidance to the verified DRMC public entrance (connected-road path). */
+  debugDrmcRoute(fromX: number, fromZ: number): { ok: boolean; distance: number; steps: number } {
+    const plan = findRoute(fromX, fromZ, this.drmc.gate.x, this.drmc.gate.z);
+    return {
+      ok: plan.segmentIds.length > 0,
+      distance: plan.distance,
+      steps: plan.points.length,
+    };
+  }
+
   startRivalEvent(eventId: string): void {
     const ev = eventById(eventId);
     if (!ev) return;
@@ -1864,7 +2144,10 @@ export class Game implements UIBridge {
     this.audio.setSceneMode('driving');
 
     if (ev.weatherOverride) {
+      this.weatherDirector.setWeatherImmediate(ev.weatherOverride);
       this.env.setWeather(ev.weatherOverride);
+      const wEv = this.env.getWeather();
+      this.ui.setRainDrops(wEv === 'rain' || wEv === 'storm');
     }
 
     const rival = ev.blacklistRank ? rivalByRank(ev.blacklistRank) ?? null : null;
@@ -1879,23 +2162,10 @@ export class Game implements UIBridge {
     this.ui.show('hud');
     this.ui.applyControlLayout();
 
-    // Speak rival's opening taunt!
+    // Speak the rival's exact manifest taunt line + their distinct intro sting!
     if (rival) {
-      const s = this.settings.get();
-      const loc = getLocale();
-      const taunt = loc === 'en' ? rival.tauntEn : rival.tauntBn;
-      const who = loc === 'en' ? rival.nameEn : rival.nameBn;
-      this.speech.speak({
-        speaker: 'rival',
-        text: taunt,
-        locale: loc,
-        priority: 3,
-        volume: s.dialogue * s.master,
-        muted: s.muted || !s.sfxEnabled,
-      });
-      if (s.subtitles) {
-        this.ui.showRoadRageSubtitle(who, taunt);
-      }
+      this.audio.playIntroSting(rival.id);
+      this.speakLine(`rival.${rival.id}.taunt`, 3);
     }
 
     // Spawn event roadblocks & police pursuit if specified (well ahead of the 4-racer grid!)
@@ -1965,6 +2235,35 @@ export class Game implements UIBridge {
 
     if (summary.won) {
       this.audio.successStinger();
+      this.speakLine('race.win.1', 3);
+      if (summary.event.blacklistRank) {
+        this.scrapbook.addRecord({
+          id: `blacklist:rank:${summary.event.blacklistRank}`,
+          category: 'blacklist',
+          titleBn: `ব্ল্যাকলিস্ট র‍্যাঙ্ক #${summary.event.blacklistRank} জয়`,
+          titleEn: `Blacklist rank #${summary.event.blacklistRank} defeated`,
+          detailBn: `র‍্যাঙ্ক #${summary.event.blacklistRank} পরাজিত!`,
+          detailEn: `Rank #${summary.event.blacklistRank} defeated!`,
+          minutesOfDay: this.gameTime.minutesOfDay,
+          vehicleId: this.state.selectedVehicleId,
+          repDelta: summary.repEarned,
+        });
+      }
+      this.scrapbook.addRecord({
+        id: `win:${summary.event.id}`,
+        category: 'race',
+        titleBn: 'রেস জয়',
+        titleEn: 'Race Victory',
+        detailBn: summary.event.titleBn,
+        detailEn: summary.event.titleEn,
+        minutesOfDay: this.gameTime.minutesOfDay,
+        vehicleId: this.state.selectedVehicleId,
+        takaDelta: summary.cashDelta,
+        repDelta: summary.repEarned,
+        placement: summary.playerPosition,
+        topSpeedKmh: summary.topSpeedKmh,
+        timeSeconds: summary.timeSeconds,
+      });
       this.controller.addTurboCharge(TURBO.escapeGain);
       this.state.recordEventVictory({
         eventId: summary.event.id,
@@ -1976,6 +2275,14 @@ export class Game implements UIBridge {
     } else if (summary.cashDelta < 0) {
       this.stopWinnerPhoto();
       this.audio.failStinger();
+      this.speakLine('race.lose.1', 3);
+      this.scrapbook.recordRaceLoss(summary.event.id, {
+        minutesOfDay: this.gameTime.minutesOfDay,
+        vehicleId: this.state.selectedVehicleId,
+        topSpeedKmh: summary.topSpeedKmh,
+        timeSeconds: summary.timeSeconds,
+        placement: summary.playerPosition,
+      });
       const actualPaid = this.state.deductPenalty(Math.abs(summary.cashDelta));
       summary.cashDelta = -actualPaid;
     } else {
@@ -2001,8 +2308,264 @@ export class Game implements UIBridge {
       if (d < 8) {
         this.ui.toast(`${t(place.nameKey)}`, 'good');
         this.freeRidePoiCooldown = 8;
+        if (place.id === 'drmc') {
+          this.scrapbook.addRecord({
+            id: 'landmark:drmc',
+            category: 'milestone',
+            titleBn: 'ঢাকা রেসিডেনশিয়াল মডেল কলেজ সফর',
+            titleEn: 'Visited Dhaka Residential Model College',
+            detailBn: 'DRMC-এর গেট পর্যন্ত পৌঁছেছেন!',
+            detailEn: 'Reached the DRMC campus gate!',
+            minutesOfDay: this.gameTime.minutesOfDay,
+            vehicleId: this.state.selectedVehicleId,
+          });
+        }
         break;
       }
+    }
+  }
+
+  /**
+   * Cheap angle-dependent sun glare (Sunny state): strength peaks when the
+   * camera looks toward the sun direction of the current day phase.
+   */
+  private computeSunGlare(): number {
+    const wb = this.weatherDirector.weatherBlend;
+    if (wb.overcast > 0.42 || wb.rain > 0.3) return 0;
+    const phase = this.gameTime.phase;
+    if (phase === 'night') return 0;
+    // Sun azimuth from the current phase (radians); facing factor from camera yaw.
+    const sunAz = phase === 'noon' ? 0.49 : phase === 'morning' ? 1.08 : phase === 'golden' ? 1.67 : 2.06;
+    const camYaw = this.camera.rotation.y;
+    const facing = Math.cos(camYaw - sunAz);
+    const elevationGain = phase === 'golden' ? 1.15 : phase === 'morning' ? 1.0 : 0.72;
+    return clamp01((facing - 0.62) * 1.55) * (1 - wb.overcast * 1.2) * elevationGain;
+  }
+
+  /** Realize a director event in-world with guaranteed cleanup semantics (§7). */
+  private realizeDirectorEvent(ev: SpawnedEvent): void {
+    const loc = getLocale();
+    const fx = Math.sin(this.controller.yaw);
+    const fz = Math.cos(this.controller.yaw);
+    switch (ev.kind) {
+      case 'traffic_accident':
+      case 'broken_vehicle': {
+        this.traffic.induceCongestionNear(ev.x, ev.z, ev.kind === 'traffic_accident' ? 1.9 : 1.35, 24);
+        this.ui.toast(
+          loc === 'en'
+            ? ev.kind === 'traffic_accident'
+              ? 'Traffic accident ahead — slow down!'
+              : 'A broken vehicle is blocking part of the road!'
+            : ev.kind === 'traffic_accident'
+              ? 'সামনে ট্রাফিক দুর্ঘটনা — গতি কমান!'
+              : 'রাস্তায় একটি নষ্ট গাড়ি আটকে আছে!',
+          'bad',
+        );
+        ev.cleanup = () => undefined; // congestion decays exponentially — guaranteed cleanup
+        break;
+      }
+      case 'construction': {
+        for (let i = 0; i < 2; i++) {
+          this.roadblocks.trySpawnAhead(
+            ev.x + fx * (6 + i * 22),
+            ev.z + fz * (6 + i * 22),
+            fx,
+            fz,
+            1,
+          );
+        }
+        this.ui.toast(loc === 'en' ? 'Road works ahead!' : 'সামনে সড়ক মেরামত চলছে!', 'bad');
+        ev.cleanup = () => {
+          this.roadblocks.despawnNear(ev.x, ev.z, 26);
+        };
+        break;
+      }
+      case 'police_checkpoint': {
+        this.roadblocks.trySpawnAhead(ev.x, ev.z, fx, fz, 1);
+        this.ui.toast(
+          loc === 'en' ? 'Police checkpoint ahead — ride carefully!' : 'সামনে পুলিশ চেকপোস্ট — সাবধানে চালান!',
+          'bad',
+        );
+        ev.cleanup = () => {
+          this.roadblocks.despawnNear(ev.x, ev.z, 18);
+        };
+        break;
+      }
+      case 'vendor_blockage': {
+        this.peds.alertBell(ev.x, ev.z);
+        this.ui.toast(loc === 'en' ? 'A street vendor has narrowed the road!' : 'রাস্তা সরে দাগালে বিক্রেতা — ধীরে যান!', 'bad');
+        ev.cleanup = () => undefined;
+        break;
+      }
+      case 'weather_shift': {
+        this.ui.toast(loc === 'en' ? 'The weather is changing over Mohammadpur!' : 'মোহাম্মদপুরের আবহাওয়া বদলাচ্ছে!', 'good');
+        ev.cleanup = () => undefined;
+        break;
+      }
+      case 'street_challenge': {
+        this.ui.toast(loc === 'en' ? 'Street challenge spotted — check the Blacklist menu!' : 'স্ট্রিট চ্যালেঞ্জ দেখা যাচ্ছে — ব্ল্যাকলিস্ট মেনু দেখুন!', 'good');
+        ev.cleanup = () => undefined;
+        break;
+      }
+      case 'rare_photo': {
+        this.ui.toast(loc === 'en' ? 'Rare photo moment! Strike a pose!' : 'বিরল মুহূর্ত! ছবির পোজ দিন!', 'good');
+        this.score.register('impact');
+        this.scrapbook.addRecord({
+          id: `event:rare:${Math.floor(this.simClockSec / 30)}`,
+          category: 'event',
+          titleBn: 'বিরল রাস্তার মুহূর্ত',
+          titleEn: 'Rare Street Moment',
+          detailBn: 'মোহাম্মদপুরের রাস্তায় একটি বিরল মুহূর্ত তোলা হলো!',
+          detailEn: 'A rare street moment captured in Mohammadpur!',
+          minutesOfDay: this.gameTime.minutesOfDay,
+          vehicleId: this.state.selectedVehicleId,
+        });
+        this.scrapbook.recordStat('rareEvents');
+        ev.cleanup = () => undefined;
+        break;
+      }
+      case 'rival_challenge': {
+        ev.cleanup = () => undefined;
+        break;
+      }
+    }
+  }
+
+  /**
+   * §8 rival recognition in free roam: a Blacklist rival recognizes the player
+   * near their territory, delivers a genuine voiced Bangla taunt + subtitle and
+   * offers a spontaneous challenge (cooldown-gated; never interrupts missions,
+   * modals, races, road-rage, police pursuits or active cinematics).
+   */
+  private maybeTriggerRivalEncounter(): void {
+    if (this.simClockSec - this.rivalEncounterAt < 150) return;
+    if (
+      this.police.isActive ||
+      this.roadRage.isActive ||
+      this.cinematic.isPlaying ||
+      this.missions.state !== 'none' ||
+      this.ui.currentScreen !== 'hud'
+    ) {
+      return;
+    }
+    const anchors: Array<[string, string]> = [
+      ['bl_10_raju', 'zakir'],
+      ['bl_09_sumon', 'stand'],
+      ['bl_08_tarek', 'school'],
+      ['bl_07_nabila', 'library'],
+      ['bl_06_halim', 'bazaar'],
+      ['bl_05_faisal', 'garage'],
+      ['bl_04_badol', 'humayun'],
+      ['bl_03_sakib', 'launch'],
+      ['bl_02_ranga', 'market'],
+      ['bl_01_samrat', 'pharmacy'],
+    ];
+    for (const [rivalId, placeId] of anchors) {
+      const place = placeById(placeId);
+      if (!place) continue;
+      const d = Math.hypot(place.x - this.controller.x, place.z - this.controller.z);
+      if (d > 17) continue;
+      const rival = BLACKLIST_RIVALS.find((r) => r.id === rivalId);
+      if (!rival) continue;
+      this.rivalEncounterAt = this.simClockSec;
+      const loc = getLocale();
+      const name = loc === 'en' ? rival.nameEn : rival.nameBn;
+      this.speakLine(`rival.${rival.id}.intro`, 3);
+      this.scrapbook.addRecord({
+        id: `rival:encounter:${rivalId}:${Math.floor(this.simClockSec / 90)}`,
+        category: 'rival',
+        titleBn: `রাইভাল সাক্ষাৎ — ${name}`,
+        titleEn: `Rival encounter — ${name}`,
+        detailBn: `${terr(rival, loc)} এলাকায় ${name} আপনাকে চিনতে পেরেছেন!`,
+        detailEn: `${name} recognized you near ${terr(rival, loc)}!`,
+        minutesOfDay: this.gameTime.minutesOfDay,
+        vehicleId: this.state.selectedVehicleId,
+      });
+      this.ui.showRivalChallenge(
+        name,
+        terr(rival, loc),
+        () => {
+          this.startRivalEvent(rival.bossEvent.id);
+        },
+        () => {
+          this.ui.toast(loc === 'en' ? 'Maybe next time!' : 'পরেরবার হয়তো!', 'good');
+        },
+      );
+      return;
+    }
+
+    function terr(rival: { territoryBn: string; territoryEn: string }, loc: 'bn' | 'en'): string {
+      return loc === 'en' ? rival.territoryEn : rival.territoryBn;
+    }
+  }
+
+  /** §9 stunt/score feedback (bounded HUD chip; optional first-time scrapbook record). */
+  private handleStunt(ev: StuntEvent): void {
+    const loc = getLocale();
+    this.stuntChipUntil = this.simClockSec + 2.2;
+    this.ui.showStuntChip(loc === 'en' ? ev.labelEn : ev.labelBn, ev.points, ev.combo);
+    this.scrapbook.recordStat(ev.kind === 'near_miss' ? 'nearMisses' : 'stunts');
+    this.scrapbook.recordBestCombo(ev.combo);
+    const firstId = `stunt:first:${ev.kind}`;
+    if (!this.scrapbook.findRecord(firstId)) {
+      this.scrapbook.addRecord({
+        id: firstId,
+        category: 'stunt',
+        titleBn: `প্রথম ${ev.labelBn}`,
+        titleEn: `First ${ev.labelEn}`,
+        detailBn: `নতুন স্কিল আনলক: ${ev.labelBn}`,
+        detailEn: `New skill unlocked: ${ev.labelEn}`,
+        minutesOfDay: this.gameTime.minutesOfDay,
+        vehicleId: this.state.selectedVehicleId,
+      });
+    }
+  }
+
+  /**
+   * Capture a small JPEG thumbnail of the live winner-photo composition (called
+   * synchronously right after a render so the drawing buffer is still valid).
+   * Bounded size; failure simply leaves the record without a thumbnail (the
+   * scrapbook then shows a designed framed card instead of a broken button).
+   */
+  private capturePhotoThumb(): string | undefined {
+    try {
+      const srcCanvas = this.renderer.domElement;
+      const w = 240;
+      const h = Math.max(120, Math.round((w * srcCanvas.height) / Math.max(1, srcCanvas.width)));
+      const off = document.createElement('canvas');
+      off.width = w;
+      off.height = h;
+      const ctx = off.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.drawImage(srcCanvas, 0, 0, w, h);
+      const url = off.toDataURL('image/jpeg', 0.62);
+      return url.length <= 18_500 ? url : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Speak one exact manifest dialogue line with per-character voice identity. */
+  private speakLine(lineId: string, priority: 1 | 2 | 3 = 2): void {
+    const line = dialogueLine(lineId);
+    if (!line) return;
+    const loc = getLocale();
+    const s = this.settings.get();
+    const spec = loc === 'en' ? line.voiceEn ?? line.voice : line.voice;
+    const tr = ttsPitchRate(spec);
+    this.speech.speak({
+      speaker: line.category === 'police' ? 'police' : line.category === 'road_rage' ? 'driver' : line.character === 'player' ? 'player' : 'rival',
+      text: dialogueText(lineId, loc) ?? line.bn,
+      locale: loc,
+      priority,
+      volume: s.dialogue * s.master,
+      muted: s.muted || !s.sfxEnabled,
+      lineId,
+      voicePitch: tr.pitch,
+      voiceRate: tr.rate,
+    });
+    if (s.subtitles) {
+      this.ui.showRoadRageSubtitle(line.character, dialogueText(lineId, loc) ?? line.bn);
     }
   }
 
@@ -2319,6 +2882,16 @@ export class Game implements UIBridge {
       screen: this.ui.currentScreen,
       quality: this.settings.get().quality,
       weather: this.env.getWeather(),
+      weatherBlend: { ...this.weatherDirector.weatherBlend },
+      scrapbookRecords: this.scrapbook.recordCount,
+      scrapbookWins: this.scrapbook.snapshot.raceWins,
+      scrapbookTopSpeed: this.scrapbook.snapshot.topSpeedKmh,
+      scrapbookPhotos: this.scrapbook.photoCount,
+      scoreCombo: this.score.currentCombo,
+      stuntChipActive: this.simClockSec < this.stuntChipUntil,
+      scoreBest: this.score.best,
+      activeDirectorEvents: this.eventDirector.activeCount,
+      rivalEncounterCooldown: Math.max(0, 150 - (this.simClockSec - this.rivalEncounterAt)),
     };
   }
 

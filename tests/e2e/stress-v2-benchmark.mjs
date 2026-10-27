@@ -223,7 +223,7 @@ async function main() {
       g.debugInput = null;
       g.roadRage.cancel(0);
       g.destruction.resetAll();
-      g.debugSetPhase('morning', 'clear');
+      g.debugSetPhase('morning', 'sunny');
       g.render();
     });
     await cdp.send('HeapProfiler.collectGarbage').catch(() => {});

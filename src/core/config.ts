@@ -191,4 +191,8 @@ export const WORLD = {
 } as const;
 
 export type DayPhase = 'morning' | 'noon' | 'golden' | 'blue' | 'night';
-export type WeatherKind = 'clear' | 'overcast' | 'rain';
+/**
+ * Dynamic weather director states (Master Upgrade vNext §4).
+ * Legacy saves stored `'clear'`; `sanitizeProgress` migrates it to `'sunny'`.
+ */
+export type WeatherKind = 'sunny' | 'overcast' | 'rain' | 'windy' | 'storm';

@@ -17,6 +17,7 @@
 
 import { clamp, clamp01 } from '../core/mathx';
 import { PLACES } from '../world/layout';
+import { dialogueLine, introStingForRival } from './dialogueManifest';
 
 export interface VolumeState {
   master: number;
@@ -69,7 +70,10 @@ type AssetKey =
   | 'dlgRivalBn'
   | 'dlgRivalEn'
   | 'dlgPoliceBn'
-  | 'dlgPoliceEn';
+  | 'dlgPoliceEn'
+  | 'ambWind'
+  | 'sfxThunder1'
+  | 'sfxThunder2';
 
 export type DialogueClipRole = 'driver' | 'player' | 'rival' | 'police';
 
@@ -100,6 +104,9 @@ const ASSET_PATHS: Record<AssetKey, string> = {
   dlgRivalEn: 'audio/dialogue/rival-taunt-en.wav',
   dlgPoliceBn: 'audio/dialogue/police-alert-bn.wav',
   dlgPoliceEn: 'audio/dialogue/police-alert-en.wav',
+  ambWind: 'audio/ambience/wind-gust-loop.wav',
+  sfxThunder1: 'audio/sfx/thunder-rumble-1.wav',
+  sfxThunder2: 'audio/sfx/thunder-rumble-2.wav',
 };
 
 const CONSTRUCTION_SPOTS = [
@@ -277,6 +284,8 @@ export class AudioEngine {
         if (this.ctx.state === 'running') {
           this.suspendedByVisibility = true;
           this.stopDialogueClip();
+          this.stopIntroSting();
+          if (this.windGain) this.windGain.gain.value = 0;
           void this.ctx.suspend().catch(() => {});
         }
       } else if (this.suspendedByVisibility) {
@@ -1059,6 +1068,230 @@ export class AudioEngine {
     }
   }
 
+  // ------------------------------------------------------------------
+  // Weather audio (Master Upgrade vNext §4): bounded wind loop + thunder rolls
+  // ------------------------------------------------------------------
+
+  private windSource: AudioBufferSourceNode | null = null;
+  private windGain: GainNode | null = null;
+
+  /**
+   * Seamlessly loop the bundled wind bed at a strength in 0..1.35.
+   * Reuses ONE source (created once) — never spawns per-frame, never leaks.
+   */
+  setWindAudio(strength: number): void {
+    const target = clamp(strength, 0, 1.35) * 0.5;
+    if (!this.ctx || this.ctx.state !== 'running' || this.volumes.muted || this.volumes.ambience <= 0.01) {
+      if (this.windGain && this.ctx) {
+        this.windGain.gain.value = 0;
+      }
+      return;
+    }
+    if (!this.windSource) {
+      const buf = this.buffers.get('ambWind');
+      if (!buf) return;
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      src.connect(g).connect(this.ambienceBus);
+      src.start();
+      this.windSource = src;
+      this.windGain = g;
+    }
+    if (this.windGain) {
+      this.windGain.gain.value = target;
+    }
+  }
+
+  /**
+   * Thunder roll one-shot with a plausible distance delay (seconds) + gain.
+   * Uses one of two pooled rumbles; respects one-shot caps and mute state.
+   */
+  playThunder(distanceSec: number, intensity: number): void {
+    const delay = clamp(distanceSec, 0, 8);
+    window.setTimeout(() => {
+      const variant = Math.random() < 0.5 ? 'sfxThunder1' : 'sfxThunder2';
+      this.playOneShotBuffer(variant, this.ambienceBus, clamp(intensity, 0.2, 1) * 0.9, 0.92 + Math.random() * 0.16);
+    }, delay * 1000);
+  }
+
+  // ------------------------------------------------------------------
+  // Manifest dialogue lines (Master Upgrade vNext §3)
+  // Lazy bounded LRU of decoded per-line clips; never touches the boot gate.
+  // ------------------------------------------------------------------
+
+  private static readonly LINE_CACHE_CAP = 14;
+  private readonly lineBuffers = new Map<string, AudioBuffer>();
+  private readonly lineLoading = new Map<string, Promise<AudioBuffer | null>>();
+  private activeStingSource: AudioBufferSourceNode | null = null;
+
+  private async loadLineBuffer(relPath: string): Promise<AudioBuffer | null> {
+    const hit = this.lineBuffers.get(relPath);
+    if (hit) {
+      // LRU touch
+      this.lineBuffers.delete(relPath);
+      this.lineBuffers.set(relPath, hit);
+      return hit;
+    }
+    const inflight = this.lineLoading.get(relPath);
+    if (inflight) return inflight;
+    const promise = (async (): Promise<AudioBuffer | null> => {
+      if (!this.ctx) return null;
+      try {
+        const res = await fetch(resolveAudioAssetUrl(relPath));
+        if (!res.ok) return null;
+        const arr = await res.arrayBuffer();
+        const buf = await this.ctx.decodeAudioData(arr.slice(0));
+        this.lineBuffers.set(relPath, buf);
+        while (this.lineBuffers.size > AudioEngine.LINE_CACHE_CAP) {
+          const oldest = this.lineBuffers.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          this.lineBuffers.delete(oldest);
+        }
+        return buf;
+      } catch {
+        return null;
+      } finally {
+        this.lineLoading.delete(relPath);
+      }
+    })();
+    this.lineLoading.set(relPath, promise);
+    return promise;
+  }
+
+  /** Warm a dialogue line (and its English companion) without playing it. */
+  prefetchDialogueLine(lineId: string): void {
+    const line = dialogueLine(lineId);
+    if (!line) return;
+    if (line.wavBn) void this.loadLineBuffer(line.wavBn);
+    if (line.wavEn) void this.loadLineBuffer(line.wavEn);
+  }
+
+  /** Warm a rival's intro sting without playing it. */
+  prefetchIntroSting(rivalId: string): void {
+    const sting = introStingForRival(rivalId);
+    if (sting) void this.loadLineBuffer(sting.wav);
+  }
+
+  /**
+   * Play one exact manifest dialogue line in the requested locale (Bangla-first).
+   * Playback stops any active dialogue/line first (no overlapping duplicate lines).
+   * Returns true if playback started; false if muted/unloaded (callers keep the
+   * subtitle visible either way — a missing clip is a QA failure, never a silent skip).
+   */
+  playManifestLine(lineId: string, locale: 'bn' | 'en' = 'bn', onEnded?: () => void): void {
+    const line = dialogueLine(lineId);
+    if (!line) {
+      onEnded?.();
+      return;
+    }
+    const relPath = locale === 'en' && line.wavEn ? line.wavEn : line.wavBn;
+    if (!relPath) {
+      // English companion intentionally absent for local callouts -> subtitle only.
+      onEnded?.();
+      return;
+    }
+    this.stopDialogueClip();
+    if (!this.ctx || this.ctx.state !== 'running' || this.volumes.muted || !this.volumes.sfxEnabled) {
+      // Still report completion so intro sequencing continues with subtitles only.
+      onEnded?.();
+      return;
+    }
+    void this.loadLineBuffer(relPath).then((buf) => {
+      if (!buf || !this.ctx || this.ctx.state !== 'running') {
+        onEnded?.();
+        return;
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      const g = this.ctx.createGain();
+      g.gain.value = 1.0;
+      src.connect(g).connect(this.dialogueBus);
+      this.activeDialogueSource = src;
+      this.setDialogueDuck(true);
+      src.onended = () => {
+        if (this.activeDialogueSource === src) {
+          this.activeDialogueSource = null;
+          this.setDialogueDuck(false);
+        }
+        try {
+          src.disconnect();
+          g.disconnect();
+        } catch {
+          /* ignore */
+        }
+        onEnded?.();
+      };
+      src.start();
+    });
+  }
+
+  /**
+   * Play a Blacklist rival's distinct intro music sting (short original cue under
+   * the cinematic dialogue). Non-overlapping; stopped by `stopIntroSting()`.
+   */
+  playIntroSting(rivalId: string, onEnded?: () => void): void {
+    const sting = introStingForRival(rivalId);
+    if (!sting) {
+      onEnded?.();
+      return;
+    }
+    this.stopIntroSting();
+    if (!this.ctx || this.ctx.state !== 'running' || this.volumes.muted || !this.volumes.musicEnabled) {
+      onEnded?.();
+      return;
+    }
+    void this.loadLineBuffer(sting.wav).then((buf) => {
+      if (!buf || !this.ctx || this.ctx.state !== 'running') {
+        onEnded?.();
+        return;
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      const g = this.ctx.createGain();
+      g.gain.value = 0.62;
+      src.connect(g).connect(this.musicDuckGain);
+      this.activeStingSource = src;
+      src.onended = () => {
+        if (this.activeStingSource === src) this.activeStingSource = null;
+        try {
+          src.disconnect();
+          g.disconnect();
+        } catch {
+          /* ignore */
+        }
+        onEnded?.();
+      };
+      src.start();
+    });
+  }
+
+  stopIntroSting(): void {
+    if (this.activeStingSource) {
+      const s = this.activeStingSource;
+      this.activeStingSource = null;
+      try {
+        s.onended = null;
+        s.stop();
+        s.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /** Diagnostics: how many manifest line clips are decoded + resident (LRU size). */
+  get loadedDialogueLineCount(): number {
+    return this.lineBuffers.size;
+  }
+
+  /** Total bundled core assets that `init()` preloads (tests assert full coverage). */
+  get expectedAssetCount(): number {
+    return Object.keys(ASSET_PATHS).length;
+  }
+
   /**
    * Plays bundled offline phonetic speech WAV (`bn` or `en`) when no verified
    * native Android TTS or browser `SpeechSynthesisVoice` is installed.
@@ -1306,6 +1539,19 @@ export class AudioEngine {
 
   dispose(): void {
     this.stopDialogueClip();
+    this.stopIntroSting();
+    if (this.windSource) {
+      try {
+        this.windSource.stop();
+        this.windSource.disconnect();
+      } catch {
+        /* ignore */
+      }
+      this.windSource = null;
+      this.windGain = null;
+    }
+    this.lineBuffers.clear();
+    this.lineLoading.clear();
     if (this.ctx) {
       void this.ctx.close();
       this.ctx = null;

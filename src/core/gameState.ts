@@ -35,6 +35,8 @@ interface StateEvents {
   balance: number;
   rep: number;
   progress: Readonly<Progress>;
+  /** Fired immediately before serialization so runtime-only systems can sync in. */
+  beforeSave: Readonly<Progress>;
   achievement: string;
   unlock: string;
   saved: boolean;
@@ -48,6 +50,8 @@ export class GameState extends Emitter<StateEvents> {
   /** Runtime hold-to-boost Turbo charge (0..100, completely separate from `টান` stamina). */
   turboCharge = 100;
   private txBusy = false;
+  /** Optional purchase/equip observer (used by the career scrapbook, vNext §10). */
+  onTransaction?: (kind: 'vehicle' | 'upgrade' | 'cosmetic' | 'repair' | 'equip', id: string, level: number) => void;
   /** Edge-triggered low-condition warning latch: warns once below 35%, resets only at >= 50%. */
   private lowConditionWarned = false;
   /** Debounce timestamp (seconds) so one multi-system crash never double-damages condition. */
@@ -394,11 +398,13 @@ export class GameState extends Emitter<StateEvents> {
 
   // ------------------------------------------------------------ persistence
   saveNow(): void {
+    this.emit('beforeSave', this.progress);
     const ok = this.store.save(this.progress, this.now());
     if (ok) this.emit('saved', true);
   }
 
   autosave(): void {
+    this.emit('beforeSave', this.progress);
     if (this.store.autosave(this.progress, this.now())) this.emit('saved', true);
   }
 

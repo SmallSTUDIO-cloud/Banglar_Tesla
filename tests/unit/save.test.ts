@@ -36,11 +36,21 @@ describe('save format', () => {
 
   it('migrates a v1 save and keeps the balance', () => {
     const migrated = migrateProgress({ version: 1, balance: 1234, upgrades: { tyres: 2 } }) as Record<string, unknown>;
-    expect(migrated.version).toBe(2);
+    expect(migrated.version).toBe(SAVE_VERSION);
     expect(migrated.balance).toBe(1234);
     expect((migrated.ownedCosmetics as string[]).length).toBeGreaterThan(0);
-    expect(migrated.weather).toBe('clear');
+    // vNext §4 weather rename: legacy default 'clear' migrates to 'sunny'
+    expect(migrated.weather).toBe('sunny');
     expect(migrated.lastMode).toBe('duty');
+  });
+
+  it('migrates legacy weather names to the five-state director states', () => {
+    expect(sanitizeProgress({ version: 2, weather: 'clear' }).weather).toBe('sunny');
+    expect(sanitizeProgress({ version: 2, weather: 'overcast' }).weather).toBe('overcast');
+    expect(sanitizeProgress({ version: 2, weather: 'rain' }).weather).toBe('rain');
+    expect(sanitizeProgress({ version: 2, weather: 'windy' }).weather).toBe('windy');
+    expect(sanitizeProgress({ version: 2, weather: 'storm' }).weather).toBe('storm');
+    expect(sanitizeProgress({ version: 2, weather: 'hurricane' }).weather).toBe('sunny');
   });
 
   it('sanitises hostile values instead of trusting them', () => {

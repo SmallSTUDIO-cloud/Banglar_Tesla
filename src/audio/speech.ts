@@ -40,6 +40,7 @@ export type SpeechBackend =
   | 'android-bn'
   | 'web-bn'
   | 'web-en'
+  | 'bundled-manifest'
   | 'bundled-fallback'
   | 'silent-muted';
 
@@ -52,6 +53,15 @@ export interface SpeakOptions {
   volume: number;
   muted: boolean;
   onEnd?: () => void;
+  /**
+   * Stable dialogue-manifest id (vNext §3). When present, the exact per-line
+   * bundled WAV plays as fallback instead of a shared role clip, so every
+   * intended line is audibly covered with matching subtitles.
+   */
+  lineId?: string;
+  /** Per-character TTS identity overrides (0..2 scale, Web Speech semantics). */
+  voicePitch?: number;
+  voiceRate?: number;
 }
 
 export interface SpeechDiagnostics {
@@ -234,15 +244,15 @@ export class BanglaSpeechService {
       return 'silent-muted';
     }
 
-    const pitch =
-      opts.speaker === 'driver'
+    const pitch = opts.voicePitch ??
+      (opts.speaker === 'driver'
         ? 0.88
         : opts.speaker === 'rival'
           ? 0.92
           : opts.speaker === 'police'
             ? 0.95
-            : 1.08;
-    const rate = opts.speaker === 'player' ? 1.02 : 1.03;
+            : 1.08);
+    const rate = opts.voiceRate ?? (opts.speaker === 'player' ? 1.02 : 1.03);
     const estimatedMs =
       opts.speaker === 'rival'
         ? 3600
@@ -327,7 +337,7 @@ export class BanglaSpeechService {
       this.lastSelectedVoice = `bundled-wav:bn:${opts.speaker}`;
       this.lastLocale = 'bn-BD';
       this.lastFallbackReason = 'no-installed-native-or-browser-bn-voice';
-      return this.playBundledClip(opts.speaker, 'bn', token, estimatedMs, markDone, opts.onEnd);
+      return this.playBundledClip(opts.speaker, 'bn', token, estimatedMs, markDone, opts.onEnd, opts.lineId);
     }
 
     // English mode (`effectiveLocale === 'en'` and text has zero Bangla script)
@@ -377,7 +387,7 @@ export class BanglaSpeechService {
     this.lastSelectedVoice = `bundled-wav:en:${opts.speaker}`;
     this.lastLocale = 'en-US';
     this.lastFallbackReason = 'no-installed-browser-en-voice';
-    return this.playBundledClip(opts.speaker, 'en', token, estimatedMs, markDone, opts.onEnd);
+    return this.playBundledClip(opts.speaker, 'en', token, estimatedMs, markDone, opts.onEnd, opts.lineId);
   }
 
   private playBundledClip(
@@ -387,6 +397,7 @@ export class BanglaSpeechService {
     estimatedMs: number,
     markDone: () => void,
     onEnd?: () => void,
+    lineId?: string,
   ): SpeechBackend {
     let done = false;
     const finishFallback = (): void => {
@@ -400,6 +411,13 @@ export class BanglaSpeechService {
       this.audioEngine.setDialogueDuck(false);
       onEnd?.();
     };
+    // Manifest per-line audio (exact text) wins over the shared role clip.
+    if (lineId && typeof this.audioEngine.playManifestLine === 'function') {
+      this.audioEngine.playManifestLine(lineId, locale, finishFallback);
+      // Watchdog: if decode/teardown stalls, keep sequencing alive after a bound.
+      this.activeTimer = setTimeout(finishFallback, estimatedMs + 2600) as unknown as number;
+      return 'bundled-manifest';
+    }
     const played =
       typeof this.audioEngine.playBundledDialogue === 'function'
         ? this.audioEngine.playBundledDialogue(role, locale, finishFallback)

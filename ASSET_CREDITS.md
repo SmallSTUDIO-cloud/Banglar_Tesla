@@ -81,3 +81,19 @@ All 26 bundled `.wav` files (`3.08 MB` total RIFF PCM, deterministically generat
 | `public/audio/dialogue/rival-taunt-en.wav` | Offline English (`en`) Blacklist rival taunt speech WAV | 22.05 kHz 16-bit mono WAV | Original offline phonetic synthesis (`scripts/gen-audio-assets.py`), MIT |
 | `public/audio/dialogue/police-alert-bn.wav` | Offline Bengali (`bn`) police dispatch pursuit radio WAV | 22.05 kHz 16-bit mono WAV | Original offline phonetic synthesis (`scripts/gen-audio-assets.py`), MIT |
 | `public/audio/dialogue/police-alert-en.wav` | Offline English (`en`) police dispatch pursuit radio WAV | 22.05 kHz 16-bit mono WAV | Original offline phonetic synthesis (`scripts/gen-audio-assets.py`), MIT |
+
+
+## v0.6.0 (Master Upgrade vNext) additions
+
+### Offline-synthesized audio (`scripts/gen-audio-assets.py`, libespeak-ng + original DSP)
+- **39 Bangla dialogue lines + 32 English companion clips** (`public/audio/dialogue/*-{intro,taunt}-*.wav`, `intro-league-*`, `police-escalate-*`, `roadrage-*-2`, `race-*`, `mission-start-*`, `garage-ready-*`, `rare-stunt-*`, `weather-storm-*`, `ped-react-*`, `vendor-tea-*`): synthesized offline with `libespeak-ng` Bengali (`bn`) and English (`en-us`) voices, manual hasant/ZWNJ Bengali grapheme shaping, per-character pitch/rate voice identity, warm vocal smoothing; police lines use a walkie-talkie band-pass + squelch. **Not human recordings** — physical-device listening sign-off remains required (see QA note in `src/audio/dialogueManifest.json`).
+- **10 Blacklist intro music stings** (`public/audio/music/sting-*.wav`): 100% original synthesis (Karplus-Strong plucks, tabla bol, root drones) — one distinct key/tempo/motif per rival. No third-party recordings.
+- **Weather beds** (`public/audio/ambience/wind-gust-loop.wav`, `public/audio/sfx/thunder-rumble-*.wav`): original filtered-noise wind loop + decaying brown-noise thunder rolls.
+
+### Geographic data (DRMC — Dhaka Residential Model College)
+- Campus boundary: **OpenStreetMap way 1008314351** (`amenity=college`), © OpenStreetMap contributors, **ODbL 1.0** (https://www.openstreetmap.org/copyright), retrieved via Nominatim `polygon_geojson` 2026-10-27.
+- Gate feature: OSM way **1386522766** ("Dhaka Residential Model College Gate"); approximate point per project spec (the way's own geometry was unreachable at build time — Overpass at capacity / OSM XML API unreachable through the build environment's page fetcher).
+- Textual references: Wikipedia "Dhaka Residential Model College" (CC BY-SA 4.0); Mapcarta W1008314351 (mirrors OSM).
+- Photo evidence (reference only, NOT redistributed as game assets — all campus art is original procedural geometry):
+  - File:Dhaka_Residential_Model_College_2.jpg — Mostasin Maruf, **CC BY-SA 4.0**, via Wikimedia Commons (geotagged 23.766067 N 90.366667 E).
+  - File:Front_Gate_DRMC.jpg — Dhaka Residential Model College Administration, **CC BY-SA 4.0**, via Wikimedia Commons.

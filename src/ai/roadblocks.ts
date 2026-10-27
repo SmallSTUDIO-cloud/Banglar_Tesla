@@ -186,6 +186,25 @@ export class RoadblockSystem {
   }
 
   /** Immediately recycle all active roadblocks (pursuit/race end, menu, reset). */
+  /** Per-event cleanup (vNext §7): remove barrier slots near a zone without touching other events. */
+  despawnNear(x: number, z: number, radius = 20): number {
+    let removed = 0;
+    const rSq = radius * radius;
+    for (const slot of this.slots ?? []) {
+      if (!slot.active) continue;
+      const dx = slot.x - x;
+      const dz = slot.z - z;
+      if (dx * dx + dz * dz <= rSq) {
+        slot.active = false;
+        slot.group.visible = false;
+        slot.solidObb.disabled = true;
+        slot.smashObb.disabled = true;
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   clearAll(): void {
     for (let i = 0; i < this.slots.length; i++) {
       const s = this.slots[i];

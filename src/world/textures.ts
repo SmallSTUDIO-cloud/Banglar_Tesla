@@ -43,7 +43,7 @@ export function releaseScratchCanvas(): void {
   }
 }
 
-function makeTexture(
+export function makeTexture(
   key: string,
   width: number,
   height: number,
