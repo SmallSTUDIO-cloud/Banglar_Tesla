@@ -1889,6 +1889,7 @@ export class AppUI {
     const level = this.state.upgradeLevel(id);
     const price = this.state.nextUpgradePrice(id);
     const maxed = level >= up.maxLevel;
+    const locked = this.state.progress.rides < (up.ridesRequired ?? 0);
     return h('button', {
       class: `item-card${maxed ? ' owned' : ''}`,
       attrs: { type: 'button', 'data-upgrade-id': id },
@@ -1896,6 +1897,7 @@ export class AppUI {
         click: () => {
           if (this.busy) return;
           if (maxed || price === null) return;
+          if (locked) { this.bridge.audio.uiError(); this.toast(t('common.locked'), 'bad'); return; }
           if (this.state.balance < price) {
             this.bridge.audio.uiError();
             this.toast(t('store.notEnough', { n: formatTaka(price - this.state.balance) }), 'bad');
@@ -1923,7 +1925,9 @@ export class AppUI {
         ),
       ),
       h('div', { class: 'ic-price' },
-        maxed ? h('span', { class: 'pill green', text: t('common.max') }) : h('span', { class: 'taka', text: formatTaka(price ?? 0) }),
+        maxed ? h('span', { class: 'pill green', text: t('common.max') }) :
+          locked ? h('span', { class: 'taka', text: `🔒 ${up.ridesRequired} ${t('up.rides')}` }) :
+            h('span', { class: 'taka', text: formatTaka(price ?? 0) }),
       ),
     );
   }

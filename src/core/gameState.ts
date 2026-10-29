@@ -174,6 +174,7 @@ export class GameState extends Emitter<StateEvents> {
       if (!def) return { ok: false, reason: 'unknown' };
       const level = this.upgradeLevel(id);
       if (level >= def.maxLevel) return { ok: false, reason: 'maxed' };
+      if (this.progress.rides < (def.ridesRequired ?? 0)) return { ok: false, reason: 'locked' };
       const price = def.prices[level];
       if (!canAfford(this.progress.balance, price)) {
         return { ok: false, reason: 'insufficient', shortage: price - this.progress.balance };

@@ -168,6 +168,7 @@ export interface UpgradeDef {
   descKey: string;
   maxLevel: number;
   prices: number[];
+  ridesRequired?: number;
 }
 
 export const UPGRADES: UpgradeDef[] = [
@@ -180,6 +181,7 @@ export const UPGRADES: UpgradeDef[] = [
   { id: 'turboCap', nameKey: 'up.turboCap', descKey: 'up.turboCap.desc', maxLevel: 3, prices: [380, 860, 1550] },
   { id: 'turboRecharge', nameKey: 'up.turboRecharge', descKey: 'up.turboRecharge.desc', maxLevel: 3, prices: [350, 800, 1480] },
   { id: 'canopy', nameKey: 'up.canopy', descKey: 'up.canopy.desc', maxLevel: 2, prices: [400, 950] },
+  { id: 'sealedDrive', nameKey: 'up.sealedDrive', descKey: 'up.sealedDrive.desc', maxLevel: 2, prices: [420, 980], ridesRequired: 3 },
   { id: 'lights', nameKey: 'up.lights', descKey: 'up.lights.desc', maxLevel: 2, prices: [260, 640] },
 ];
 

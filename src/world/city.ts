@@ -70,6 +70,14 @@ export interface SpeedHump {
   axis: 'x' | 'z';
 }
 
+export interface AuthoredPothole {
+  x: number;
+  z: number;
+  radius: number;
+  depth: number;
+  roadId: string;
+}
+
 interface SurfaceBump {
   x: number;
   z: number;
@@ -82,6 +90,8 @@ export interface CityResult {
   colliders: Collider[];
   breakableLamps: BreakableProp[];
   humps: SpeedHump[];
+  potholes: readonly AuthoredPothole[];
+  potholeDepthAt: (x: number, z: number) => number;
   heightAt: (x: number, z: number) => number;
   lampPositions: THREE.Vector3[];
   signAnchors: THREE.Vector3[];
@@ -90,6 +100,7 @@ export interface CityResult {
   setWetness: (wet: number) => void;
   setNight: (on: boolean) => void;
   litterCount: number;
+  infillCount: number;
   updateStreetLitter: (dt: number, windStrength: number, playerX: number, playerZ: number) => void;
   registerShadowCasters: (root: THREE.Object3D) => void;
   updateShadowFocus: (x: number, z: number, shadowRadius: number, shadowsEnabled: boolean, force?: boolean) => void;
@@ -127,6 +138,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const breakableLamps: BreakableProp[] = [];
   const humps: SpeedHump[] = [];
   const microBumps: SurfaceBump[] = [];
+  const potholes: AuthoredPothole[] = [];
   const lampPositions: THREE.Vector3[] = [];
   const signAnchors: THREE.Vector3[] = [];
   const placeAnchors = new Map<string, THREE.Vector3>();
@@ -486,6 +498,27 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       }
     }
 
+    // Curated rough-road contact zones: away from junctions, destinations,
+    // spawn, campus and other hazards. Their exact polygon is shared with physics.
+    if (potholes.length < 8 && seg.kind !== 'gali' && seg.length > 58) {
+      const d = seg.length * 0.56;
+      const off = Math.min(1.15, seg.halfWidth * 0.32);
+      const px = seg.ax + seg.ux * d + seg.leftX * off;
+      const pz = seg.az + seg.uz * d + seg.leftZ * off;
+      if (!isDrmcKeepClear(px, pz, 5) &&
+        Math.hypot(px - WORLD.playerSpawn.x, pz - WORLD.playerSpawn.z) > 20 &&
+        PLACES.every((place) => Math.hypot(place.x - px, place.z - pz) > 16) &&
+        potholes.every((hole) => Math.hypot(hole.x - px, hole.z - pz) > 35)) {
+        const radius = 0.78;
+        bRoad.cylinder({ x: px, y: 0.017, z: pz }, radius + 0.17, 0.006, '#b8a995');
+        bRoad.cylinder({ x: px, y: 0.019, z: pz }, radius + 0.065, 0.007, '#484139');
+        bRoad.cylinder({ x: px, y: 0.021, z: pz }, radius, 0.006, '#211f1c');
+        // Shallow dark center, visible pale ragged rim, no actual mesh hole.
+        potholes.push({ x: px, z: pz, radius, depth: 0.065, roadId: seg.id });
+        microBumps.push({ x: px, z: pz, radius, deltaY: -0.065 });
+      }
+    }
+
     // ------- 3. VALIDATED STREETLIGHTS, ELECTRIC POLES & TREES (Section 16) --
     // Every single pole/lamp/tree is checked via `isClearOfRoads(x, z, 0.95)`!
     const lampSpacing = seg.kind === 'main' ? 28 : seg.kind === 'medium' ? 34 : 44;
@@ -733,6 +766,22 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             }
           }
 
+          // Previously blank ground-floor side walls now have service doors,
+          // ventilation grilles and drain downpipes; all remain inside the OBB.
+          if (bWidth > 8.5) {
+            for (const sideDir of [-1, 1] as const) {
+              const sideX = cx + seg.ux * (bWidth * 0.5 + 0.025) * sideDir;
+              const sideZ = cz + seg.uz * (bWidth * 0.5 + 0.025) * sideDir;
+              const sideFace = sideDir === 1 ? sideYawL : sideYawR;
+              bShut.quad({ x: sideX - fx * 1.35, y: 1.15, z: sideZ - fz * 1.35 },
+                1.55, 2.1, '#4d5b59', { y: sideFace });
+              bDet.box({ x: sideX + fx * 0.9, y: 2.0, z: sideZ + fz * 0.9 },
+                { x: 0.84, y: 0.45, z: 0.08 }, '#41525a', { y: sideFace });
+              bDet.cylinder({ x: sideX + fx * 2.2, y: height * 0.46,
+                z: sideZ + fz * 2.2 }, 0.035, height * 0.89, '#5c6260');
+            }
+          }
+
           // Rooftop parapet wall + black Gazi plastic water tank + concrete stairhead room (`চিলেকোঠা`)
           bDet.box(
             { x: cx, y: height + 0.42, z: cz },
@@ -897,6 +946,44 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         } else {
           along += 4.5;
         }
+      }
+    }
+  }
+
+  // Slender infill where the primary apartment pass left an actual empty lot.
+  // The same oriented-footprint/DRMC/road-corridor checks protect driving width.
+  let infillCount = 0;
+  for (const seg of ROAD_SEGMENTS) {
+    if (infillCount >= 26) break;
+    const yaw = Math.atan2(seg.ux, seg.uz);
+    for (const side of [-1, 1] as const) {
+      for (let along = 16; along < seg.length - 16 && infillCount < 26; along += 6.5) {
+        const width = 4.9, depth = 6.4;
+        const frontDist = seg.halfWidth + seg.sidewalk + 1.0;
+        const cx = seg.ax + seg.ux * along + seg.leftX * (frontDist + depth / 2) * side;
+        const cz = seg.az + seg.uz * along + seg.leftZ * (frontDist + depth / 2) * side;
+        if (!canPlaceBuilding(cx, cz, depth, width, yaw)) continue;
+        const sec = sectorIndex(cx, cz);
+        const faceX = -seg.leftX * side, faceZ = -seg.leftZ * side;
+        const frontX = cx + faceX * (depth / 2 + 0.025);
+        const frontZ = cz + faceZ * (depth / 2 + 0.025);
+        const faceYaw = Math.atan2(faceX, faceZ);
+        const tint = PLASTER_TINTS[(infillCount * 3 + sec) % PLASTER_TINTS.length];
+        sectorWalls[sec].box({ x: cx, y: 3.1, z: cz }, { x: depth, y: 6.2, z: width }, tint, { y: yaw });
+        sectorDetails[sec].box({ x: cx, y: 6.28, z: cz }, { x: depth + 0.15, y: 0.16, z: width + 0.15 }, '#9d9888', { y: yaw });
+        sectorShutters[sec].quad({ x: frontX, y: 1.28, z: frontZ }, 3.1, 2.5, '#a4aeb4', { y: faceYaw });
+        sectorDetails[sec].box({ x: frontX + faceX * 0.18, y: 4.8, z: frontZ + faceZ * 0.18 },
+          { x: 1.7, y: 1.15, z: 0.10 }, '#213940', { y: faceYaw });
+        sectorSigns[sec].quad({ x: frontX + faceX * 0.06, y: 3.17, z: frontZ + faceZ * 0.06 },
+          3.4, 0.72, '#ffffff', { y: faceYaw }, signAtlas.slot(signCursor++));
+        placedBuildings.push({ x: cx, z: cz, halfX: depth / 2, halfZ: width / 2,
+          yaw, radius: Math.hypot(depth, width) / 2 });
+        const ex = Math.abs(Math.cos(yaw)) * depth / 2 + Math.abs(Math.sin(yaw)) * width / 2;
+        const ez = Math.abs(Math.sin(yaw)) * depth / 2 + Math.abs(Math.cos(yaw)) * width / 2;
+        colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez,
+          height: 6.2, cameraBlocking: true, kind: 'building', cx, cz,
+          halfX: depth / 2, halfZ: width / 2, yaw });
+        infillCount++;
       }
     }
   }
@@ -1146,6 +1233,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     return h;
   };
 
+  const potholeDepthAt = (x: number, z: number): number => {
+    // Eight authored zones maximum; no per-frame allocations or colliders.
+    let depth = 0;
+    for (const hole of potholes) {
+      const distance = Math.hypot(x - hole.x, z - hole.z);
+      if (distance < hole.radius) depth = Math.max(depth, hole.depth * (1 - distance / hole.radius));
+    }
+    return depth;
+  };
+
   const dryColor = new THREE.Color('#ffffff');
   const wetColor = new THREE.Color('#7c828c');
   const setWetness = (wet: number): void => {
@@ -1275,6 +1372,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     colliders,
     breakableLamps,
     humps,
+    potholes,
+    potholeDepthAt,
     heightAt,
     lampPositions,
     signAnchors,
@@ -1283,6 +1382,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     setWetness,
     setNight,
     litterCount: litterItems.length,
+    infillCount,
     updateStreetLitter,
     registerShadowCasters,
     updateShadowFocus,

@@ -499,6 +499,9 @@ export const STRINGS: Record<string, Entry> = {
   'up.efficiency.desc': { bn: 'ব্যাটারির চার্জ দীর্ঘস্থায়ী করে ও ঘর্ষণ কমায়', en: 'Extends electric battery range & reduces rolling drag' },
   'up.canopy': { bn: 'মজবুত ছাউনি', en: 'Weatherproof Canopy' },
   'up.canopy.desc': { bn: 'রোদ-বৃষ্টিতে যাত্রীর মেজাজ ভালো রাখে', en: 'Protects passenger mood in sun and rain' },
+  'up.rides': { bn: 'ট্রিপ', en: 'rides' },
+  'up.sealedDrive': { bn: 'ওয়েদারপ্রুফ মোটর সিল', en: 'Weatherproof Motor Seal' },
+  'up.sealedDrive.desc': { bn: 'ভেজা রাস্তায় মোটরের গতি ওঠার ক্ষমতা ফেরায়; ৩টি ট্রিপ শেষে পাওয়া যায়', en: 'Restores wet-road acceleration; unlocks after 3 rides' },
   'up.lights': { bn: 'এলইডি লাইট ও রিফ্লেক্টর', en: 'LED Headlamp & Reflectors' },
   'up.lights.desc': { bn: 'রাতে উজ্জ্বল আলো ও দূর থেকে দৃশ্যমান', en: 'Brighter night beam and rear visibility' },
 

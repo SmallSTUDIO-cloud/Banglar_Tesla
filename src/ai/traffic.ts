@@ -54,6 +54,16 @@ export function quietTrafficFactor(minutes: number): number {
 
 export type VehicleKind = TrafficType;
 
+/** Suspension response varies with wheelbase/mass, bounded so no AI launches. */
+export function npcPotholeResponse(kind: VehicleKind, speed: number, depth: number): number {
+  const multiplier: Record<VehicleKind, number> = {
+    motorbike: 1.1, rickshaw: 1, easybike: 0.85, cng: 0.78,
+    car: 0.72, van: 0.65, truck: 0.5, bus: 0.42,
+  };
+  return Math.min(0.075, Math.max(0, depth) * Math.min(1.3, Math.abs(speed) / 6) * multiplier[kind]);
+}
+
+
 export interface TrafficObstacle {
   x: number;
   z: number;
@@ -82,6 +92,8 @@ interface ActiveTrafficAgent extends InstancedVehicleState {
   /** Damp lateral discontinuity at lane junctions without jumping the vehicle. */
   turnOffsetX: number;
   turnOffsetZ: number;
+  potholeDepth: number;
+  bumpOffset: number;
   roadRageHold: number;
   rageImmuneTimer: number;
 }
@@ -123,6 +135,7 @@ export class TrafficSystem {
   private quietFactor = 1;
   private populationTick = 0;
   private heightAt: (x: number, z: number) => number = () => 0.014;
+  private potholeAt: (x: number, z: number) => number = () => 0;
   congestionEpoch = 1;
 
   onHorn?: (x: number, z: number, kind: VehicleKind) => void;
@@ -148,6 +161,10 @@ export class TrafficSystem {
 
   withPrewarmState(run: () => void): void {
     this.fleet.withPrewarmState(run);
+  }
+
+  setPotholeSampler(fn: (x: number, z: number) => number): void {
+    this.potholeAt = fn;
   }
 
   setHeightSampler(fn: (x: number, z: number) => number): void {
@@ -253,6 +270,8 @@ export class TrafficSystem {
       farAccum: (index % 5) * 0.016,
       turnOffsetX: 0,
       turnOffsetZ: 0,
+      potholeDepth: 0,
+      bumpOffset: 0,
       roadRageHold: 0,
       rageImmuneTimer: 0,
     };
@@ -604,8 +623,14 @@ export class TrafficSystem {
 
       if (a.visible) {
         // Only sample heightAt when moving or near bumps; stationary vehicles keep cached ground Y!
-        if (a.speed > 0.05 || a.y === 0) {
-          a.y = this.heightAt(a.x, a.z);
+        const depth = this.potholeAt(a.x, a.z);
+        if (depth > 0.014 && a.potholeDepth <= 0.014) {
+          a.bumpOffset = npcPotholeResponse(a.kind, a.speed, depth);
+        }
+        a.potholeDepth = depth;
+        a.bumpOffset *= Math.exp(-stepDt * (a.kind === 'truck' || a.kind === 'bus' ? 5 : 9));
+        if (a.speed > 0.05 || a.y === 0 || a.bumpOffset > 0.001) {
+          a.y = this.heightAt(a.x, a.z) + a.bumpOffset;
         }
         if (a.nearLod && a.speed > 0.02) {
           a.wheelSpin += (a.speed * stepDt) / a.arch.wheelRadius;
@@ -651,6 +676,7 @@ export class TrafficSystem {
       if (d > 82 && d < 162) {
         a.lane = cand;
         a.turnOffsetX = a.turnOffsetZ = 0;
+        a.potholeDepth = a.bumpOffset = 0;
         a.s = this.rng() * cand.length * 0.8;
         sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
         a.x = this.tmpPt.x;
@@ -728,6 +754,7 @@ export class TrafficSystem {
     }
     a.lane = bestLane;
     a.turnOffsetX = a.turnOffsetZ = 0;
+    a.potholeDepth = a.bumpOffset = 0;
     a.s = bestS;
     a.lateralOffset = 0;
     a.targetLateral = 0;

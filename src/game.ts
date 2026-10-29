@@ -37,6 +37,7 @@ import { EventDirector, type SpawnedEvent } from './events/eventDirector';
 import { ScoreSystem, type StuntEvent } from './gameplay/scoreSystem';
 import { GameTimeSystem } from './world/timeSystem';
 import { DriverMirrors } from './vehicle/driverMirrors';
+import { WheelSplashes } from './world/wheelSplashes';
 import { ArcadeVfxSystem, classifyCrashTier } from './world/arcadeVfx';
 import { DevColliderDebugView } from './world/colliderDebug';
 import { Showroom } from './world/showroom';
@@ -133,6 +134,7 @@ export class Game implements UIBridge {
   private peds: PedestrianSystem;
   private player: RickshawVisual;
   private driverMirrors: DriverMirrors;
+  private wheelSplashes: WheelSplashes;
   private controller: RickshawController;
   private chase: ChaseCamera;
   private missions: MissionSystem;
@@ -314,6 +316,7 @@ export class Game implements UIBridge {
 
     this.traffic = new TrafficSystem(initialQuality, (x, z) => this.city.heightAt(x, z));
     this.scene.add(this.traffic.group);
+    this.traffic.setPotholeSampler((x, z) => this.city.potholeDepthAt(x, z));
     this.traffic.onHorn = (x, z, kind) =>
       this.audio.trafficHorn(x - this.controller.x, z - this.controller.z, kind);
 
@@ -324,6 +327,7 @@ export class Game implements UIBridge {
       this.city.colliders,
       (x, z) => this.city.heightAt(x, z),
       (x, z) => surfaceAtWorld(x, z),
+      (x, z) => this.city.potholeDepthAt(x, z),
     );
     this.controller.stamina = this.state.progress.stamina;
     this.controller.turboCharge = this.state.turboCharge;
@@ -393,6 +397,8 @@ export class Game implements UIBridge {
     this.scene.add(this.player.root);
     this.driverMirrors = new DriverMirrors(this.renderer, this.scene);
     this.arcadeVfx = new ArcadeVfxSystem(this.player.root, this.scene);
+    this.wheelSplashes = new WheelSplashes();
+    this.scene.add(this.wheelSplashes.group);
 
     // Pooled dynamic Roadblocks, 5-Heat Police Pursuit, Rival Race & Cinematic systems (v0.5.0)
     this.roadblocks = new RoadblockSystem((x, z) => this.city.heightAt(x, z));
@@ -941,6 +947,7 @@ export class Game implements UIBridge {
       steerRateMultiplier: derived.steerRateMultiplier,
       grip: derived.grip,
       roughSurfaceKeep: derived.roughSurfaceKeep,
+      suspensionSmoothing: derived.suspensionSmoothing,
       rollingDragScale: derived.rollingDragScale,
       isElectric: derived.isElectric,
       batteryDrainMultiplier: derived.batteryDrainMultiplier,
@@ -1111,6 +1118,9 @@ export class Game implements UIBridge {
       this.tanWindLines.visible = false;
     }
 
+    this.wheelSplashes.update(dt, this.controller.x, this.controller.y, this.controller.z,
+      this.controller.yaw, this.controller.speed, wetness,
+      settings.rainMode === 'dynamic' && !settings.reduceEffects, this.camera.quaternion);
     this.arcadeVfx.setReduceEffects(settings.reduceEffects);
     this.arcadeVfx.update(
       dt,
@@ -3089,6 +3099,7 @@ export class Game implements UIBridge {
       vehicleId: this.state.selectedVehicleId,
       cameraMode: this.settings.get().cameraMode,
       mirrorRenders: this.driverMirrors.renderCount,
+      splashParticles: this.wheelSplashes.activeCount,
       missionState: this.missions.state,
       balance: this.state.balance,
       rides: this.state.progress.rides,
