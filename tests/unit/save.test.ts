@@ -132,6 +132,22 @@ describe('settings', () => {
     expect(reloaded.get().music).toBeCloseTo(0.2);
   });
 
+  it('defaults old preferences to Auto and persists every weather choice without altering progress', () => {
+    storage.setItem('banglar-tesla.settings.v1', JSON.stringify({ language: 'en', quality: 'high' }));
+    const store = new SettingsStore(storage);
+    expect(store.get().weatherPreference).toBe('auto');
+    const progress = createDefaultProgress(100);
+    progress.balance = 888;
+    new SaveStore(storage).save(progress, 100);
+    for (const weatherPreference of ['sunny', 'overcast', 'rain', 'windy', 'storm', 'auto'] as const) {
+      store.set({ weatherPreference });
+      expect(new SettingsStore(storage).get().weatherPreference).toBe(weatherPreference);
+      expect(new SaveStore(storage).load().progress?.balance).toBe(888);
+    }
+    storage.setItem('banglar-tesla.settings.v1', JSON.stringify({ weatherPreference: 'hurricane' }));
+    expect(new SettingsStore(storage).get().weatherPreference).toBe('auto');
+  });
+
   it('clamps out-of-range values', () => {
     const store = new SettingsStore(storage);
     store.set({ music: 5, renderScale: -2, deadzone: 99 });

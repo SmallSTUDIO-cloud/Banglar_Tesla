@@ -107,6 +107,7 @@ export class Game implements UIBridge {
   readonly gameTime: GameTimeSystem;
   private weatherDirector: WeatherDirector;
   private weatherBlendAccum = 0;
+  private appliedWeatherPreference: WeatherKind | 'auto' = 'auto';
   private sunGlareAccum = 0;
   private stormToastAt = -999;
   readonly scrapbook: Scrapbook;
@@ -240,7 +241,7 @@ export class Game implements UIBridge {
     });
     this.eventDirector.onSpawn = (ev) => this.realizeDirectorEvent(ev);
     this.eventDirector.onWeatherNudge = (suggestStorm) => {
-      if (suggestStorm) this.weatherDirector.setWeatherImmediate('storm');
+      if (suggestStorm && this.settings.get().weatherPreference === 'auto') this.weatherDirector.setWeatherImmediate('storm');
     };
     this.score.onStunt = (ev) => this.handleStunt(ev);
     this.state.onTransaction = (kind, id, level) => {
@@ -849,7 +850,7 @@ export class Game implements UIBridge {
         this.raceSystem.isActive &&
         this.raceSystem.hudSnap.checkpointTotal > 0 &&
         this.raceSystem.hudSnap.checkpointIndex / this.raceSystem.hudSnap.checkpointTotal > 0.65,
-      eventOverride: this.raceSystem.isActive && !!this.raceSystem.currentEvent?.weatherOverride,
+      eventOverride: settings.weatherPreference !== 'auto' || (this.raceSystem.isActive && !!this.raceSystem.currentEvent?.weatherOverride),
       reduceEffects: settings.reduceEffects,
       lowFlash: settings.lowFlash,
     });
@@ -1353,6 +1354,7 @@ export class Game implements UIBridge {
       const seed = dailySeed(new Date());
       weather = seed % 2 === 0 ? 'rain' : 'overcast';
     }
+    if (this.settings.get().weatherPreference !== 'auto') weather = this.settings.get().weatherPreference as WeatherKind;
     const phase = this.gameTime.phase;
     this.env.setPhase(phase);
     this.weatherDirector.setWeatherImmediate(weather);
@@ -2330,7 +2332,7 @@ export class Game implements UIBridge {
     this.paused = false;
     this.audio.setSceneMode('driving');
 
-    if (ev.weatherOverride) {
+    if (ev.weatherOverride && this.settings.get().weatherPreference === 'auto') {
       this.weatherDirector.setWeatherImmediate(ev.weatherOverride);
       this.env.setWeather(ev.weatherOverride);
       const wEv = this.env.getWeather();
@@ -2916,6 +2918,11 @@ export class Game implements UIBridge {
     const s = this.settings.get();
     const quality = QUALITY[s.quality as QualityPreset];
     setLocale(s.language);
+    if (s.weatherPreference !== this.appliedWeatherPreference) {
+      this.appliedWeatherPreference = s.weatherPreference;
+      if (s.weatherPreference !== 'auto') this.weatherDirector.setWeatherImmediate(s.weatherPreference);
+      // Auto resumes the current live weather; do not reset a mission or its clock.
+    }
     this.renderer.shadowMap.enabled = s.shadows && quality.shadows;
     this.env.setQuality({ ...quality, shadows: s.shadows && quality.shadows });
     this.traffic.setQuality(quality);
