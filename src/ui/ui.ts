@@ -2203,6 +2203,15 @@ export class AppUI {
       onChange: (v) => patch({ fpsTarget: v === '30' ? 30 : 60 }),
     }));
 
+    body.append(segmented<Settings['weatherPreference']>({
+      label: t('settings.weather'),
+      value: s.weatherPreference,
+      options: (['auto', 'sunny', 'overcast', 'rain', 'windy', 'storm'] as const).map((value) => ({
+        value, label: t(`weather.${value}`),
+      })),
+      onChange: (v) => patch({ weatherPreference: v }),
+    }));
+
     // audio
     body.append(h('div', { class: 'divider' }), h('h3', { text: t('settings.audio') }));
     body.append(toggle({

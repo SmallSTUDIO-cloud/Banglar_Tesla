@@ -908,6 +908,7 @@ button .icon svg {
 }
 .seg {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.3rem;
   padding: 0.22rem;
   border-radius: 12px;
@@ -915,7 +916,8 @@ button .icon svg {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 .seg button {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: max-content;
   min-height: 38px;
   border: 0;
   border-radius: 9px;
