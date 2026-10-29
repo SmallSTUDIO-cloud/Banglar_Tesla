@@ -362,8 +362,8 @@ export class RickshawRig {
       bSteerChrome.box({ x: 0, y: 1.215, z: -0.062 }, { x: 0.075, y: 0.022, z: 0.008 }, '#35f2c4', { x: -0.45 });
     }
 
-    // Side mirrors (always at least one classic left mirror; twin chrome mirrors when upgraded/electric!)
-    const mirrorSides = look.mirrorSet || this.isElectric ? [-1, 1] : [1];
+    // Both safety mirrors exist on every frame; equipped cosmetics change their finish.
+    const mirrorSides = [-1, 1];
     for (const side of mirrorSides) {
       bSteerChrome.cylinder(
         { x: side * 0.29, y: 1.255, z: -0.12 },

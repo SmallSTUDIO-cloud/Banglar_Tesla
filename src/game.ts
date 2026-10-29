@@ -36,6 +36,7 @@ import { Scrapbook } from './career/scrapbook';
 import { EventDirector, type SpawnedEvent } from './events/eventDirector';
 import { ScoreSystem, type StuntEvent } from './gameplay/scoreSystem';
 import { GameTimeSystem } from './world/timeSystem';
+import { DriverMirrors } from './vehicle/driverMirrors';
 import { ArcadeVfxSystem, classifyCrashTier } from './world/arcadeVfx';
 import { DevColliderDebugView } from './world/colliderDebug';
 import { Showroom } from './world/showroom';
@@ -131,6 +132,7 @@ export class Game implements UIBridge {
   private traffic: TrafficSystem;
   private peds: PedestrianSystem;
   private player: RickshawVisual;
+  private driverMirrors: DriverMirrors;
   private controller: RickshawController;
   private chase: ChaseCamera;
   private missions: MissionSystem;
@@ -389,6 +391,7 @@ export class Game implements UIBridge {
 
     this.player = new RickshawVisual(this.state.vehicle(), this.currentLook());
     this.scene.add(this.player.root);
+    this.driverMirrors = new DriverMirrors(this.renderer, this.scene);
     this.arcadeVfx = new ArcadeVfxSystem(this.player.root, this.scene);
 
     // Pooled dynamic Roadblocks, 5-Heat Police Pursuit, Rival Race & Cinematic systems (v0.5.0)
@@ -801,7 +804,15 @@ export class Game implements UIBridge {
       this.renderer.render(this.showroom.scene, this.showroom.camera);
       this.renderer.toneMappingExposure = prevExp;
     } else {
-      this.renderer.render(this.scene, this.camera);
+      const mirrorsActive = this.settings.get().cameraMode === 'cockpit' &&
+        this.mode !== 'menu' && !this.paused && !this.debugFreeCamera && this.ui.currentScreen === 'hud';
+      if (this.driverMirrors.update(performance.now(), mirrorsActive, this.controller.x, this.controller.y,
+        this.controller.z, this.controller.yaw, this.player.root)) {
+        this.renderer.render(this.scene, this.camera);
+        this.driverMirrors.draw(this.camera.aspect);
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
     }
     this.devPerf.endGpuSample(this.renderer);
   }
@@ -3077,6 +3088,7 @@ export class Game implements UIBridge {
       activeVfxParticles: this.arcadeVfx.getActiveParticleCount(),
       vehicleId: this.state.selectedVehicleId,
       cameraMode: this.settings.get().cameraMode,
+      mirrorRenders: this.driverMirrors.renderCount,
       missionState: this.missions.state,
       balance: this.state.balance,
       rides: this.state.progress.rides,
