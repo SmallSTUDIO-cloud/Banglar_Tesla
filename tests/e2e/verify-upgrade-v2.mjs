@@ -50,7 +50,7 @@ async function waitFor(url, ms = 30000) {
 
 async function main() {
   fs.mkdirSync(artifacts, { recursive: true });
-  const server = spawn('npx', ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
+  const server = spawn(path.join(root, 'node_modules/.bin/vite'), ['preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
     cwd: root,
     stdio: 'ignore',
   });

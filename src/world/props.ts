@@ -19,6 +19,7 @@ import type { Collider } from './city';
 import type { BreakableKind, BreakableProp } from './destruction';
 import { Bucket } from './geo';
 import { ROAD_SEGMENTS, isClearOfRoads } from './layout';
+import { isDrmcKeepClear } from './drmcGeo';
 import { SignAtlas, clothTexture } from './textures';
 
 export interface VendorSpot {
@@ -76,7 +77,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
 
   const placedStalls: { x: number; z: number; r: number }[] = [];
   const canPlaceStall = (x: number, z: number, r: number): boolean => {
-    if (!isClearOfRoads(x, z, r + 0.55)) return false;
+    if (!isClearOfRoads(x, z, r + 0.55) || isDrmcKeepClear(x, z, r + 1.5)) return false;
     for (const p of placedStalls) {
       if (Math.hypot(x - p.x, z - p.z) < r + p.r + 1.5) return false;
     }

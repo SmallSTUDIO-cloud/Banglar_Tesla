@@ -7,9 +7,9 @@
  *
  * QA honesty policy: bundled per-line WAVs are synthesized offline with
  * `libespeak-ng` (Bengali voice, manual hasant/ZWNJ grapheme shaping, per-character
- * pitch/rate identity). They are intelligible phonetic Bengali renderings, NOT
+ * pitch/rate identity). These are phonetic synthetic Bengali renderings, NOT
  * human recordings; every entry carries that QA status and a physical-device
- * listening sign-off is still required before release sign-off. Where a verified
+ * intelligibility and listening sign-off is still required before release sign-off. Where a verified
  * native `bn-*` system TTS voice exists on device it speaks the exact manifest
  * text instead (checked by `BanglaSpeechService`).
  */

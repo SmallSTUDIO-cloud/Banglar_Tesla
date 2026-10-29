@@ -1,313 +1,252 @@
 /**
- * Dhaka Residential Model College (DRMC) campus exterior — vNext §1.
- *
- * Evidence-based exterior only: perimeter wall, main arched gate with bilingual
- * signage, white academic blocks, auditorium block, sports grounds and trees.
- * No interior layouts or building names are invented (see `drmcGeo.ts` for the
- * full source/verification note). Merged into 4 buckets (~4 draw calls) with
- * OBB wall/building colliders and a passable gate opening onto the grounds.
+ * A compact, road-connected interpretation of DRMC. The primary portal and
+ * low white blocks use the viewed Commons photos as visual references. The
+ * second entrance and the internal layout are provisional (see drmcGeo.ts).
+ * Static primitives are merged by material; gate openings remain driveable.
  */
-
 import * as THREE from 'three';
+import type { Collider } from './city';
 import { Bucket } from './geo';
 import {
-  DRMC_CAMPUS,
-  DRMC_GATE,
-  DRMC_GATE_ROAD_POINT,
-  DRMC_MAIN_BLOCK,
-  DRMC_SECOND_BLOCK,
-  DRMC_SPORTS_GROUND,
-  DRMC_SW_WALL,
-  isInsideDrmcCampus,
+  DRMC_GATE, DRMC_GATE_ROAD_POINT, DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT,
+  DRMC_MAIN_BLOCK, DRMC_SECOND_BLOCK, DRMC_SPORTS_GROUND,
+  drmcBoundaryPolygon, type GamePoint,
 } from './drmcGeo';
-import type { Collider } from './city';
 import { makeTexture } from './textures';
 
 export interface DrmcCampusResult {
   group: THREE.Group;
   colliders: Collider[];
-  gate: { x: number; z: number };
-  campusPolygon: Array<{ x: number; z: number }>;
+  gate: GamePoint;
+  campusPolygon: GamePoint[];
 }
 
-function wallCollider(ax: number, az: number, bx: number, bz: number, height = 2.6): Collider {
-  const cx = (ax + bx) * 0.5;
-  const cz = (az + bz) * 0.5;
-  const len = Math.hypot(bx - ax, bz - az) + 0.35;
-  const yaw = Math.atan2(bx - ax, bz - az);
-  const halfW = 0.32;
-  const cos = Math.abs(Math.cos(yaw));
-  const sin = Math.abs(Math.sin(yaw));
+function obbCollider(x: number, z: number, halfX: number, halfZ: number, yaw: number, height: number, kind: 'wall' | 'building'): Collider {
+  const c = Math.abs(Math.cos(yaw));
+  const s = Math.abs(Math.sin(yaw));
+  const ex = c * halfX + s * halfZ;
+  const ez = s * halfX + c * halfZ;
   return {
-    minX: cx - (halfW * cos + (len * 0.5) * sin),
-    maxX: cx + (halfW * cos + (len * 0.5) * sin),
-    minZ: cz - (halfW * sin + (len * 0.5) * cos),
-    maxZ: cz + (halfW * sin + (len * 0.5) * cos),
-    height,
-    cameraBlocking: true,
-    kind: 'wall',
-    cx,
-    cz,
-    halfX: halfW,
-    halfZ: len * 0.5,
-    yaw,
+    minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez,
+    cx: x, cz: z, halfX, halfZ, yaw, height, cameraBlocking: true, kind,
   };
 }
 
-/** Line-segment distance helper for the gate-gap wall split. */
-function distToSegment(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
-  const vx = bx - ax;
-  const vz = bz - az;
-  const t = Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / (vx * vx + vz * vz || 1)));
-  return Math.hypot(px - (ax + vx * t), pz - (az + vz * t));
+/** A wall/line runs in local +Z. */
+function linePose(a: GamePoint, b: GamePoint): { x: number; z: number; length: number; yaw: number } {
+  return {
+    x: (a.x + b.x) / 2,
+    z: (a.z + b.z) / 2,
+    length: Math.hypot(b.x - a.x, b.z - a.z),
+    yaw: Math.atan2(b.x - a.x, b.z - a.z),
+  };
 }
 
 export function buildDrmcCampus(heightAt: (x: number, z: number) => number): DrmcCampusResult {
   const group = new THREE.Group();
   group.name = 'drmc-campus';
   const colliders: Collider[] = [];
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const walls = new Bucket('drmc.masonry', material, true);
+  const details = new Bucket('drmc.details', material, false);
+  const grounds = new Bucket('drmc.grounds', material, false);
 
-  const wallMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const whiteMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const darkMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const fieldMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  // A continuous green site beneath the paths and sports areas, not an empty
+  // asphalt void. The road mesh and sidewalks stay outside this polygon.
+  const boundary = drmcBoundaryPolygon();
+  const outline = new THREE.Shape();
+  outline.moveTo(boundary[0].x, -boundary[0].z);
+  for (const p of boundary.slice(1)) outline.lineTo(p.x, -p.z);
+  outline.closePath();
+  const siteGeometry = new THREE.ShapeGeometry(outline);
+  siteGeometry.rotateX(-Math.PI / 2);
+  const site = new THREE.Mesh(siteGeometry, new THREE.MeshLambertMaterial({ color: '#a3b881' }));
+  site.name = 'drmc.site';
+  site.position.y = 0.008;
+  site.receiveShadow = true;
+  group.add(site);
 
-  const bWall = new Bucket('drmc.wall', wallMat, true);
-  const bWhite = new Bucket('drmc.white', whiteMat, true);
-  const bDark = new Bucket('drmc.dark', darkMat, false);
-  const bField = new Bucket('drmc.field', fieldMat, false);
-
-  // ---------------------------------------------------------------- walls
-  const WALL_H = 2.55;
-  const wallRuns: Array<[number, number, number, number]> = [];
-  // SW wall follows the Shahjahan chain offset polyline, split around the gate opening
-  for (let i = 0; i < DRMC_SW_WALL.length - 1; i++) {
-    const a = DRMC_SW_WALL[i];
-    const b = DRMC_SW_WALL[i + 1];
-    const gateDistA = distToSegment(a.x, a.z, DRMC_GATE.x, DRMC_GATE.z, DRMC_GATE_ROAD_POINT.x, DRMC_GATE_ROAD_POINT.z);
-    void gateDistA;
-    wallRuns.push([a.x, a.z, b.x, b.z]);
-  }
-  // Split the SW run that contains the gate into two runs leaving a 6.2 m opening
-  const gateHalf = 3.1;
-  const splitRuns: Array<[number, number, number, number]> = [];
-  for (const [ax, az, bx, bz] of wallRuns) {
-    const dGate = distToSegment(DRMC_GATE.x, DRMC_GATE.z, ax, az, bx, bz);
-    if (dGate < gateHalf + 1.2) {
-      // Trim this run around the gate
-      const vx = bx - ax;
-      const vz = bz - az;
-      const len = Math.hypot(vx, vz) || 1;
-      const tGate = ((DRMC_GATE.x - ax) * vx + (DRMC_GATE.z - az) * vz) / (len * len);
-      const tA = Math.max(0, tGate - (gateHalf + 0.9) / len);
-      const tB = Math.min(1, tGate + (gateHalf + 0.9) / len);
-      if (tA > 0.02) splitRuns.push([ax, az, ax + vx * tA, az + vz * tA]);
-      if (tB < 0.98) splitRuns.push([ax + vx * tB, az + vz * tB, bx, bz]);
-    } else {
-      splitRuns.push([ax, az, bx, bz]);
-    }
-  }
-  // Remaining campus edges: B->C (Mirpur frontage), C->D (NE), D->A (N)
-  const [A, B, C, D] = DRMC_CAMPUS;
-  splitRuns.push([B.x, B.z, C.x, C.z]);
-  splitRuns.push([C.x, C.z, D.x, D.z]);
-  splitRuns.push([D.x, D.z, A.x, A.z]);
-
-  for (const [ax, az, bx, bz] of splitRuns) {
-    const len = Math.hypot(bx - ax, bz - az);
-    const mx = (ax + bx) * 0.5;
-    const mz = (az + bz) * 0.5;
-    const yaw = Math.atan2(bx - ax, bz - az);
-    const gy = heightAt(mx, mz);
-    // Masonry wall body + darker cap course
-    bWall.box({ x: mx, y: gy + WALL_H * 0.5, z: mz }, { x: 0.30, y: WALL_H, z: len }, '#e8dfc9', { y: yaw });
-    bWall.box({ x: mx, y: gy + WALL_H + 0.09, z: mz }, { x: 0.40, y: 0.18, z: len + 0.05 }, '#c9bda2', { y: yaw });
-    colliders.push(wallCollider(ax, az, bx, bz, WALL_H));
-  }
-
-  // ------------------------------------------------------------- main gate
-  const gateYaw = Math.atan2(DRMC_GATE_ROAD_POINT.x - DRMC_GATE.x, DRMC_GATE_ROAD_POINT.z - DRMC_GATE.z);
-  const gCos = Math.cos(gateYaw);
-  const gSin = Math.sin(gateYaw);
-  const gy = heightAt(DRMC_GATE.x, DRMC_GATE.z);
-  for (const side of [-1, 1] as const) {
-    const px = DRMC_GATE.x + gCos * 0.02 * side * 0 + side * (-gSin) * 3.35;
-    const pz = DRMC_GATE.z + side * gCos * 3.35;
-    // Gate pillars: cream masonry with dark cap + gold band
-    bWall.box({ x: px, y: gy + 1.75, z: pz }, { x: 0.62, y: 3.5, z: 0.62 }, '#e8dfc9');
-    bWall.box({ x: px, y: gy + 3.56, z: pz }, { x: 0.76, y: 0.16, z: 0.76 }, '#c9bda2');
-    bDark.box({ x: px, y: gy + 2.85, z: pz }, { x: 0.66, y: 0.07, z: 0.66 }, '#b8912f');
-    colliders.push({
-      minX: px - 0.36,
-      maxX: px + 0.36,
-      minZ: pz - 0.36,
-      maxZ: pz + 0.36,
-      height: 3.6,
-      cameraBlocking: true,
-      kind: 'wall',
-    });
-  }
-  // Arch beam across the opening + bilingual signboard
-  bWall.box({ x: DRMC_GATE.x, y: gy + 3.78, z: DRMC_GATE.z }, { x: 0.5, y: 0.30, z: 7.4 }, '#e8dfc9', { y: gateYaw });
-  bDark.box({ x: DRMC_GATE.x, y: gy + 3.60, z: DRMC_GATE.z }, { x: 0.55, y: 0.07, z: 7.2 }, '#b8912f', { y: gateYaw });
-
-  let signTexture: THREE.Texture | null = null;
-  try {
-    signTexture = makeTexture(
-      'drmc.gate.sign',
-      512,
-      128,
-      (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-        ctx.fillStyle = '#0b3b2e';
-        ctx.fillRect(0, 0, w, h);
-        ctx.fillStyle = '#f2c14e';
-        ctx.fillRect(0, 0, w, 7);
-        ctx.fillRect(0, h - 7, w, 7);
-        ctx.fillStyle = '#f7f2e2';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.font = 'bold 30px sans-serif';
-        ctx.fillText('ঢাকা রেসিডেনশিয়াল মডেল কলেজ', w / 2, h * 0.38);
-        ctx.font = 'bold 22px sans-serif';
-        ctx.fillStyle = '#e8dfc9';
-        ctx.fillText('DHAKA RESIDENTIAL MODEL COLLEGE · DRMC', w / 2, h * 0.72);
-      },
-      { srgb: true },
-    );
-  } catch {
-    signTexture = null;
-  }
-  if (signTexture) {
-    const signMat = new THREE.MeshBasicMaterial({ map: signTexture, transparent: true });
-    const signMesh = new THREE.Mesh(new THREE.PlaneGeometry(5.8, 1.45), signMat);
-    signMesh.position.set(DRMC_GATE.x - gSin * 0.32, gy + 3.78, DRMC_GATE.z + gCos * 0.32);
-    signMesh.rotation.set(0, gateYaw + Math.PI, 0);
-    signMesh.name = 'drmc.gate.sign';
-    signMesh.castShadow = false;
-    signMesh.receiveShadow = false;
-    group.add(signMesh);
-  }
-
-  // Entrance apron (visual paving from the gate to the road) + forecourt inside
-  const apronMid = {
-    x: (DRMC_GATE.x + DRMC_GATE_ROAD_POINT.x) * 0.5,
-    z: (DRMC_GATE.z + DRMC_GATE_ROAD_POINT.z) * 0.5,
-  };
-  const apronLen = Math.hypot(
-    DRMC_GATE.x - DRMC_GATE_ROAD_POINT.x,
-    DRMC_GATE.z - DRMC_GATE_ROAD_POINT.z,
-  );
-  bDark.box(
-    { x: apronMid.x, y: heightAt(apronMid.x, apronMid.z) + 0.02, z: apronMid.z },
-    { x: 5.2, y: 0.045, z: apronLen + 1.2 },
-    '#9a917e',
-    { y: gateYaw },
-  );
-
-  // ------------------------------------------------------ academic blocks
-  // Main white academic block (4 storeys, window grid, entrance steps).
-  const mainYaw = Math.atan2(C.x - B.x, C.z - B.z) + Math.PI * 0.5;
-  const mainY = heightAt(DRMC_MAIN_BLOCK.x, DRMC_MAIN_BLOCK.z);
-  bWhite.box({ x: DRMC_MAIN_BLOCK.x, y: mainY + 6.0, z: DRMC_MAIN_BLOCK.z }, { x: 13.5, y: 12.0, z: 34 }, '#f1efe6', { y: mainYaw });
-  bDark.box({ x: DRMC_MAIN_BLOCK.x, y: mainY + 12.12, z: DRMC_MAIN_BLOCK.z }, { x: 13.9, y: 0.24, z: 34.4 }, '#cfc7b2', { y: mainYaw });
-  // Window grid + floor bands on both long faces
-  const mCos = Math.cos(mainYaw);
-  const mSin = Math.sin(mainYaw);
-  for (const side of [-1, 1] as const) {
-    for (let fl = 0; fl < 4; fl++) {
-      for (let wi = 0; wi < 7; wi++) {
-        const off = -15 + wi * 5;
-        const wx = DRMC_MAIN_BLOCK.x + side * mCos * 6.82 - mSin * off;
-        const wz = DRMC_MAIN_BLOCK.z - side * mSin * 6.82 + mCos * off;
-        bDark.box({ x: wx, y: mainY + 1.5 + fl * 2.85, z: wz }, { x: 0.08, y: 1.25, z: 1.55 }, '#243442', { y: mainYaw });
-      }
-      // floor string course band
-      const bx = DRMC_MAIN_BLOCK.x + side * mCos * 6.84;
-      const bz = DRMC_MAIN_BLOCK.z - side * mSin * 6.84;
-      if (fl > 0) {
-        bWhite.box({ x: bx, y: mainY + fl * 2.85, z: bz }, { x: 0.10, y: 0.14, z: 33.6 }, '#d8d1bd', { y: mainYaw });
-      }
-    }
-  }
-  // Entrance porch + steps on the gate-facing side (toward -Z of building = campus gate side)
-  const porchX = DRMC_MAIN_BLOCK.x - mCos * 7.2;
-  const porchZ = DRMC_MAIN_BLOCK.z + mSin * 7.2;
-  bWhite.box({ x: porchX, y: mainY + 1.65, z: porchZ }, { x: 1.9, y: 3.3, z: 5.2 }, '#efe9da', { y: mainYaw });
-  bDark.box({ x: porchX, y: mainY + 3.36, z: porchZ }, { x: 2.15, y: 0.12, z: 5.5 }, '#8a7f66', { y: mainYaw });
-  bDark.box({ x: porchX - mCos * 1.15, y: mainY + 0.12, z: porchZ + mSin * 1.15 }, { x: 1.4, y: 0.24, z: 4.6 }, '#b7ab91', { y: mainYaw });
-  colliders.push({
-    minX: DRMC_MAIN_BLOCK.x - 8.6,
-    maxX: DRMC_MAIN_BLOCK.x + 8.6,
-    minZ: DRMC_MAIN_BLOCK.z - 19.5,
-    maxZ: DRMC_MAIN_BLOCK.z + 19.5,
-    height: 12.2,
-    cameraBlocking: true,
-    kind: 'building',
-  });
-
-  // Secondary white block (auditorium-style, evidence-limited approximation).
-  const secY = heightAt(DRMC_SECOND_BLOCK.x, DRMC_SECOND_BLOCK.z);
-  bWhite.box({ x: DRMC_SECOND_BLOCK.x, y: secY + 3.4, z: DRMC_SECOND_BLOCK.z }, { x: 11, y: 6.8, z: 18 }, '#eee9dc', { y: mainYaw });
-  bDark.box({ x: DRMC_SECOND_BLOCK.x, y: secY + 6.9, z: DRMC_SECOND_BLOCK.z }, { x: 11.4, y: 0.2, z: 18.4 }, '#cfc7b2', { y: mainYaw });
-  bDark.box({ x: DRMC_SECOND_BLOCK.x + 2, y: secY + 2.6, z: DRMC_SECOND_BLOCK.z + 8.9 }, { x: 0.5, y: 5.2, z: 12.2 }, '#243442', { y: mainYaw });
-  colliders.push({
-    minX: DRMC_SECOND_BLOCK.x - 7.4,
-    maxX: DRMC_SECOND_BLOCK.x + 7.4,
-    minZ: DRMC_SECOND_BLOCK.z - 11.2,
-    maxZ: DRMC_SECOND_BLOCK.z + 11.2,
-    height: 7.0,
-    cameraBlocking: true,
-    kind: 'building',
-  });
-
-  // --------------------------------------------------------- sports grounds
-  // Open field (football/cricket grounds per Wikipedia) + simple goal frames.
-  const gy2 = heightAt(DRMC_SPORTS_GROUND.x, DRMC_SPORTS_GROUND.z);
-  const fieldYaw = mainYaw;
-  bField.box({ x: DRMC_SPORTS_GROUND.x, y: gy2 + 0.028, z: DRMC_SPORTS_GROUND.z }, { x: 52, y: 0.055, z: 34 }, '#5c8a4a', { y: fieldYaw });
-  // Mown stripe accents (cheap vertex-coloured bands)
-  for (let sIdx = -2; sIdx <= 2; sIdx++) {
-    bField.box(
-      { x: DRMC_SPORTS_GROUND.x + Math.cos(fieldYaw) * sIdx * 9.2, y: gy2 + 0.032, z: DRMC_SPORTS_GROUND.z - Math.sin(fieldYaw) * sIdx * 9.2 },
-      { x: 1.35, y: 0.012, z: 33.5 },
-      sIdx % 2 === 0 ? '#679a54' : '#55804a',
-      { y: fieldYaw },
-    );
-  }
-  // Goal posts (football) at both ends
-  for (const side of [-1, 1] as const) {
-    const gx = DRMC_SPORTS_GROUND.x + side * Math.cos(fieldYaw) * 24.5;
-    const gz = DRMC_SPORTS_GROUND.z - side * Math.sin(fieldYaw) * 24.5;
-    for (const pg of [-3.2, 3.2]) {
-      bWhite.box({ x: gx + -Math.sin(fieldYaw) * pg, y: gy2 + 1.1, z: gz + Math.cos(fieldYaw) * pg }, { x: 0.12, y: 2.2, z: 0.12 }, '#f2f0e8');
-    }
-    bWhite.box({ x: gx, y: gy2 + 2.18, z: gz }, { x: 0.11, y: 0.11, z: 6.5 }, '#f2f0e8', { y: fieldYaw });
-  }
-
-  // ------------------------------------------------------------------ trees
-  const treeSpots: Array<[number, number]> = [
-    [26, -152], [30, -146], [16, -140], [96, -52], [104, -60], [118, -66],
-    [150, -104], [162, -96], [44, -46], [52, -40], [128, -196], [118, -204],
+  const openings = [
+    { gate: DRMC_GATE, half: 7.15 },
+    { gate: DRMC_SIDE_GATE, half: 5.3 },
   ];
-  for (const [tx, tz] of treeSpots) {
-    if (!isInsideDrmcCampus(tx, tz, -1.5)) continue;
-    const ty = heightAt(tx, tz);
-    const th = 3.1 + ((Math.abs(tx * 13 + tz * 7) % 10) / 10) * 1.6;
-    bField.box({ x: tx, y: ty + th * 0.42, z: tz }, { x: 0.34, y: th * 0.84, z: 0.34 }, '#5a402a');
-    bField.box({ x: tx, y: ty + th + 0.55, z: tz }, { x: 2.1, y: 1.55, z: 2.1 }, '#2f6f3e');
-    bField.box({ x: tx + 0.28, y: ty + th + 1.16, z: tz - 0.2 }, { x: 1.35, y: 0.85, z: 1.35 }, '#3c8250');
-  }
-
-  const meshes = [bWall, bWhite, bDark, bField];
-  for (const bucket of meshes) {
-    const m = bucket.build({ cast: true, receive: true }, true);
-    if (m) group.add(m);
-  }
-
-  return {
-    group,
-    colliders,
-    gate: { x: DRMC_GATE.x, z: DRMC_GATE.z },
-    campusPolygon: DRMC_CAMPUS.map((p) => ({ ...p })),
+  const drawWall = (a: GamePoint, b: GamePoint): void => {
+    const pose = linePose(a, b);
+    if (pose.length < 0.25) return;
+    const y = heightAt(pose.x, pose.z);
+    walls.box({ x: pose.x, y: y + 0.9, z: pose.z }, { x: 0.34, y: 1.8, z: pose.length }, '#eae8dd', { y: pose.yaw });
+    details.box({ x: pose.x, y: y + 1.84, z: pose.z }, { x: 0.42, y: 0.12, z: pose.length }, '#d2d0c5', { y: pose.yaw });
+    colliders.push(obbCollider(pose.x, pose.z, 0.17, pose.length / 2, pose.yaw, 1.8, 'wall'));
   };
+  for (let i = 0; i < boundary.length; i++) {
+    const a = boundary[i];
+    const b = boundary[(i + 1) % boundary.length];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len = Math.hypot(dx, dz);
+    let start = 0;
+    const cuts = openings.map(({ gate, half }) => {
+      const t = ((gate.x - a.x) * dx + (gate.z - a.z) * dz) / (len * len);
+      const distance = Math.hypot(gate.x - (a.x + t * dx), gate.z - (a.z + t * dz));
+      return { t, half, distance };
+    }).filter((cut) => cut.t > 0 && cut.t < 1 && cut.distance < 0.25).sort((p, q) => p.t - q.t);
+    for (const cut of cuts) {
+      const end = Math.max(start, cut.t - cut.half / len);
+      drawWall({ x: a.x + dx * start, z: a.z + dz * start }, { x: a.x + dx * end, z: a.z + dz * end });
+      start = Math.min(1, cut.t + cut.half / len);
+    }
+    drawWall({ x: a.x + dx * start, z: a.z + dz * start }, b);
+  }
+
+  const path = (a: GamePoint, b: GamePoint, width: number, colour = '#b9b5a2', thickness = 0.035, top = 0.06): void => {
+    const pose = linePose(a, b);
+    grounds.box({ x: pose.x, y: top - thickness / 2, z: pose.z }, { x: width, y: thickness, z: pose.length + 0.25 }, colour, { y: pose.yaw });
+  };
+
+  /** Build a portal with local +Z pointing out to its public road. */
+  const portal = (gate: GamePoint, road: GamePoint, primary: boolean): void => {
+    const yaw = Math.atan2(road.x - gate.x, road.z - gate.z);
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    const at = (x: number, z: number): GamePoint => ({ x: gate.x + c * x + s * z, z: gate.z - s * x + c * z });
+    const groundY = heightAt(gate.x, gate.z);
+    const xCol = primary ? 5.9 : 4.2;
+    const colWidth = primary ? 2 : 1.5;
+    const topY = primary ? 7.25 : 5.25;
+    const beamHeight = primary ? 1.55 : 0.8;
+    // The photographed front entrance has a broad, deep white portico, red
+    // inner piers and small grilled pedestrian openings in its side supports.
+    // The second entrance remains a related but provisional interpretation.
+    for (const side of [-1, 1]) {
+      const col = at(side * xCol, 0);
+      if (primary) {
+        for (const edge of [-1, 1]) {
+          const post = at(side * xCol + edge * (colWidth / 2 - 0.27), 0);
+          walls.box({ x: post.x, y: groundY + topY / 2, z: post.z }, { x: 0.54, y: topY, z: 2.2 }, '#eeeae1', { y: yaw });
+        }
+        const doorHeight = 2.5;
+        walls.box({ x: col.x, y: groundY + (topY + doorHeight) / 2, z: col.z }, { x: colWidth, y: topY - doorHeight, z: 2.2 }, '#eeeae1', { y: yaw });
+        for (let j = -2; j <= 2; j++) {
+          const bar = at(side * xCol + j * 0.17, 1.11);
+          details.box({ x: bar.x, y: groundY + 1.18, z: bar.z }, { x: 0.045, y: 2.30, z: 0.05 }, '#273333', { y: yaw });
+        }
+      } else {
+        walls.box({ x: col.x, y: groundY + topY / 2, z: col.z }, { x: colWidth, y: topY, z: 1.75 }, '#eeeae1', { y: yaw });
+      }
+      // The small pedestrian openings are grilled and closed; the vehicle
+      // opening between the supports remains unobstructed.
+      colliders.push(obbCollider(col.x, col.z, colWidth / 2, primary ? 1.1 : 0.875, yaw, topY, 'wall'));
+      const brick = at(side * (xCol - colWidth * 0.45), primary ? 1.11 : 0.91);
+      details.box({ x: brick.x, y: groundY + (primary ? 2.1 : 2.65), z: brick.z }, { x: primary ? 0.85 : 0.55, y: primary ? 4.2 : 5.3, z: 0.12 }, '#995b4c', { y: yaw });
+      // Folded-open metal leaves along the driveway, not across the opening.
+      for (let j = 0; j < 7; j++) {
+        const bar = at(side * (xCol - colWidth * 0.55), 0.65 + j * 0.43);
+        details.box({ x: bar.x, y: groundY + 1.12, z: bar.z }, { x: 0.07, y: 2.1, z: 0.07 }, '#273333', { y: yaw });
+      }
+      for (const y of [0.35, 1.9]) {
+        const rail = at(side * (xCol - colWidth * 0.55), 1.95);
+        details.box({ x: rail.x, y: groundY + y, z: rail.z }, { x: 0.08, y: 0.09, z: 3.0 }, '#273333', { y: yaw });
+      }
+    }
+    const beamDepth = primary ? 2.8 : 1.75;
+    walls.box({ x: gate.x, y: groundY + topY - beamHeight / 2, z: gate.z }, { x: xCol * 2 + colWidth, y: beamHeight, z: beamDepth }, '#f0eee8', { y: yaw });
+    details.box({ x: gate.x, y: groundY + topY + 0.1, z: gate.z }, { x: xCol * 2 + colWidth + 0.3, y: 0.2, z: beamDepth + 0.2 }, '#d3d1c8', { y: yaw });
+
+    if (primary) {
+      const sign = makeTexture('drmc.portal.lettering.vnext', 1024, 160, (ctx, w, h) => {
+        ctx.fillStyle = '#eeece5';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#263331';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 48px "Hind Siliguri", sans-serif';
+        ctx.fillText('ঢাকা রেসিডেনসিয়াল মডেল কলেজ', w / 2, 62);
+        ctx.font = 'bold 31px sans-serif';
+        ctx.fillText('DHAKA RESIDENTIAL MODEL COLLEGE', w / 2, 119);
+      });
+      const label = new THREE.Mesh(new THREE.PlaneGeometry(9.2, 1.18), new THREE.MeshLambertMaterial({ map: sign }));
+      const front = at(0, beamDepth / 2 + 0.01);
+      label.position.set(front.x, groundY + topY - beamHeight / 2, front.z);
+      label.rotation.y = yaw;
+      label.name = 'drmc.gate.sign';
+      group.add(label);
+    }
+    // The apron overlays the existing sidewalk to meet the carriageway, and
+    // continues a little into campus. There are no raised blocking curbs here.
+    path(road, at(0, -7), primary ? 8.2 : 6.2, '#b4b2a9', 0.055, 0.105);
+  };
+  portal(DRMC_GATE, DRMC_GATE_ROAD_POINT, true);
+  portal(DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT, false);
+
+  // Connected internal circulation. These are walk/drive surfaces, not traffic
+  // lanes: ambient agents never route through this private site.
+  path({ x: 41, z: -66 }, { x: 57, z: -88 }, 5.2);
+  path({ x: 57, z: -88 }, { x: 43, z: -126 }, 4.0);
+  path({ x: 43, z: -126 }, { x: 43, z: -151 }, 3.2);
+  path({ x: 57, z: -88 }, { x: 90, z: -75 }, 3.0);
+  path({ x: 95, z: -114 }, { x: 92, z: -91 }, 3.0);
+
+  /** White low-rise academic façades with red plinth and a shaded colonnade. */
+  const block = (centre: GamePoint, width: number, length: number, height: number, yaw: number, columnCount: number): void => {
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    const at = (x: number, z: number): GamePoint => ({ x: centre.x + c * x + s * z, z: centre.z - s * x + c * z });
+    const y = heightAt(centre.x, centre.z);
+    walls.box({ x: centre.x, y: y + height / 2 + 0.5, z: centre.z }, { x: width, y: height, z: length }, '#edece4', { y: yaw });
+    details.box({ x: centre.x, y: y + 0.3, z: centre.z }, { x: width + 0.25, y: 0.6, z: length + 0.25 }, '#a76455', { y: yaw });
+    walls.box({ x: centre.x, y: y + height + 0.62, z: centre.z }, { x: width + 0.55, y: 0.24, z: length + 0.55 }, '#d9d8cf', { y: yaw });
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < columnCount; i++) {
+        const along = -length * 0.42 + (length * 0.84 * i) / Math.max(1, columnCount - 1);
+        const p = at(side * (width / 2 + 0.015), along);
+        for (let floor = 0; floor < (height > 6 ? 2 : 1); floor++) {
+          details.box({ x: p.x, y: y + 2.2 + floor * 3, z: p.z }, { x: 0.07, y: 1.6, z: 0.95 }, '#34494e', { y: yaw });
+        }
+      }
+    }
+    const porch = at(-width / 2 - 0.75, 0);
+    walls.box({ x: porch.x, y: y + 3.1, z: porch.z }, { x: 1.8, y: 0.22, z: length * 0.72 }, '#efede4', { y: yaw });
+    for (let i = 0; i < 5; i++) {
+      const p = at(-width / 2 - 1.45, -length * 0.34 + i * length * 0.17);
+      walls.box({ x: p.x, y: y + 1.55, z: p.z }, { x: 0.2, y: 3.1, z: 0.2 }, '#e1dfd4', { y: yaw });
+    }
+    colliders.push(obbCollider(centre.x, centre.z, width / 2, length / 2, yaw, height + 0.7, 'building'));
+  };
+  block(DRMC_MAIN_BLOCK, 9, 30, 7.2, -0.28, 10);
+  block(DRMC_SECOND_BLOCK, 8, 23, 6.0, -0.28, 8);
+  block({ x: 99, z: -68 }, 7.5, 13, 5.8, -0.22, 5);
+
+  // Football green and court with readable, flush markings. Their positions and
+  // exact dimensions are intentionally approximate, not surveyed claims.
+  const field = DRMC_SPORTS_GROUND;
+  grounds.box({ x: field.x, y: 0.025, z: field.z }, { x: 33, y: 0.035, z: 34 }, '#669d57');
+  const stripe = (x: number, z: number, w: number, d: number, colour = '#e2e5c9'): void => {
+    grounds.box({ x, y: 0.047, z }, { x: w, y: 0.006, z: d }, colour);
+  };
+  for (const x of [field.x - 15, field.x + 15]) stripe(x, field.z, 0.10, 31);
+  for (const z of [field.z - 15.5, field.z, field.z + 15.5]) stripe(field.x, z, 30, 0.10);
+  grounds.cylinder({ x: field.x, y: 0.048, z: field.z }, 0.26, 0.01, '#e2e5c9');
+  for (const side of [-1, 1]) {
+    const z = field.z + side * 15.5;
+    for (const x of [field.x - 3, field.x + 3]) details.box({ x, y: 1.05, z }, { x: 0.1, y: 2.1, z: 0.1 }, '#eeeede');
+    details.box({ x: field.x, y: 2.1, z }, { x: 6.1, y: 0.1, z: 0.1 }, '#eeeede');
+  }
+  grounds.box({ x: 73, y: 0.027, z: -67 }, { x: 20, y: 0.04, z: 13 }, '#a77e6b');
+  for (const x of [64, 82]) stripe(x, -67, 0.09, 11, '#eee1c7');
+  for (const z of [-72.5, -61.5]) stripe(73, z, 18, 0.09, '#eee1c7');
+  stripe(73, -67, 0.09, 11, '#eee1c7');
+
+  // Mature campus greenery follows the perimeter, leaving both gates, paths,
+  // classrooms and fields unobstructed.
+  for (const [x, z] of [[13,-117], [21,-145], [30,-157], [65,-164], [75,-152], [88,-139], [104,-97], [106,-82], [111,-58], [90,-53], [55,-47], [31,-74]]) {
+    const y = heightAt(x, z);
+    details.cylinder({ x, y: y + 2.0, z }, 0.3, 4, '#71523b');
+    details.cone({ x, y: y + 5.0, z }, 2.5, 3.1, '#467c45');
+    details.cone({ x: x + 0.5, y: y + 4.4, z: z - 0.4 }, 2.0, 2.3, '#386b3b');
+  }
+
+  for (const bucket of [walls, details, grounds]) {
+    const mesh = bucket.build({ cast: bucket === walls, receive: true });
+    if (mesh) group.add(mesh);
+  }
+  return { group, colliders, gate: { ...DRMC_GATE }, campusPolygon: boundary.map((p) => ({ ...p })) };
 }

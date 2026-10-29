@@ -553,7 +553,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       const poleSide: 1 | -1 = -side as 1 | -1;
       const ex = seg.ax + seg.ux * d + seg.leftX * curbDist * poleSide;
       const ez = seg.az + seg.uz * d + seg.leftZ * curbDist * poleSide;
-      if (isClearOfRoads(ex, ez, 0.95)) {
+      if (isClearOfRoads(ex, ez, 0.95) && !isDrmcKeepClear(ex, ez, 1.0)) {
         bWalk.box({ x: ex, y: 3.6, z: ez }, { x: 0.22, y: 7.2, z: 0.22 }, '#8a857c', { y: yaw });
         bMetal.box({ x: ex, y: 6.85, z: ez }, { x: 1.15, y: 0.08, z: 0.08 }, '#41474e', { y: yaw });
         // Signature Dhaka coiled fibre-optic cable loop on utility pole!
@@ -612,7 +612,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     depth: number,
     yaw: number,
   ): boolean => {
-    if (isDrmcKeepClear(cx, cz, 1.0)) return false; // DRMC campus grounds (vNext §1)
+    // Reject the whole footprint, not only its centre, near campus walls/aprons.
+    if (isDrmcKeepClear(cx, cz, Math.hypot(width, depth) * 0.5 + 0.8)) return false;
     if (!isFootprintClearOfCorridor(cx, cz, width, depth, yaw, 0.55)) return false;
     const rad = Math.hypot(width * 0.5, depth * 0.5) * 0.84;
     for (let i = 0; i < placedBuildings.length; i++) {

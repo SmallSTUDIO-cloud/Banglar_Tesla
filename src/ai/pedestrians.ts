@@ -11,13 +11,16 @@
  *     per-frame heap allocations and 100% preserved crowd density!
  */
 
+import { crossesDrmcCampus, isInsideDrmcCampus } from '../world/drmcGeo';
 import * as THREE from 'three';
 import { QUALITY, type QualitySettings } from '../core/config';
 import { clamp, damp, mulberry32, TAU } from '../core/mathx';
 import { Bucket } from '../world/geo';
-import { ROAD_SEGMENTS, isClearOfRoads } from '../world/layout';
+import { ROAD_SEGMENTS, isClearOfRoads, segmentById } from '../world/layout';
+import type { RoadsideStop } from '../missions/roadside';
 
 export interface PedPath {
+  segmentId: string;
   ax: number;
   az: number;
   bx: number;
@@ -56,8 +59,9 @@ function buildSidewalkPaths(): PedPath[] {
       const mz = (az + bz) * 0.5;
       if (!isClearOfRoads(mx, mz, 0.35)) continue;
       const len = Math.hypot(bx - ax, bz - az);
-      if (len < 6) continue;
+      if (len < 6 || crossesDrmcCampus(ax, az, bx, bz, 1.6)) continue;
       paths.push({
+        segmentId: seg.id,
         ax,
         az,
         bx,
@@ -217,6 +221,25 @@ interface PedAgent {
   worldX: number;
   worldZ: number;
   farAccum: number;
+  /** A borrowed crowd member is rendered as the mission actor, never twice. */
+  roadsideReserved: boolean;
+  roadsideCooldownUntil: number;
+}
+
+export interface ReservedRoadsidePedestrian {
+  id: number;
+  stop: RoadsideStop;
+  appearance: {
+    shirt: string;
+    lower: string;
+    skin: string;
+    accent: string;
+    bag: string;
+    hair: string;
+    heightScale: number;
+    hasSkirt: boolean;
+    hasBag: boolean;
+  };
 }
 
 export class PedestrianSystem {
@@ -411,13 +434,102 @@ export class PedestrianSystem {
       worldX: p ? p.ax + (p.bx - p.ax) * t : 0,
       worldZ: p ? p.az + (p.bz - p.az) * t : 0,
       farAccum: 0,
+      roadsideReserved: false,
+      roadsideCooldownUntil: 0,
     };
+  }
+
+  /** Reserve an existing nearby sidewalk pedestrian for a fare request.
+   * The instanced slot is hidden while a similarly dressed animatable passenger
+   * represents that same identity; it returns to the crowd after disposal. */
+  reserveRoadsideCaller(
+    px: number, pz: number, yaw: number, now: number,
+    rng: () => number = Math.random,
+    isClear: (stop: RoadsideStop) => boolean = () => true,
+  ): ReservedRoadsidePedestrian | null {
+    const candidates: { id: number; stop: RoadsideStop; facing: number }[] = [];
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    for (let id = 0; id < this.activeCount; id++) {
+      const ped = this.peds[id];
+      if (ped.roadsideReserved || ped.roadsideCooldownUntil > now || ped.stumbleTimer > 0 || ped.evadeAmount > 0.3) continue;
+      const path = PED_PATHS[ped.pathIdx];
+      const seg = path && segmentById(path.segmentId);
+      if (!seg) continue;
+      const x = ped.worldX, z = ped.worldZ;
+      const distance = Math.hypot(x - px, z - pz);
+      if (distance < 10 || distance > 35 || isInsideDrmcCampus(x, z, 2) || !isClearOfRoads(x, z, 0.15)) continue;
+      const along = (x - seg.ax) * seg.ux + (z - seg.az) * seg.uz;
+      const centerX = seg.ax + seg.ux * along, centerZ = seg.az + seg.uz * along;
+      const side = Math.sign(path.safeX * seg.leftX + path.safeZ * seg.leftZ) || 1;
+      const pickup = {
+        x: centerX + seg.leftX * seg.halfWidth * 0.5 * side,
+        z: centerZ + seg.leftZ * seg.halfWidth * 0.5 * side,
+        segmentId: seg.id,
+      };
+      if (isInsideDrmcCampus(pickup.x, pickup.z, 1.5)) continue;
+      const delta = Math.min(4 / path.length, 0.35);
+      const t1 = Math.max(0, ped.t - delta), t2 = Math.min(1, ped.t + delta);
+      const a = { x: path.ax + (path.bx - path.ax) * t1, z: path.az + (path.bz - path.az) * t1 };
+      const b = { x: path.ax + (path.bx - path.ax) * t2, z: path.az + (path.bz - path.az) * t2 };
+      const departure = Math.hypot(a.x - px, a.z - pz) > Math.hypot(b.x - px, b.z - pz) ? a : b;
+      const stop = { actor: { x, z, yaw: Math.atan2(pickup.x - x, pickup.z - z) }, pickup, departure };
+      if (!isClear(stop)) continue;
+      candidates.push({ id, stop, facing: ((x - px) * fx + (z - pz) * fz) / distance });
+    }
+    const forward = candidates.filter((candidate) => candidate.facing > -0.1);
+    const pool = forward.length ? forward : candidates;
+    if (!pool.length) return null;
+    const chosen = pool[Math.min(pool.length - 1, Math.max(0, Math.floor(rng() * pool.length)))];
+    const ped = this.peds[chosen.id];
+    ped.roadsideReserved = true;
+    ped.roadsideCooldownUntil = now + 180;
+    this.matrix.makeScale(0, 0, 0);
+    for (const mesh of [this.body, this.head, this.hair, this.armL, this.armR, this.legL, this.legR, this.skirt, this.bag]) {
+      mesh.setMatrixAt(chosen.id, this.matrix);
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    const color = new THREE.Color();
+    const hex = (mesh: THREE.InstancedMesh): string => {
+      mesh.getColorAt(chosen.id, color);
+      return `#${color.getHexString()}`;
+    };
+    return {
+      id: chosen.id, stop: chosen.stop,
+      appearance: { shirt: hex(this.body), lower: hex(this.legL), skin: hex(this.head),
+        accent: hex(this.skirt), bag: hex(this.bag), hair: hex(this.hair),
+        heightScale: ped.heightScale, hasSkirt: ped.hasSkirt, hasBag: ped.hasBag },
+    };
+  }
+
+  /** Rejoin a released caller to the nearest valid sidewalk, retaining their
+   * identity and cooldown across cancellation, drop-off and quality changes. */
+  releaseRoadsideCaller(id: number, x: number, z: number): void {
+    const ped = this.peds[id];
+    if (!ped?.roadsideReserved) return;
+    let bestIdx = ped.pathIdx, bestT = ped.t, bestDistance = Infinity;
+    for (let i = 0; i < PED_PATHS.length; i++) {
+      const path = PED_PATHS[i];
+      const dx = path.bx - path.ax, dz = path.bz - path.az;
+      const t = clamp(((x - path.ax) * dx + (z - path.az) * dz) / (dx * dx + dz * dz), 0, 1);
+      const wx = path.ax + dx * t, wz = path.az + dz * t;
+      const d = Math.hypot(wx - x, wz - z);
+      if (d < bestDistance && !isInsideDrmcCampus(wx, wz, 1.6) && isClearOfRoads(wx, wz, 0.15)) {
+        bestIdx = i; bestT = t; bestDistance = d;
+      }
+    }
+    const path = PED_PATHS[bestIdx];
+    ped.pathIdx = bestIdx; ped.t = bestT;
+    ped.worldX = path.ax + (path.bx - path.ax) * bestT;
+    ped.worldZ = path.az + (path.bz - path.az) * bestT;
+    ped.sideJitter = 0; ped.evadeAmount = 0; ped.stumbleTimer = 0;
+    ped.pause = 0.25; ped.farAccum = 0; ped.roadsideReserved = false;
   }
 
   /** Ringing the rickshaw bell alerts nearby walkers politely before near-miss distance! */
   alertBell(px: number, pz: number): void {
     for (let i = 0; i < this.activeCount; i++) {
       const ped = this.peds[i];
+      if (ped.roadsideReserved) continue;
       const d = Math.hypot(ped.worldX - px, ped.worldZ - pz);
       if (d < 9.5) {
         ped.evadeAmount = Math.max(ped.evadeAmount, 0.85);
@@ -447,6 +559,7 @@ export class PedestrianSystem {
 
     for (let i = 0; i < this.activeCount; i++) {
       const ped = this.peds[i];
+      if (ped.roadsideReserved) continue;
       let path = PED_PATHS[ped.pathIdx];
 
       const dxCenter = ped.worldX - playerX;

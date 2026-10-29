@@ -25,6 +25,7 @@ import {
   type CosmeticCategory,
 } from '../economy/catalog';
 import { ROADS, PLACES, segmentById } from '../world/layout';
+import { drmcGamePolygon, DRMC_GATE, DRMC_GATE_ROAD_POINT, DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT } from '../world/drmcGeo';
 import { h, button, slider, toggle, segmented, sheet, modal, statBar, clear } from './dom';
 import { ICONS } from './icons';
 import type { MissionOffer } from '../missions/mission';
@@ -79,6 +80,7 @@ export interface HudState {
     countdownText: string;
     title: string;
     pos: 1 | 2 | 3 | 4;
+    total: 2 | 4;
     cpCur: number;
     cpTot: number;
     lapCur?: number;
@@ -120,6 +122,7 @@ export interface UIBridge {
   openBlacklist(from: 'menu' | 'hud' | 'pause'): void;
   openCareerScrapbook(): void;
   startRivalEvent(eventId: string): void;
+  startBlacklistEscape(rank: number): void;
   playRivalIntro(rank: number, launchRaceAfter?: boolean): void;
   stopWinnerPhoto(): void;
   retryLastEvent(): void;
@@ -1217,10 +1220,10 @@ export class AppUI {
       const ss = String(remS % 60).padStart(2, '0');
       const lapCur = race.lapCur ?? 1;
       const lapTot = race.lapTot ?? 1;
-      const sumKey = `${race.pos}/4:${lapCur}/${lapTot}:${race.cpCur}/${race.cpTot}:${mm}:${ss}`;
+      const sumKey = `${race.pos}/${race.total}:${lapCur}/${lapTot}:${race.cpCur}/${race.cpTot}:${mm}:${ss}`;
       if (sumKey !== this.prevRaceSummary) {
         this.prevRaceSummary = sumKey;
-        this.hudRacePosEl.textContent = t('race.posOf4', { pos: race.pos });
+        this.hudRacePosEl.textContent = t('race.posOfTotal', { pos: race.pos, total: race.total });
         const cpStr = t('race.cp', { cur: race.cpCur, tot: race.cpTot });
         this.hudRaceCpEl.textContent =
           lapTot > 1 ? `${t('race.lap', { cur: lapCur, tot: lapTot })} · ${cpStr}` : cpStr;
@@ -1286,7 +1289,25 @@ export class AppUI {
     const bctx = base.getContext('2d')!;
     bctx.fillStyle = '#0e1916';
     bctx.fillRect(0, 0, size, size);
+    // Campus and both approach aprons are part of the same minimap base as roads.
+    const campus = drmcGamePolygon();
+    bctx.beginPath();
+    campus.forEach((p, i) => i ? bctx.lineTo(half + p.x * scale, half + p.z * scale) : bctx.moveTo(half + p.x * scale, half + p.z * scale));
+    bctx.closePath();
+    bctx.fillStyle = '#294d32';
+    bctx.fill();
+    bctx.strokeStyle = '#87a785';
+    bctx.lineWidth = 1;
+    bctx.stroke();
     bctx.lineCap = 'round';
+    for (const [gate, road] of [[DRMC_GATE, DRMC_GATE_ROAD_POINT], [DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT]]) {
+      bctx.strokeStyle = '#9d9d85';
+      bctx.lineWidth = 3;
+      bctx.beginPath();
+      bctx.moveTo(half + gate.x * scale, half + gate.z * scale);
+      bctx.lineTo(half + road.x * scale, half + road.z * scale);
+      bctx.stroke();
+    }
     for (let i = 0; i < ROADS.length; i++) {
       const seg = ROADS[i];
       bctx.strokeStyle = seg.kind === 'main' ? '#3d584e' : seg.kind === 'medium' ? '#31463e' : '#253630';
@@ -2498,6 +2519,24 @@ export class AppUI {
     this.root.append(card);
   }
 
+  /** Stop-nearby interaction: exactly one bargain attempt for this passenger. */
+  showRoadsideOffer(dropName: string, fare: number, attempted: boolean, onAccept: () => void, onDecline: () => void, onBargain: () => void): void {
+    this.hideJobOffer();
+    const card = h('div', { class: 'glass job-offer-card', attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-label': t('roadside.speaker') } },
+      h('h3', { text: t('roadside.destination', { destination: dropName }) }),
+      h('p', { class: 'pill gold', text: t('roadside.fare', { fare: formatTaka(fare) }) }),
+      h('div', { class: 'row wrap' },
+        button(t('roadside.board'), { variant: 'primary', small: true, onClick: onAccept, attrs: { 'data-roadside': 'board' } }),
+        button(t('roadside.cancel'), { variant: 'ghost', small: true, onClick: onDecline, attrs: { 'data-roadside': 'cancel' } }),
+        button(t('roadside.bargain'), { variant: 'ghost', small: true, onClick: onBargain,
+          attrs: { 'data-roadside': 'bargain', ...(attempted ? { disabled: 'true', 'aria-disabled': 'true' } : {}) } }),
+      ),
+    );
+    card.id = 'roadside-offer';
+    this.offerEl = card;
+    this.root.append(card);
+  }
+
   hideJobOffer(): void {
     this.offerEl?.remove();
     this.offerEl = null;
@@ -2625,10 +2664,9 @@ export class AppUI {
     const defeatedSet = this.state.defeatedRanks;
     if (this.blacklistTab === 'rivals') {
       for (const rival of BLACKLIST_RIVALS) {
+        const checklist = this.state.checklistForRival(rival.rank, rival.repRequired);
         const defeated = defeatedSet.has(rival.rank);
-        const rankUnlocked = rival.rank >= curRank || defeated;
-        const hasRep = this.state.rep >= rival.repRequired || defeated;
-        const canChallenge = rankUnlocked && hasRep;
+        const canChallenge = checklist.ready;
         const name = loc === 'en' ? rival.nameEn : rival.nameBn;
         const arch = loc === 'en' ? rival.archetypeEn : rival.archetypeBn;
         const terr = loc === 'en' ? rival.territoryEn : rival.territoryBn;
@@ -2675,6 +2713,24 @@ export class AppUI {
         });
         if (!canChallenge) challengeBtn.classList.add('disabled');
 
+        const checklistLine = (complete: boolean, text: string, id: string): HTMLElement =>
+          h('div', { class: `blacklist-task${complete ? ' complete' : ''}`, attrs: { 'data-task': id } },
+            h('span', { text: complete ? '✓' : '○', attrs: { 'aria-hidden': 'true' } }),
+            h('span', { text }),
+          );
+        const checklistEl = h('div', { class: 'blacklist-checklist', attrs: { 'data-checklist-rank': String(rival.rank) } },
+          h('strong', { class: 'tiny', text: t('blacklist.tasksTitle') }),
+          checklistLine(checklist.rankUnlocked, t('blacklist.task.rank'), 'rank'),
+          checklistLine(checklist.reputationMet, t('blacklist.task.rep', { current: this.state.rep, required: rival.repRequired }), 'rep'),
+          ...checklist.tasks.map((task) => checklistLine(task.complete, t(`blacklist.task.${task.task}`), task.task)),
+        );
+        if (rival.rank === curRank && checklist.tasks.some((task) => task.task === 'escape' && !task.complete)) {
+          checklistEl.append(button(t('blacklist.startEscape'), {
+            variant: 'ghost', small: true,
+            attrs: { 'data-police-challenge-rank': String(rival.rank) },
+            onClick: () => this.bridge.startBlacklistEscape(rival.rank),
+          }));
+        }
         const card = h(
           'div',
           {
@@ -2705,6 +2761,7 @@ export class AppUI {
             h('span', { class: `pill ${defeated ? '' : canChallenge ? 'gold' : ''}`, text: badgeLabel }),
           ),
           h('div', { class: 'bl-taunt', text: `“${taunt}”` }),
+          checklistEl,
           h(
             'div',
             { class: 'bl-card-foot' },
@@ -3064,7 +3121,7 @@ export class AppUI {
           ),
           h('span', {
             class: 'winner-pos-badge',
-            text: t('race.posOf4', { pos: summary.playerPosition }),
+            text: t('race.posOfTotal', { pos: summary.playerPosition, total: summary.totalRacers }),
           }),
         ),
         // Clear center viewport window showing the live 3D winning rickshaw + celebratory driver!
@@ -3129,7 +3186,7 @@ export class AppUI {
 
     // Separate Non-Photo Defeat Result Screen (Losses NEVER trigger Winner Snapshot!)
     const { wrap, body } = sheet(t('race.lostTitle'), {
-      subtitle: `${evTitle} · ${t('race.posOf4', { pos: summary.playerPosition })}`,
+      subtitle: `${evTitle} · ${t('race.posOfTotal', { pos: summary.playerPosition, total: summary.totalRacers })}`,
     });
     wrap.id = 'race-result-sheet';
     wrap.setAttribute('data-result-mode', 'defeat');
@@ -3142,7 +3199,7 @@ export class AppUI {
         'div',
         { class: 'brow' },
         h('span', { text: t('race.finalPosition') }),
-        h('span', { text: t('race.posOf4', { pos: summary.playerPosition }) }),
+        h('span', { text: t('race.posOfTotal', { pos: summary.playerPosition, total: summary.totalRacers }) }),
       ),
       h(
         'div',

@@ -68,14 +68,27 @@ import { BlacklistIntroCinematic } from './blacklist/cinematic';
 import { RivalRaceSystem } from './blacklist/raceSystem';
 
 import { MissionSystem } from './missions/missionSystem';
+import { PassengerActor, archetypeById } from './missions/actors';
+import { FareNegotiation, roadsideStopKey, shouldCallForRide, type RoadsideStop } from './missions/roadside';
 import { dailySeed, dateKey, generateMission, type MissionOffer } from './missions/mission';
-import { deriveVehicle } from './economy/economy';
+import { computeFare, deriveVehicle } from './economy/economy';
 import { cosmeticById, vehicleById, type CosmeticCategory } from './economy/catalog';
 
 import { AppUI, type HudState, type UIBridge } from './ui/ui';
 import { DevPerfOverlay } from './ui/perfOverlay';
 
 export type Mode = 'menu' | 'duty' | 'free' | 'daily';
+
+interface RoadsideRequest {
+  offer: MissionOffer;
+  /** Stable crowd-pool identity until this actor is released. */
+  pedestrianId: number;
+  actor: PassengerActor;
+  stop: RoadsideStop;
+  negotiation: FareNegotiation;
+  expiresAt: number;
+  offering: boolean;
+}
 
 export class Game implements UIBridge {
   readonly renderer: THREE.WebGLRenderer;
@@ -133,6 +146,7 @@ export class Game implements UIBridge {
   private nearMissCooldown = 0;
   private lastEventId: string | null = null;
   private pendingBlacklistFrom: 'menu' | 'hud' | 'pause' = 'menu';
+  private activeBlacklistEscapeRank: number | null = null;
   private phaseLockedForDebug = false;
   private winnerPhotoActive = false;
   private winnerPhotoTimer = 0;
@@ -140,6 +154,9 @@ export class Game implements UIBridge {
   private lastRaceTargetZ = 0;
   private pendingOffer: MissionOffer | null = null;
   private currentOffer: MissionOffer | null = null;
+  private roadsideRequest: RoadsideRequest | null = null;
+  private roadsideNextAt = 20;
+  private roadsideStopCooldowns = new Map<string, number>();
   private frameCount = 0;
   private lastSave = 0;
   private lastImpactAt = 0;
@@ -417,6 +434,11 @@ export class Game implements UIBridge {
       onPursuitEscaped: (maxHeat, repReward) => {
         this.state.setHeat(0);
         this.state.addRep(repReward);
+        if (this.activeBlacklistEscapeRank !== null) {
+          const rank = this.activeBlacklistEscapeRank;
+          this.activeBlacklistEscapeRank = null;
+          if (this.state.recordBlacklistTask('escape', rank)) this.ui.toast(t('blacklist.escapeComplete'), 'good');
+        }
         this.scrapbook.recordStat('policeEscapes');
         this.scrapbook.recordHeat(maxHeat);
         this.scrapbook.addRecord({
@@ -438,6 +460,7 @@ export class Game implements UIBridge {
         this.state.saveNow();
       },
       onPlayerBusted: (_heat, finePaid) => {
+        this.activeBlacklistEscapeRank = null;
         const paid = this.state.deductPenalty(finePaid);
         this.state.setHeat(0);
         this.controller.speed = 0;
@@ -453,14 +476,16 @@ export class Game implements UIBridge {
           const laps = this.raceSystem.lapCount;
           this.stopWinnerPhoto();
           this.raceSystem.cancel();
+          this.paused = true;
+          this.input.clearAllHolds();
           this.ui.openRaceResult({
             won: false,
             event: ev,
             rival: rv,
             timeSeconds: 0,
             topSpeedKmh: 0,
-            playerPosition: 4,
-            totalRacers: 4,
+            playerPosition: standings.find((entry) => entry.isPlayer)?.position ?? (ev.blacklistRank ? 2 : 4),
+            totalRacers: ev.blacklistRank ? 2 : 4,
             laps,
             standings,
             cashDelta: -paid,
@@ -574,7 +599,7 @@ export class Game implements UIBridge {
 
     this.missions.on('started', (offer) => {
       this.currentOffer = offer;
-      const pk = placeById(offer.pickupId) ?? null;
+      const pk = this.missions.zone ?? placeById(offer.pickupId) ?? null;
       this.ui.setMinimapMarker(pk);
       this.recomputeRoute(pk);
       this.ui.hideJobOffer();
@@ -878,7 +903,8 @@ export class Game implements UIBridge {
       : sampled;
     const lockedByRage = this.roadRage.isControlLocked;
     const lockedByStart = this.raceSystem.isStartLocked;
-    const input = lockedByRage || lockedByStart
+    const lockedByBoarding = this.missions.state === 'boarding';
+    const input = lockedByRage || lockedByStart || lockedByBoarding
       ? { throttle: 0, brake: 1, steer: 0, horn: false, turbo: false }
       : rawInput;
     const wetness = this.env.wetness;
@@ -1155,8 +1181,15 @@ export class Game implements UIBridge {
     } else {
       this.idleTimer = 0;
     }
-    if (this.mode === 'free' && this.currentOffer === null && !this.raceSystem.isActive) {
+    if (this.roadsideRequest && (this.mode !== 'free' || this.raceSystem.isActive || this.police.isActive ||
+        this.roadRage.isActive || this.cinematic.isPlaying || this.missions.state !== 'none' || this.pendingOffer)) {
+      this.clearRoadsideRequest();
+    }
+    if (this.mode === 'free' && this.currentOffer === null && !this.raceSystem.isActive && this.ui.currentScreen === 'hud') {
       this.freeRideInteractions(dt);
+      this.updateRoadsideRequest();
+      // Other encounters must not interrupt a waiting roadside passenger.
+      if (!this.roadsideRequest && !this.pendingOffer) {
       this.eventDirector.update(
         dt,
         {
@@ -1176,6 +1209,7 @@ export class Game implements UIBridge {
         },
       );
       this.maybeTriggerRivalEncounter();
+      }
     }
     this.score.update(dt, {
       tilt: Math.abs(this.controller.roll ?? 0),
@@ -1280,6 +1314,8 @@ export class Game implements UIBridge {
 
   // --------------------------------------------------------------- actions
   startMode(mode: 'duty' | 'free' | 'daily'): void {
+    this.clearRoadsideRequest();
+    this.activeBlacklistEscapeRank = null;
     void this.audio.init();
     this.phaseLockedForDebug = false;
     this.stopWinnerPhoto();
@@ -1342,6 +1378,7 @@ export class Game implements UIBridge {
   }
 
   requestJob(daily = false): void {
+    this.clearRoadsideRequest();
     const seed = daily ? dailySeed(new Date()) : Math.floor(Math.random() * 1e9);
     const rng = mulberry32(seed);
     const nearest = this.nearestPlaceId();
@@ -1373,6 +1410,129 @@ export class Game implements UIBridge {
         this.activeRoute = null;
         this.ui.hideJobOffer();
         this.ui.setMinimapMarker(null);
+      },
+    );
+  }
+
+  private clearRoadsideRequest(walkAway = false): void {
+    const request = this.roadsideRequest;
+    if (!request) return;
+    if (walkAway) this.missions.dismissWaitingActor(request.actor, request.stop.departure.x, request.stop.departure.z);
+    else request.actor.dispose();
+    this.roadsideRequest = null;
+    if (request.offering) this.ui.hideJobOffer();
+    this.roadsideNextAt = Math.max(this.roadsideNextAt, this.simClockSec + 40);
+  }
+
+  private updateRoadsideRequest(): void {
+    if (this.police.isActive || this.roadRage.isActive || this.cinematic.isPlaying ||
+        this.missions.state !== 'none' || this.pendingOffer || this.ui.currentScreen !== 'hud' || this.eventDirector.activeCount > 0) return;
+    const request = this.roadsideRequest;
+    if (request) {
+      const distance = Math.hypot(this.controller.x - request.stop.pickup.x, this.controller.z - request.stop.pickup.z);
+      if (this.simClockSec > request.expiresAt || distance > 72) {
+        this.clearRoadsideRequest();
+      } else if (!request.offering && distance < 3.5 && Math.abs(this.controller.speed) < 0.95) {
+        request.offering = true;
+        this.input.clearAllHolds();
+        this.controller.forceStopTurbo();
+        this.audio.setTurboBoostAudio(false, 0);
+        this.paused = true;
+        this.showRoadsideOffer(request);
+      }
+      return;
+    }
+    if (this.simClockSec < this.roadsideNextAt) return;
+    // One probabilistic attempt per ten eligible seconds. This is deliberately
+    // separate from the single, exactly-50% bargaining roll.
+    this.roadsideNextAt = this.simClockSec + 10;
+    if (!shouldCallForRide()) return;
+    for (const [key, until] of this.roadsideStopCooldowns) {
+      if (until <= this.simClockSec) this.roadsideStopCooldowns.delete(key);
+    }
+    // Borrow a real nearby crowd identity, rather than conjuring a second
+    // pedestrian at an arbitrary point. The slot has its own cooldown and is
+    // hidden until the mission actor walks away or the trip is cleaned up.
+    const caller = this.peds.reserveRoadsideCaller(
+      this.controller.x, this.controller.z, this.controller.yaw, this.simClockSec, Math.random, (candidate) => {
+        const { x, z } = candidate.actor;
+        return !this.roadsideStopCooldowns.has(roadsideStopKey(candidate)) &&
+          !this.city.colliders.some((c) => !c.disabled && x > c.minX - 0.6 && x < c.maxX + 0.6 && z > c.minZ - 0.6 && z < c.maxZ + 0.6);
+      },
+    );
+    if (!caller) {
+      this.roadsideNextAt = this.simClockSec + 10;
+      return;
+    }
+    const stop = caller.stop;
+    const seed = Math.floor(Math.random() * 1e9);
+    const offer = generateMission({ rng: mulberry32(seed), fromPlaceId: this.nearestPlaceId(), wet: this.env.getWeather() === 'rain', seed });
+    const drop = placeById(offer.dropId);
+    if (!drop) {
+      this.peds.releaseRoadsideCaller(caller.id, stop.actor.x, stop.actor.z);
+      this.roadsideNextAt = this.simClockSec + 10;
+      return;
+    }
+    offer.kind = 'passenger';
+    offer.pickupPosition = stop.pickup;
+    offer.distance = findRoute(stop.pickup.x, stop.pickup.z, drop.x, drop.z).distance;
+    offer.targetTime = clamp(Math.round(offer.distance / 4.6 * 1.65 + 16), 28, 280);
+    offer.multiplier = 1;
+    offer.fareEstimate = computeFare({ distance: offer.distance, timeTaken: 0, targetTime: offer.targetTime, mood: 88, damage: 0 }).total;
+    offer.agreedFare = offer.fareEstimate;
+    const look = caller.appearance;
+    const actor = new PassengerActor({
+      ...archetypeById(offer.archetype),
+      colors: { shirt: look.shirt, lower: look.lower, skin: look.skin, accent: look.accent },
+      skirt: look.hasSkirt ? 1 : 0,
+      bag: look.hasBag,
+    }, {
+      hairColor: look.hair,
+      bagColor: look.bag,
+      onDispose: (x, z) => this.peds.releaseRoadsideCaller(caller.id, x, z),
+    });
+    actor.group.scale.setScalar(look.heightScale);
+    actor.place(stop.actor.x, stop.actor.z, stop.actor.yaw);
+    this.scene.add(actor.group);
+    this.roadsideRequest = { offer, pedestrianId: caller.id, actor, stop, negotiation: new FareNegotiation(offer.fareEstimate), expiresAt: this.simClockSec + 38, offering: false };
+    this.roadsideStopCooldowns.set(roadsideStopKey(stop), this.simClockSec + 180);
+    this.roadsideNextAt = this.simClockSec + 45;
+    this.audio.roadsideCallCue();
+    this.speakLine('mission.roadside.call', 1);
+  }
+
+  private showRoadsideOffer(request: RoadsideRequest): void {
+    this.ui.showRoadsideOffer(t(request.offer.dropName), request.negotiation.fare, request.negotiation.attempted,
+      () => {
+        if (this.roadsideRequest !== request) return;
+        this.roadsideRequest = null; // ownership transfers to MissionSystem
+        this.ui.hideJobOffer();
+        this.paused = false;
+        request.offer.agreedFare = request.negotiation.fare;
+        request.offer.fareEstimate = request.negotiation.fare;
+        this.missions.start(request.offer, request.actor);
+      },
+      () => {
+        if (this.roadsideRequest !== request) return;
+        this.clearRoadsideRequest(true);
+        this.paused = false;
+        this.speakLine('mission.roadside.cancel', 2);
+      },
+      () => {
+        if (this.roadsideRequest !== request) return;
+        const result = request.negotiation.attempt();
+        if (result === 'rejected') {
+          this.clearRoadsideRequest(true);
+          this.paused = false;
+          this.speakLine('mission.roadside.reject', 2);
+          this.ui.toast(t('roadside.bargainRejected'), 'bad');
+        } else if (result === 'accepted') {
+          request.offer.agreedFare = request.negotiation.fare;
+          request.offer.fareEstimate = request.negotiation.fare;
+          this.showRoadsideOffer(request);
+          this.speakLine('mission.roadside.accept', 2);
+          this.ui.toast(t('roadside.bargainAccepted'), 'good');
+        }
       },
     );
   }
@@ -1496,6 +1656,8 @@ export class Game implements UIBridge {
   }
 
   returnToMenu(): void {
+    this.clearRoadsideRequest();
+    this.activeBlacklistEscapeRank = null;
     this.stopWinnerPhoto();
     this.cinematic.stop(false);
     this.raceSystem.cancel();
@@ -1992,22 +2154,8 @@ export class Game implements UIBridge {
   private startWinnerPhoto(): void {
     this.winnerPhotoActive = true;
     this.winnerPhotoTimer = 0;
-    // Render one composed frame, then capture the bounded scrapbook thumbnail.
-    this.updateWinnerPhotoCamera(0);
-    this.renderer.render(this.scene, this.camera);
-    const thumb = this.capturePhotoThumb();
-    const evId = this.lastEventId ?? 'race';
-    this.scrapbook.addRecord({
-      id: `photo:win:${evId}:${Math.floor(this.simClockSec / 30)}`,
-      category: 'photo',
-      titleBn: 'বিজয়ের স্মারক ছবি',
-      titleEn: 'Victory Photo',
-      detailBn: `রেস জয়ের স্মারক — ${evId}`,
-      detailEn: `Winner snapshot — ${evId}`,
-      minutesOfDay: this.gameTime.minutesOfDay,
-      vehicleId: this.state.selectedVehicleId,
-      photoThumb: thumb,
-    });
+    // Compose the actual victory scene before capture, so the saved image and
+    // on-screen celebration show the same pose, vehicle and camera framing.
     const snapped = snapToNearestRoad(this.controller.x, this.controller.z, false);
     const gx = snapped.x;
     const gz = snapped.z;
@@ -2021,6 +2169,20 @@ export class Game implements UIBridge {
     this.player.setCharacterPose('victory', 0.25);
     this.player.updateVisual(1 / 60, 0, 0.14, 0, 0, gy, 0);
     this.updateWinnerPhotoCamera(0);
+    this.renderer.render(this.scene, this.camera);
+    const thumb = this.capturePhotoThumb();
+    const evId = this.lastEventId ?? 'race';
+    this.scrapbook.addRecord({
+      id: `photo:win:${evId}`,
+      category: 'photo',
+      titleBn: 'বিজয়ের স্মারক ছবি',
+      titleEn: 'Victory Photo',
+      detailBn: `রেস জয়ের স্মারক — ${evId}`,
+      detailEn: `Winner snapshot — ${evId}`,
+      minutesOfDay: this.gameTime.minutesOfDay,
+      vehicleId: this.state.selectedVehicleId,
+      photoThumb: thumb,
+    });
   }
 
   private updateWinnerPhotoCamera(dt: number): void {
@@ -2123,9 +2285,34 @@ export class Game implements UIBridge {
     };
   }
 
+  startBlacklistEscape(rank: number): void {
+    const rival = rivalByRank(rank);
+    if (!rival || rank !== this.state.blacklistRank || rank > 7 ||
+        this.state.checklistForRival(rank, rival.repRequired).tasks.find((task) => task.task === 'escape')?.complete) return;
+    if (this.raceSystem.isActive || this.police.isActive || this.roadRage.isActive ||
+        this.cinematic.isPlaying || this.missions.state !== 'none' || this.pendingOffer || this.roadsideRequest) {
+      this.ui.toast(t('blacklist.taskBusy'), 'bad');
+      return;
+    }
+    if (this.mode === 'menu') this.startMode('free');
+    this.paused = false;
+    this.audio.setSceneMode('driving');
+    this.ui.show('hud');
+    this.activeBlacklistEscapeRank = rank;
+    this.police.startPursuit(Math.min(5, 2 + Math.floor((7 - rank) / 2)), this.controller.x, this.controller.z, this.controller.yaw);
+    this.ui.toast(t('blacklist.escapeStarted'), 'good');
+  }
+
   startRivalEvent(eventId: string): void {
     const ev = eventById(eventId);
     if (!ev) return;
+    const rival = ev.blacklistRank ? rivalByRank(ev.blacklistRank) ?? null : null;
+    if (ev.blacklistRank && (!rival || !this.state.checklistForRival(rival.rank, rival.repRequired).ready)) {
+      this.ui.toast(t('blacklist.tasksIncomplete'), 'bad');
+      return;
+    }
+    this.clearRoadsideRequest();
+    this.activeBlacklistEscapeRank = null;
     void this.audio.init();
     this.lastEventId = eventId;
     this.stopWinnerPhoto();
@@ -2150,7 +2337,6 @@ export class Game implements UIBridge {
       this.ui.setRainDrops(wEv === 'rain' || wEv === 'storm');
     }
 
-    const rival = ev.blacklistRank ? rivalByRank(ev.blacklistRank) ?? null : null;
     const grid = this.raceSystem.startEvent(ev, rival, this.controller.hits);
     this.traffic.clearStartZone(grid.x, grid.z, 19);
     this.controller.reset(grid.x, grid.z, grid.yaw);
@@ -2234,6 +2420,17 @@ export class Game implements UIBridge {
     this.activeRoute = null;
 
     if (summary.won) {
+      const paid = this.state.recordEventVictory({
+        eventId: summary.event.id,
+        cashReward: summary.cashDelta,
+        repReward: summary.repEarned,
+        blacklistRank: summary.rival?.rank,
+      });
+      if (!paid) {
+        summary.cashDelta = 0;
+        summary.repEarned = 0;
+        summary.unlockedNextRank = null;
+      }
       this.audio.successStinger();
       this.speakLine('race.win.1', 3);
       if (summary.event.blacklistRank) {
@@ -2265,12 +2462,6 @@ export class Game implements UIBridge {
         timeSeconds: summary.timeSeconds,
       });
       this.controller.addTurboCharge(TURBO.escapeGain);
-      this.state.recordEventVictory({
-        eventId: summary.event.id,
-        cashReward: summary.cashDelta,
-        repReward: summary.repEarned,
-        blacklistRank: summary.rival?.rank,
-      });
       this.startWinnerPhoto();
     } else if (summary.cashDelta < 0) {
       this.stopWinnerPhoto();
@@ -2466,7 +2657,7 @@ export class Game implements UIBridge {
       const d = Math.hypot(place.x - this.controller.x, place.z - this.controller.z);
       if (d > 17) continue;
       const rival = BLACKLIST_RIVALS.find((r) => r.id === rivalId);
-      if (!rival) continue;
+      if (!rival || !this.state.checklistForRival(rival.rank, rival.repRequired).ready) continue;
       this.rivalEncounterAt = this.simClockSec;
       const loc = getLocale();
       const name = loc === 'en' ? rival.nameEn : rival.nameBn;
@@ -2554,7 +2745,7 @@ export class Game implements UIBridge {
     const spec = loc === 'en' ? line.voiceEn ?? line.voice : line.voice;
     const tr = ttsPitchRate(spec);
     this.speech.speak({
-      speaker: line.category === 'police' ? 'police' : line.category === 'road_rage' ? 'driver' : line.character === 'player' ? 'player' : 'rival',
+      speaker: line.category === 'police' ? 'police' : line.category === 'road_rage' || line.character === 'roadside.speaker' ? 'driver' : line.character === 'player' ? 'player' : 'rival',
       text: dialogueText(lineId, loc) ?? line.bn,
       locale: loc,
       priority,
@@ -2576,16 +2767,18 @@ export class Game implements UIBridge {
     const mission = this.missions;
     const offer = this.currentOffer;
     const zone = mission.zone;
+    const waiting = this.roadsideRequest;
+    const marker = zone ?? waiting?.stop.pickup ?? null;
     let markerX: number | null = null;
     let markerY: number | null = null;
     let distance = 0;
-    if (zone) {
-      this.tmpProjVec.set(zone.x, zone.marker ?? 3, zone.z).project(this.camera);
+    if (marker) {
+      this.tmpProjVec.set(marker.x, zone?.marker ?? 2, marker.z).project(this.camera);
       if (this.tmpProjVec.z < 1) {
         markerX = (this.tmpProjVec.x * 0.5 + 0.5) * window.innerWidth;
         markerY = (-this.tmpProjVec.y * 0.5 + 0.5) * window.innerHeight;
       }
-      distance = Math.hypot(zone.x - this.controller.x, zone.z - this.controller.z);
+      distance = Math.hypot(marker.x - this.controller.x, marker.z - this.controller.z);
     }
 
     let label = t('hud.none');
@@ -2601,6 +2794,10 @@ export class Game implements UIBridge {
       label = t('hud.drop');
       title = t(offer.dropName);
       sub = `${formatDistance(distance)} · ${t('hud.timeLeft', { n: formatClock(remain) })}`;
+    } else if (waiting) {
+      label = t('roadside.speaker');
+      title = t('roadside.nearby');
+      sub = `${t('roadside.stopPrompt')} · ${formatDistance(distance)}`;
     } else if (this.mode === 'free') {
       label = t('hud.free');
       title = t('place.bazaar');
@@ -2651,7 +2848,7 @@ export class Game implements UIBridge {
       passengerAboard: mission.state === 'toDropoff',
       markerX,
       markerY,
-      markerLabel: raceSnap?.active ? 'CP' : zone ? t(zone.nameKey) : null,
+      markerLabel: raceSnap?.active ? 'CP' : zone ? t(zone.nameKey) : waiting ? t('roadside.speaker') : null,
       cameraMode: this.settings.get().cameraMode,
       isElectric,
       battery: this.controller.battery,
@@ -2679,6 +2876,7 @@ export class Game implements UIBridge {
               countdownText: raceSnap.countdownText,
               title,
               pos: raceSnap.playerRank,
+              total: raceSnap.totalRacers,
               cpCur: raceSnap.checkpointIndex,
               cpTot: raceSnap.checkpointTotal,
               lapCur: raceSnap.lapIndex,
@@ -2695,14 +2893,11 @@ export class Game implements UIBridge {
     };
     this.ui.updateHud(hudState);
     this.ui.setMinimapPlayer(this.controller.x, this.controller.z, this.controller.yaw);
-    this.ui.setMinimapMarker(zone ? { x: zone.x, z: zone.z } : null);
+    this.ui.setMinimapMarker(marker ? { x: marker.x, z: marker.z } : null);
   }
 
   private hintForState(): string | null {
-    if (this.mode === 'free') {
-      if (this.controller.stuck) return 'hud.stuck';
-      return null;
-    }
+    if (this.controller.stuck) return 'hud.stuck';
     const zone = this.missions.zone;
     const dist = zone ? Math.hypot(zone.x - this.controller.x, zone.z - this.controller.z) : Infinity;
     if (this.missions.state === 'toPickup' || this.missions.state === 'boarding') {
@@ -2713,7 +2908,7 @@ export class Game implements UIBridge {
       if (dist > 16) return null;
       return Math.abs(this.controller.speed) < 1.1 ? 'hud.hintDrop' : 'hud.hintArrived';
     }
-    return null;
+    return this.roadsideRequest ? 'roadside.stopPrompt' : null;
   }
 
   // -------------------------------------------------------------- settings & camera

@@ -12,7 +12,7 @@ import type { CosmeticCategory } from '../economy/catalog';
 import type { StorageLike } from './settings';
 import { canonicalMinutesForPhase, DEFAULT_START_MINUTES, normalizeMinutes } from '../world/timeSystem';
 
-export const SAVE_VERSION = 3; // v3: permanent scrapbook + five-state weather (vNext §10)
+export const SAVE_VERSION = 4; // v4: per-rank Blacklist preparation
 export const SAVE_KEY = 'banglar-tesla.save';
 export const BACKUP_KEY = 'banglar-tesla.save.bak';
 
@@ -47,6 +47,8 @@ export interface Progress {
   blacklistNextRank: number;
   blacklistDefeated: number[];
   blacklistIntroSeen: boolean;
+  /** Completed, per-rank challenge tasks (e.g. "7:escape"). */
+  blacklistTasks: string[];
   completedEvents: string[];
   heat: number;
   createdAt: number;
@@ -81,6 +83,7 @@ export function createDefaultProgress(now = Date.now()): Progress {
     blacklistNextRank: 10,
     blacklistDefeated: [],
     blacklistIntroSeen: false,
+    blacklistTasks: [],
     completedEvents: [],
     heat: 0,
     createdAt: now,
@@ -136,6 +139,10 @@ export function migrateProgress(raw: unknown): unknown {
     if (!isRecord(data.scrapbook)) {
       data.scrapbook = { records: [] };
     }
+  }
+  if (version < 4) {
+    data.version = 4;
+    if (!Array.isArray(data.blacklistTasks)) data.blacklistTasks = [];
   }
   return data;
 }
@@ -252,6 +259,7 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
     blacklistNextRank,
     blacklistDefeated,
     blacklistIntroSeen: data.blacklistIntroSeen === true,
+    blacklistTasks: [...new Set(strArray(data.blacklistTasks).filter((id) => /^(10|[1-9]):(race|fare|escape)$/.test(id)))].slice(0, 30),
     completedEvents: strArray(data.completedEvents).slice(0, 128),
     heat: num(data.heat, 0, 0, 5),
     createdAt: num(data.createdAt, now, 0, 9e15),

@@ -68,6 +68,9 @@ export interface BuiltRaceCourse {
   eventId: string;
   laps: number;
   isCircuit: boolean;
+  /** The authored launch corridor and direction, not the nearest graph node. */
+  startSegmentId: string;
+  startDirection: 1 | -1;
   startBanner: { x: number; z: number; yaw: number; width: number };
   finishBanner: { x: number; z: number; yaw: number; width: number };
   /** Validated 4-racer staggered 2×2 starting grid (`slots[0..2]` = AI, `slots[3]` = Player). */
@@ -541,6 +544,9 @@ const AUTHORED_COURSES: Record<string, AuthoredCourseBlueprint> = {
     startFrac: 0.65,
     startDir: -1,
     gateAnchors: [
+      // The original first gate lay behind this south-facing grid; make the
+      // forward Ring Road junction mandatory before the shortcut turns east.
+      { ref: 'ring_nurjahan', labelBn: 'রিং রোড মোড়', labelEn: 'Ring Road Junction' },
       {
         ref: 'tajmahal_w',
         shortcutViaNodeId: 'krishi_cut',
@@ -740,11 +746,15 @@ export function buildRaceCourse(event: RivalEventSpec): BuiltRaceCourse {
           : null;
     if (next) {
       const plan = findRoute(cur.x, cur.z, next.x, next.z);
-      const p1 = plan.points[1] ?? next;
+      // findRoute includes the current node itself; skip zero-length points
+      // or checkpoints at graph nodes all incorrectly face world +Z.
+      const p1 = plan.points.find((p) => Math.hypot(p.x - cur.x, p.z - cur.z) > 0.5) ?? next;
       cur.yaw = Math.atan2(p1.x - cur.x, p1.z - cur.z);
     } else {
       const prev = i > 0 ? rawGates[i - 1] : { x: startBanner.x, z: startBanner.z };
-      cur.yaw = Math.atan2(cur.x - prev.x, cur.z - prev.z);
+      const points = findRoute(prev.x, prev.z, cur.x, cur.z).points;
+      const approaching = [...points].reverse().find((p) => Math.hypot(p.x - cur.x, p.z - cur.z) > 0.5) ?? prev;
+      cur.yaw = Math.atan2(cur.x - approaching.x, cur.z - approaching.z);
     }
   }
 
@@ -814,6 +824,8 @@ export function buildRaceCourse(event: RivalEventSpec): BuiltRaceCourse {
     eventId: event.id,
     laps,
     isCircuit: laps > 1,
+    startSegmentId: startSeg.id,
+    startDirection: bp.startDir,
     startBanner,
     finishBanner,
     gridSlots,
@@ -847,6 +859,8 @@ function buildFallbackCourseFromPlaces(event: RivalEventSpec): BuiltRaceCourse {
     eventId: event.id,
     laps: 1,
     isCircuit: false,
+    startSegmentId: startSeg.id,
+    startDirection: 1,
     startBanner,
     finishBanner: { x: last.x, z: last.z, yaw: last.yaw, width: startSeg.width },
     gridSlots,
@@ -863,6 +877,8 @@ export interface AiWaypoint {
   /** Index in `course.allCheckpoints` that this waypoint is heading toward. */
   targetGateIndex: number;
   isTurboStraight: boolean;
+  /** Launch corridor waypoint: do not cut the junction before reaching it. */
+  isLaunch?: boolean;
 }
 
 /**
@@ -878,19 +894,47 @@ export function buildAiWaypointsForTendency(
   let curX = startPose.x;
   let curZ = startPose.z;
   let turboNext = false;
+  let firstLeg = true;
+  const startSegment = segmentById(course.startSegmentId);
 
   const pushLeg = (toX: number, toZ: number, gateIdx: number, preferMainAvenues: boolean): void => {
+    // findRoute starts at the *nearest node*, which may be behind the grid.
+    // First follow the authored corridor to its forward junction, then plan
+    // from that node. Discourage an immediate U-turn over the same corridor;
+    // the edge remains available if the graph has no alternative.
+    let avoidStartSegment = false;
+    if (firstLeg && startSegment) {
+      firstLeg = false;
+      const dir = course.startDirection;
+      const alongStart = (curX - startSegment.ax) * startSegment.ux + (curZ - startSegment.az) * startSegment.uz;
+      const alongTarget = (toX - startSegment.ax) * startSegment.ux + (toZ - startSegment.az) * startSegment.uz;
+      const lateralTarget = Math.abs((toX - startSegment.ax) * startSegment.leftX + (toZ - startSegment.az) * startSegment.leftZ);
+      const targetAheadOnCorridor = lateralTarget <= 1.5 && alongTarget >= 0 && alongTarget <= startSegment.length &&
+        (alongTarget - alongStart) * dir > 1;
+      if (targetAheadOnCorridor) {
+        waypoints.push({ x: toX, z: toZ, targetGateIndex: gateIdx, isTurboStraight: false, isLaunch: true });
+        curX = toX;
+        curZ = toZ;
+        return;
+      }
+      const exit = dir === 1
+        ? { x: startSegment.bx, z: startSegment.bz }
+        : { x: startSegment.ax, z: startSegment.az };
+      waypoints.push({ ...exit, targetGateIndex: gateIdx, isTurboStraight: false, isLaunch: true });
+      curX = exit.x;
+      curZ = exit.z;
+      avoidStartSegment = true;
+    }
     const plan = findRoute(
       curX,
       curZ,
       toX,
       toZ,
-      preferMainAvenues
-        ? (segId) => {
-            const s = segmentById(segId);
-            return s && s.kind === 'gali' ? 1.45 : 1.0;
-          }
-        : undefined,
+      (segId) => {
+        const s = segmentById(segId);
+        const mainPenalty = preferMainAvenues && s?.kind === 'gali' ? 1.45 : 1.0;
+        return avoidStartSegment && segId === startSegment?.id ? 1000 : mainPenalty;
+      },
     );
     for (let i = 1; i < plan.points.length; i++) {
       const pt = plan.points[i];

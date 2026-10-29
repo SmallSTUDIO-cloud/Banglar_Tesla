@@ -538,6 +538,11 @@ export class TrafficSystem {
       }
     }
 
+    for (const agent of this.agents) {
+      // Visual control follows the agent's real change of heading; it settles
+      // to centre on straights and never creates per-frame arm geometry.
+      agent.steerAngle = clamp(angleDelta(agent.yaw, agent.lane.yaw) * 0.7, -0.5, 0.5);
+    }
     this.fleet.sync(this.agents);
   }
 

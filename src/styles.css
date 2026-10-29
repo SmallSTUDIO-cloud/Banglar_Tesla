@@ -2682,3 +2682,9 @@ input[type='range']::-moz-range-thumb {
   flex-wrap: wrap;
   justify-content: center;
 }
+
+/* Per-rank Blacklist preparation is explicit and keyboard-accessible. */
+.blacklist-checklist { display: grid; gap: .25rem; margin: .65rem 0; padding: .6rem .75rem; border-radius: .65rem; background: rgba(0,0,0,.19); }
+.blacklist-task { display: flex; gap: .5rem; align-items: center; font-size: .78rem; color: #ead9b6; }
+.blacklist-task.complete { color: #8ae4b6; }
+.blacklist-checklist .btn { justify-self: start; margin-top: .3rem; }

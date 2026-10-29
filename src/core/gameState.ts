@@ -22,6 +22,8 @@ import {
   type Progress,
 } from './save';
 import type { StorageLike } from './settings';
+import { blacklistChecklist, blacklistTaskId, tasksForRank, type BlacklistTask } from '../blacklist/requirements';
+import { rivalByRank } from '../blacklist/blacklistCatalog';
 
 export type PurchaseResult =
   | { ok: true; balance: number }
@@ -317,30 +319,52 @@ export class GameState extends Emitter<StateEvents> {
   }
 
   // --------------------------------------------------- Blacklist & Events
+  checklistForRival(rank: number, repRequired: number) {
+    return blacklistChecklist(this.progress, rank, repRequired);
+  }
+
+  /** Record real gameplay for the currently unlocked tier; repeat calls are harmless. */
+  recordBlacklistTask(task: BlacklistTask, rank = this.blacklistRank): boolean {
+    if (rank < 1 || rank > 10 || rank !== this.blacklistRank || !tasksForRank(rank).includes(task)) return false;
+    const id = blacklistTaskId(rank, task);
+    if (this.progress.blacklistTasks.includes(id)) return false;
+    this.progress.blacklistTasks.push(id);
+    this.emit('progress', this.progress);
+    this.saveNow();
+    return true;
+  }
+
+  /** Returns whether this event actually paid a first-completion reward. */
   recordEventVictory(opts: {
     eventId: string;
     cashReward: number;
     repReward: number;
     blacklistRank?: number;
-  }): void {
-    if (opts.cashReward > 0) this.addMoney(opts.cashReward);
-    if (opts.repReward > 0) this.addRep(opts.repReward);
-    if (opts.eventId && !this.progress.completedEvents.includes(opts.eventId)) {
-      this.progress.completedEvents.push(opts.eventId);
+  }): boolean {
+    const rank = opts.blacklistRank;
+    if (rank !== undefined) {
+      const rival = rivalByRank(rank);
+      if (!rival || opts.eventId !== rival.bossEvent.id) return false;
+      if (!this.progress.blacklistDefeated.includes(rank) &&
+          (rank !== this.blacklistRank || !this.checklistForRival(rank, rival.repRequired).ready)) return false;
     }
-    if (opts.blacklistRank && opts.blacklistRank >= 1 && opts.blacklistRank <= 10) {
-      if (!this.progress.blacklistDefeated.includes(opts.blacklistRank)) {
-        this.progress.blacklistDefeated.push(opts.blacklistRank);
-        this.progress.blacklistDefeated.sort((a, b) => b - a);
-      }
-      this.progress.blacklistNextRank = Math.min(
-        this.progress.blacklistNextRank,
-        opts.blacklistRank - 1,
-      );
-      if (opts.blacklistRank === 10) this.unlockAchievement('ach.blacklistStart');
-      if (opts.blacklistRank === 1) this.unlockAchievement('ach.blacklistChamp');
+    const alreadyPaid = this.progress.completedEvents.includes(opts.eventId) ||
+      (!!rank && this.progress.blacklistDefeated.includes(rank));
+    if (!alreadyPaid) {
+      if (opts.cashReward > 0) this.addMoney(opts.cashReward);
+      if (opts.repReward > 0) this.addRep(opts.repReward);
+      if (opts.eventId) this.progress.completedEvents.push(opts.eventId);
+    }
+    if (!rank) this.recordBlacklistTask('race');
+    if (rank && rank >= 1 && rank <= 10 && !this.progress.blacklistDefeated.includes(rank)) {
+      this.progress.blacklistDefeated.push(rank);
+      this.progress.blacklistDefeated.sort((a, b) => b - a);
+      this.progress.blacklistNextRank = Math.min(this.progress.blacklistNextRank, rank - 1);
+      if (rank === 10) this.unlockAchievement('ach.blacklistStart');
+      if (rank === 1) this.unlockAchievement('ach.blacklistChamp');
     }
     this.saveNow();
+    return !alreadyPaid;
   }
 
   markBlacklistIntroSeen(): void {
@@ -356,6 +380,7 @@ export class GameState extends Emitter<StateEvents> {
   // -------------------------------------------------------------- rides
   recordRide(opts: { earned: number; distance: number; mood: number; damage: number; mode: GameMode; wet: boolean }): void {
     this.progress.rides += 1;
+    this.recordBlacklistTask('fare');
     this.progress.distanceTravelled += Math.max(0, opts.distance);
     this.progress.lastMode = opts.mode;
     this.addMoney(opts.earned);

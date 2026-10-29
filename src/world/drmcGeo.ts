@@ -1,51 +1,26 @@
 /**
- * Dhaka Residential Model College (DRMC) — geography, transform & placement
- * (Master Upgrade vNext §1, map accuracy gate).
+ * DRMC source notes and compact, deliberately approximate game placement.
  *
- * SOURCES (accessed 2026-10-27):
- *   - OSM way 1008314351 "Dhaka Residential Model College" (amenity=college),
- *     boundary polygon via Nominatim lookup (`polygon_geojson`), ODbL 1.0.
- *     Centroid 23.7654640 N, 90.3676595 E; bbox lat 23.7630213..23.7679169,
- *     lon 90.3648705..90.3705106.
- *   - OSM way 1386522766 "Dhaka Residential Model College Gate" (barrier=gate),
- *     approximate point 23.76386 N, 90.36586 E (per project spec; the way's own
- *     geometry could NOT be fetched in this build environment — Overpass was at
- *     capacity, the OSM XML API was unreachable through the page fetcher, and
- *     Nominatim has no place index entry for the gate way. The coordinate is
- *     verified numerically to lie ON the campus SW boundary line, 3.5 m off).
- *   - Wikipedia "Dhaka Residential Model College": Mirpur Road, Mohammadpur,
- *     Dhaka 1207; est. 5 May 1960; campus 52 acres; buildings white; extensive
- *     sports grounds (football/cricket/basketball/volleyball/tennis/hockey);
- *     alternate coordinate 23.76500 N, 90.36778 E. License: CC BY-SA 4.0.
- *   - Wikimedia Commons (CC BY-SA 4.0): File:Dhaka_Residential_Model_College_2.jpg
- *     (Mostasin Maruf, geotagged 23.766067 N 90.366667 E — campus view),
- *     File:Front_Gate_DRMC.jpg (DRMC Administration — the front gate). Both were
- *     reviewed as evidence for: white campus buildings, perimeter wall, main
- *     arched gate with college signage, sports grounds, mature trees.
- *   - Mapcarta W1008314351 mirrors the OSM feature + address (Mirpur Road,
- *     Geneva Camp, Shyamoli, Mohammadpur, postcode 1207).
+ * OSM way 1008314351 supplies the geographic campus polygon (ODbL); it is kept
+ * below for the developer overlay. The district similarity fit has ~46 m RMS
+ * residual and cannot accurately locate a gate. The spec's candidate gate
+ * coordinate was not verified against way 1386522766: its geometry could not be
+ * retrieved. The OSM polygon, official college gallery and Wikimedia Commons
+ * photos establish general context, not a surveyed in-game layout.
  *
- * GAME↔GEOGRAPHY TRANSFORM (validated with 10 control points, least-squares):
- *   The game's Mohammadpur graph is a STYLIZED squeeze of the real district
- *   (topology + bearings preserved, metric scale hand-tuned to fit the 570 m
- *   world box). A single similarity fit gives scale ≈ 0.285, rotation ≈ 5°,
- *   residuals 2–93 m (max on the Lalmatia/Satmasjid end). The anchor with the
- *   best residual is the Humayun Rd corridor (2.2 m), and the campus SW edge is
- *   REAL SHAHJAHAN ROAD — which is exactly the game's `shahjahan` chain.
- *   Therefore DRMC is placed by pinning its SW boundary to the game Shahjahan
- *   Road corridor (the same physical road) and extending the campus footprint
- *   along the real polygon proportions toward the empty north-east block. The
- *   verified gate point maps within ~7 m of this wall line. NO existing road,
- *   node, checkpoint or landmark was moved.
+ * The main portal takes its broad white frame, red piers and dark lettering from
+ * the viewed Commons Front_Gate_DRMC.jpg thumbnail. Commons lists DRMC
+ * Administration and CC BY-SA 4.0, while the image bears a MINHAZ NION
+ * watermark; photographic authorship has not been independently verified and
+ * the photo itself is not bundled. Blocks, courts and vegetation are original
+ * approximations informed by viewed campus photos.
+ * The second gate's appearance and exact location could not be verified and are
+ * a clearly provisional, functional design, NOT a claim about the real gate.
  *
- * VERIFIED vs APPROXIMATED:
- *   VERIFIED: campus boundary polygon shape & orientation (OSM), gate-on-boundary
- *   relationship, Mirpur-Road frontage identity, white campus + sports ground +
- *   gate evidence (photos), 52-acre scale, bilingual naming, road adjacency.
- *   APPROXIMATED (documented): internal building placement/heights (no interior
- *   layouts exist in sources), sports-ground exact footprint, tree count, the
- *   gate's precise pillar spacing (the gate way geometry was unreachable), and
- *   the exact metres-scale of the footprint inside the stylized game map.
+ * In v0.6 the nominal parcel crossed six existing roads. The game parcel is now
+ * compressed into the adjacent road block so those roads and their navigation
+ * stay intact. Its dimensions, internal layout and two road frontages are
+ * gameplay approximations of the 52-acre campus, not a faithful scale map.
  */
 
 export interface GeoPoint {
@@ -69,7 +44,7 @@ export const DRMC_OSM_POLYGON: GeoPoint[] = [
 export const DRMC_OSM_CENTROID: GeoPoint = { lon: 90.3676595, lat: 23.765464 };
 /** Alternate documented reference point (Wikipedia infobox). */
 export const DRMC_WIKI_POINT: GeoPoint = { lon: 90.36778, lat: 23.765 };
-/** OSM way 1386522766 gate point (spec reference; on-boundary verified). */
+/** Project-spec candidate only; the named OSM gate way geometry was unavailable. */
 export const DRMC_GATE_OSM: GeoPoint = { lon: 90.36586, lat: 23.76386 };
 
 /** Least-squares similarity control points: real OSM lon/lat ↔ game node coords. */
@@ -177,60 +152,54 @@ export function fitDrmcTransform(
 // ---------------------------------------------------------------------------
 
 /**
- * Campus corners in game coordinates (world-space, same frame as the road graph).
- * A/B are inset ~2–3 m from the pure wall offset so the corner geometry never
- * clips the `humayun_3` / `aurangzeb_1` junction corridors (verified: every
- * corner is > 0.5 m outside every existing carriageway half-width).
+ * Compact campus parcel between the existing Shahjahan, Humayun, Aurangzeb
+ * and Geneva Camp connector roads. The original v0.6 polygon cut across six
+ * public roads. This smaller stylized footprint preserves those roads instead;
+ * its exact corners and the second entrance are not a surveyed reconstruction.
  */
 export const DRMC_CAMPUS: [GamePoint, GamePoint, GamePoint, GamePoint] = [
-  { x: 13.35, z: -164.3 }, // A: NW corner near humayun_shahjahan (game)
-  { x: 63.8, z: -29.2 }, // B: S corner near shahjahan_s (game)
-  { x: 208.3, z: -90.6 }, // C: E corner (Mirpur-Road frontage direction)
-  { x: 157.8, z: -225.7 }, // D: N corner
+  { x: 14, z: -158 },
+  { x: 64, z: -32 },
+  { x: 123, z: -51 },
+  { x: 75, z: -176 },
 ];
 
-/**
- * SW boundary polyline hugging the game Shahjahan chain (the verified approach
- * road). Includes the small chamfer at tajmahal_e where the game road bends.
- */
+/** Western boundary follows the outside of the existing Shahjahan sidewalks. */
 export const DRMC_SW_WALL: GamePoint[] = [
-  { x: 13.35, z: -164.3 },
-  { x: -5.0, z: -109.7 },
-  { x: -6.2, z: -116.5 },
-  { x: 63.8, z: -29.2 },
+  DRMC_CAMPUS[0], { x: 4, z: -113 }, { x: 10.1, z: -95 }, { x: 13.1, z: -90.54 }, DRMC_CAMPUS[1],
 ];
+// Keep the portal exactly on the revised wall, which clears the full public
+// Shahjahan sidewalk rather than only the asphalt/traffic envelope.
+const MAIN_GATE_Z = -61.37;
+const mainWallStart = DRMC_SW_WALL[3];
+const mainWallEnd = DRMC_SW_WALL[4];
+export const DRMC_GATE: GamePoint = {
+  x: mainWallStart.x + (mainWallEnd.x - mainWallStart.x) * (MAIN_GATE_Z - mainWallStart.z) / (mainWallEnd.z - mainWallStart.z),
+  z: MAIN_GATE_Z,
+};
+const mainWallLength = Math.hypot(mainWallEnd.x - mainWallStart.x, mainWallEnd.z - mainWallStart.z);
+export const DRMC_GATE_ROAD_POINT: GamePoint = {
+  x: DRMC_GATE.x - 9 * (mainWallEnd.z - mainWallStart.z) / mainWallLength,
+  z: DRMC_GATE.z + 9 * (mainWallEnd.x - mainWallStart.x) / mainWallLength,
+};
+/** Provisional secondary gate on the opposite public-road frontage. */
+export const DRMC_SIDE_GATE: GamePoint = { x: 99, z: -113.5 };
+export const DRMC_SIDE_GATE_ROAD_POINT: GamePoint = { x: 107.85, z: -116.45 };
 
-/** Main gate position: the campus-side wall point closest to the verified gate OSM point. */
-export const DRMC_GATE: GamePoint = { x: 37, z: -61 };
-/** Where the entrance apron meets the public road (visual paved apron only). */
-export const DRMC_GATE_ROAD_POINT: GamePoint = { x: 31.5, z: -56 };
+export const DRMC_MAIN_BLOCK: GamePoint = { x: 48, z: -112 };
+export const DRMC_SECOND_BLOCK: GamePoint = { x: 47, z: -147 };
+export const DRMC_SPORTS_GROUND: GamePoint = { x: 80, z: -105 };
 
-/** Main academic building footprint centre (white blocks per photo evidence). */
-export const DRMC_MAIN_BLOCK: GamePoint = { x: 88, z: -108 };
-/** Auditorium / secondary block centre. */
-export const DRMC_SECOND_BLOCK: GamePoint = { x: 62, z: -138 };
-/** Sports ground centre (Wikipedia: football/cricket grounds; photo evidence). */
-export const DRMC_SPORTS_GROUND: GamePoint = { x: 158, z: -148 };
-
-/**
- * True campus boundary polygon in game coords — the quad with the SW wall's
- * chamfer points (the wall hugs the game Shahjahan chain, which bends at
- * tajmahal_e). Used for point tests and the accuracy overlay.
- */
+/** True perimeter, including the western road bend. Keep a shared copy for
+ * per-frame pursuit checks; callers requesting the polygon receive their own array. */
+const DRMC_BOUNDARY: readonly GamePoint[] = [...DRMC_SW_WALL, DRMC_CAMPUS[2], DRMC_CAMPUS[3]];
 export function drmcBoundaryPolygon(): GamePoint[] {
-  return [
-    DRMC_SW_WALL[0], // A (NW)
-    DRMC_SW_WALL[1], // chamfer P2b
-    DRMC_SW_WALL[2], // chamfer P2a
-    DRMC_SW_WALL[3], // B (S)
-    DRMC_CAMPUS[2], // C (E)
-    DRMC_CAMPUS[3], // D (N)
-  ];
+  return [...DRMC_BOUNDARY];
 }
 
 /** Ray-casting point-in-polygon (handles the SW chamfer correctly). */
 export function isInsideDrmcCampus(x: number, z: number, margin = 0): boolean {
-  const poly = drmcBoundaryPolygon();
+  const poly = DRMC_BOUNDARY;
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const a = poly[i];
@@ -262,7 +231,20 @@ function distToSeg2D(px: number, pz: number, a: GamePoint, b: GamePoint): number
  * counts as campus so the gate/forecourt apron stays building-free.
  */
 export function isDrmcKeepClear(x: number, z: number, padding = 1.2): boolean {
-  return isInsideDrmcCampus(x, z, padding);
+  // Protect both short road-to-gate aprons as well as the grounds themselves.
+  return isInsideDrmcCampus(x, z, padding) ||
+    distToSeg2D(x, z, DRMC_GATE, DRMC_GATE_ROAD_POINT) < 6.8 + padding ||
+    distToSeg2D(x, z, DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT) < 5.4 + padding;
+}
+
+/** Test an ambient route/sidewalk, not only its endpoints, against the boundary. */
+export function crossesDrmcCampus(ax: number, az: number, bx: number, bz: number, margin = 0): boolean {
+  const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az)));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    if (isInsideDrmcCampus(ax + (bx - ax) * t, az + (bz - az) * t, margin)) return true;
+  }
+  return false;
 }
 
 /** Campus polygon in game coords (for the DEV accuracy overlay + minimap). */

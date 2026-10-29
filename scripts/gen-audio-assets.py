@@ -670,10 +670,10 @@ def gen_sfx_and_dialogue() -> None:
 
 def gen_phonetic_dialogue_cues() -> None:
     """
-    Render genuinely intelligible Bengali (`bn`) and English (`en`) fallback speech WAVs
-    offline via `libespeak-ng` (`espeakng_loader`) with warm vocal smoothing and optional
+    Render synthetic Bengali (`bn`) and English (`en`) fallback speech WAVs
+    offline via `libespeak-ng` (`espeakng_loader`) with vocal smoothing and optional
     police radio band-pass filtering. Used whenever no verified native/browser TTS voice
-    is installed on the target device.
+    is installed on the target device. Perceptual intelligibility requires listening QA.
     """
     import array
     import ctypes
@@ -809,7 +809,7 @@ def gen_phonetic_dialogue_cues() -> None:
     )
 
 
-def gen_manifest_dialogue() -> None:
+def gen_manifest_dialogue(line_ids: set[str] | None = None) -> None:
     """
     Render every line of `src/audio/dialogueManifest.json` (vNext §3) as a bundled
     per-line WAV: Bengali via libespeak-ng with hasant/ZWNJ grapheme shaping and a
@@ -826,6 +826,8 @@ def gen_manifest_dialogue() -> None:
     manifest_path = ROOT / "src" / "audio" / "dialogueManifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     lines = manifest["lines"]
+    if line_ids is not None:
+        lines = [line for line in lines if line.get("id") in line_ids]
 
     lib = ctypes.CDLL(espeakng_loader.get_library_path())
     lib.espeak_Initialize.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]

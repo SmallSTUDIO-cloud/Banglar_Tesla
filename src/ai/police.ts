@@ -23,6 +23,7 @@
 import * as THREE from 'three';
 import { angleDelta, clamp, clamp01, TAU } from '../core/mathx';
 import { snapToNearestRoad } from '../world/layout';
+import { isInsideDrmcCampus } from '../world/drmcGeo';
 import { getLaneGraph, sampleLane, type LaneEdge, type LaneGraph, type LanePoint } from './routes';
 import { Bucket } from '../world/geo';
 import { testRickshawCapsuleVsObb } from '../vehicle/rickshawController';
@@ -66,6 +67,8 @@ export interface PoliceCallbacks {
 }
 
 const MAX_UNITS = 5;
+// Radius encloses the full 1.76 x 4.18m patrol SUV, including turn corners.
+const CAMPUS_CLEARANCE = 2.3;
 
 export class PolicePursuitSystem {
   readonly group = new THREE.Group();
@@ -475,6 +478,14 @@ export class PolicePursuitSystem {
       const prevZ = u.z;
       u.x += Math.sin(u.yaw) * u.speed * dt;
       u.z += Math.cos(u.yaw) * u.speed * dt;
+      if (isInsideDrmcCampus(u.x, u.z, CAMPUS_CLEARANCE)) {
+        // Pursuit steering must not bypass a private campus wall. Reverse and
+        // recover instead of driving through the grounds to reach the player.
+        u.x = prevX;
+        u.z = prevZ;
+        u.recoverTimer = 0.75;
+        u.yaw = (u.yaw + Math.PI) % TAU;
+      }
 
       // Unit-vs-unit separation so patrol cars don't stack inside each other
       for (let j = 0; j < i; j++) {
@@ -485,10 +496,10 @@ export class PolicePursuitSystem {
         const sd = Math.hypot(sx, sz);
         if (sd < 3.1 && sd > 0.001) {
           const push = (3.1 - sd) * 0.5;
-          u.x += (sx / sd) * push;
-          u.z += (sz / sd) * push;
-          o.x -= (sx / sd) * push;
-          o.z -= (sz / sd) * push;
+          const dx = (sx / sd) * push, dz = (sz / sd) * push;
+          // Separation itself must not shove either unit through a wall.
+          if (!isInsideDrmcCampus(u.x + dx, u.z + dz, CAMPUS_CLEARANCE)) { u.x += dx; u.z += dz; }
+          if (!isInsideDrmcCampus(o.x - dx, o.z - dz, CAMPUS_CLEARANCE)) { o.x -= dx; o.z -= dz; }
         }
       }
 
@@ -608,8 +619,8 @@ export class PolicePursuitSystem {
       hitAny = true;
       pushX += h.pushX * 0.72;
       pushZ += h.pushZ * 0.72;
-      u.x -= h.pushX * 0.28;
-      u.z -= h.pushZ * 0.28;
+      const ux = u.x - h.pushX * 0.28, uz = u.z - h.pushZ * 0.28;
+      if (!isInsideDrmcCampus(ux, uz, CAMPUS_CLEARANCE)) { u.x = ux; u.z = uz; }
       nx = h.nx;
       nz = h.nz;
       contactX = h.contactX;

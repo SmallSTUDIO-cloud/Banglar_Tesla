@@ -30,6 +30,10 @@ export interface MissionOffer {
   daily: boolean;
   multiplier: number;
   seed: number;
+  /** Optional actual roadside pickup rather than the named place's normal curb. */
+  pickupPosition?: { x: number; z: number; segmentId: string };
+  /** Flat fare explicitly agreed with a free-roam roadside passenger. */
+  agreedFare?: number;
 }
 
 export interface MissionGenOptions {

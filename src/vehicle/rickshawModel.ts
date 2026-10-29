@@ -130,6 +130,9 @@ export class RickshawRig {
   readonly rearWheelRadius = RIDE.rearWheelRadius;
   private look: RickshawLook;
   private isElectric: boolean;
+  private driverArms: Array<{ side: 1 | -1; upper: THREE.Mesh; fore: THREE.Mesh; hand: THREE.Mesh }> = [];
+  private readonly armDirection = new THREE.Vector3();
+  private readonly armUp = new THREE.Vector3(0, 1, 0);
 
   constructor(look: RickshawLook = DEFAULT_LOOK, opts: { isPlayer?: boolean } = {}) {
     this.look = look;
@@ -467,27 +470,25 @@ export class RickshawRig {
 
     // ----------------------- 7. FOLDING BAMBOO-RIBBED HOOD / CANOPY (`হুড`)
     const hoodY = 1.32;
-    // Multi-segment arched convertible hood with external rib ridges + brass compass joints
-    const archSteps = [
-      { y: 1.34, z: -1.05, d: 0.18, pitch: 1.18 },
-      { y: 1.50, z: -0.98, d: 0.22, pitch: 0.78 },
-      { y: 1.64, z: -0.84, d: 0.26, pitch: 0.34 },
-      { y: 1.71, z: -0.64, d: 0.28, pitch: 0.02 },
-      { y: 1.67, z: -0.42, d: 0.25, pitch: -0.34 },
-      { y: 1.56, z: -0.25, d: 0.18, pitch: -0.68 },
+    // Connected cross-sections make one continuous folding canopy. The old
+    // overlapping slats left gaps once the head-obscuring side curtains were
+    // removed. Thin open-side edging retains the fabric and scissor silhouette.
+    const arch = [
+      { y: 1.28, z: -1.08 }, { y: 1.45, z: -1.05 },
+      { y: 1.60, z: -0.96 }, { y: 1.69, z: -0.79 },
+      { y: 1.72, z: -0.58 }, { y: 1.67, z: -0.38 },
+      { y: 1.55, z: -0.20 },
     ];
-    for (const seg of archSteps) {
-      bFabric.box({ x: 0, y: seg.y, z: seg.z }, { x: 0.98, y: 0.028, z: seg.d }, look.canopyColor, { x: seg.pitch });
-      // Bamboo/steel rib ridge + gold appliqué stripe
-      bChrome.box({ x: 0, y: seg.y + 0.018, z: seg.z }, { x: 0.995, y: 0.014, z: 0.022 }, trimCol, { x: seg.pitch });
-      // Hood side curtains
+    for (let i = 0; i < arch.length - 1; i++) {
+      const a = arch[i], b = arch[i + 1];
+      const y = (a.y + b.y) / 2, z = (a.z + b.z) / 2;
+      const pitch = -Math.atan2(b.y - a.y, b.z - a.z);
+      const length = Math.hypot(b.y - a.y, b.z - a.z) + 0.018;
+      bFabric.box({ x: 0, y, z }, { x: 0.98, y: 0.028, z: length }, look.canopyColor, { x: pitch });
       for (const side of [-1, 1]) {
-        bFabric.box(
-          { x: side * 0.485, y: seg.y - 0.11, z: seg.z },
-          { x: 0.02, y: 0.23, z: seg.d * 0.96 },
-          look.canopyColor,
-        );
+        bFabric.box({ x: side * 0.485, y: y - 0.01, z }, { x: 0.02, y: 0.04, z: length }, look.canopyColor, { x: pitch });
       }
+      bChrome.box({ x: 0, y: b.y + 0.018, z: b.z }, { x: 0.995, y: 0.014, z: 0.022 }, trimCol, { x: pitch });
     }
     // Side brass folding-hood scissor arms (authentic Bangladeshi rickshaw hood mechanism!)
     for (const side of [-1, 1]) {
@@ -748,64 +749,34 @@ export class RickshawRig {
     if (headMesh) headGroup.add(headMesh);
     this.puller.add(headGroup);
 
-    // ---- 3. Articulated Left & Right Arms + Attached Hands Gripping Handlebar (±0.275, 1.17, 0.605) ----
+    // ---- 3. Two articulated shoulder -> elbow -> grip chains ----
+    // Each visible segment has a single source. The old, baked Euler angles
+    // pointed the cylinders away from one another and made two floating fists.
     const sleeveCol = spec.outfitStyle === 'vest_lungi' ? spec.skinHex : spec.topHex;
+    const upperCol = spec.outfitStyle === 'jacket_pants' || spec.outfitStyle === 'raincoat' || spec.outfitStyle === 'royal_sherwani'
+      ? sleeveCol : spec.skinHex;
     for (const side of [1, -1] as const) {
-      const armGroup = new THREE.Group();
-      armGroup.name = side === 1 ? 'leftArm' : 'rightArm';
-      // Shoulder pivot in chassis coords: (±0.185, 1.38, 0.08)
-      // Handlebar grip in chassis coords: (±0.275, 1.17, 0.605) -> local target (±0.090, -0.210, +0.525)
-      armGroup.position.set(side * 0.185, 1.38, 0.08);
-
-      const bArm = new Bucket(`rickshaw.puller.arm.${side > 0 ? 'L' : 'R'}`, mat);
-      // Short sleeve cuff at shoulder
-      bArm.cylinder({ x: side * 0.015, y: -0.025, z: 0.04 }, 0.050, 0.11, sleeveCol, {
-        x: 1.05,
-        z: -side * 0.22,
-      });
-      // Upper arm: Shoulder (0,0,0) -> Elbow (side*0.065, -0.145, 0.245)
-      bArm.cylinder(
-        { x: side * 0.032, y: -0.072, z: 0.122 },
-        0.041,
-        0.295,
-        spec.outfitStyle === 'jacket_pants' || spec.outfitStyle === 'raincoat' || spec.outfitStyle === 'royal_sherwani'
-          ? sleeveCol
-          : spec.skinHex,
-        { x: 1.04, z: -side * 0.22 },
-      );
-      // Elbow joint cap (prevents any seam gap)
-      bArm.cylinder({ x: side * 0.065, y: -0.145, z: 0.245 }, 0.039, 0.055, spec.skinHex, { x: 1.3 });
-      // Forearm: Elbow (side*0.065, -0.145, 0.245) -> Wrist (side*0.088, -0.202, 0.492)
-      bArm.cylinder(
-        { x: side * 0.077, y: -0.174, z: 0.368 },
-        0.035,
-        0.262,
-        spec.skinHex,
-        { x: 1.34, z: -side * 0.09 },
-      );
-      // Shaped Hand + Curled Knuckles + Thumb wrapped around handlebar grip (side*0.090, -0.210, 0.525)!
-      bArm.box(
-        { x: side * 0.090, y: -0.198, z: 0.518 },
-        { x: 0.052, y: 0.028, z: 0.058 },
-        spec.skinHex,
-        { x: 0.22 },
-      );
-      bArm.box(
-        { x: side * 0.090, y: -0.214, z: 0.542 },
-        { x: 0.050, y: 0.032, z: 0.024 },
-        spec.skinHex,
-      );
-      bArm.box(
-        { x: side * 0.066, y: -0.216, z: 0.516 },
-        { x: 0.022, y: 0.022, z: 0.036 },
-        spec.skinHex,
-        { y: side * 0.35 },
-      );
-
-      const armMesh = bArm.build({ cast: false, receive: false }, true);
-      if (armMesh) armGroup.add(armMesh);
-      this.puller.add(armGroup);
+      const arm = new THREE.Group();
+      arm.name = side === 1 ? 'leftArm' : 'rightArm';
+      const makeSegment = (name: string, radius: number, color: string): THREE.Mesh => {
+        const bucket = new Bucket(name, mat);
+        // Unit-height cylinder; its transform is updated to the actual endpoints.
+        bucket.cylinder({ x: 0, y: 0, z: 0 }, radius, 1, color);
+        const mesh = bucket.build({ cast: false, receive: false }, true)!;
+        mesh.name = name;
+        return mesh;
+      };
+      const upper = makeSegment('upperArm', 0.038, upperCol);
+      const fore = makeSegment('foreArm', 0.032, spec.skinHex);
+      const handBucket = new Bucket('driver.hand', mat);
+      handBucket.box({ x: 0, y: 0, z: 0 }, { x: 0.060, y: 0.055, z: 0.082 }, spec.skinHex);
+      const hand = handBucket.build({ cast: false, receive: false }, true)!;
+      hand.name = 'gripHand';
+      arm.add(upper, fore, hand);
+      this.puller.add(arm);
+      this.driverArms.push({ side, upper, fore, hand });
     }
+    this.positionDriverArms(0);
 
     // ---- 4. Articulated Legs + Visible Sandals/Shoes ----
     for (const side of [1, -1] as const) {
@@ -824,6 +795,42 @@ export class RickshawRig {
       const legMesh = bLeg.build({ cast: false, receive: false }, true);
       if (legMesh) legGroup.add(legMesh);
       this.puller.add(legGroup);
+    }
+  }
+
+  private positionArmSegment(mesh: THREE.Mesh, ax: number, ay: number, az: number, bx: number, by: number, bz: number): void {
+    this.armDirection.set(bx - ax, by - ay, bz - az);
+    const length = this.armDirection.length();
+    if (length < 1e-6) return;
+    mesh.position.set((ax + bx) * 0.5, (ay + by) * 0.5, (az + bz) * 0.5);
+    mesh.scale.set(1, length, 1);
+    mesh.quaternion.setFromUnitVectors(this.armUp, this.armDirection.multiplyScalar(1 / length));
+  }
+
+  /** Recompute connected limbs from the fixed shoulders to the rotating grips. */
+  private positionDriverArms(steeringYaw: number): void {
+    const c = Math.cos(steeringYaw);
+    const s = Math.sin(steeringYaw);
+    for (const arm of this.driverArms) {
+      const side = arm.side;
+      const sx = side * 0.185, sy = 1.38, sz = 0.08;
+      // Grip coordinates are in the steering group's local frame.
+      let gx = c * (side * 0.275) + s * -0.195;
+      let gy = 1.17;
+      let gz = RIDE.frontAxleZ - s * (side * 0.275) + c * -0.195;
+      if (this.poseMode === 'victory' && side === -1) {
+        gx = -0.27;
+        gy = 1.72 + Math.sin(this.poseTime * 3.2) * 0.025;
+        gz = 0.16;
+      }
+      const ex = (sx + gx) * 0.5 + side * 0.045;
+      const ey = (sy + gy) * 0.5 - 0.025;
+      const ez = (sz + gz) * 0.5 - 0.025;
+      this.positionArmSegment(arm.upper, sx, sy, sz, ex, ey, ez);
+      // Terminate the forearm inside the hand, never in a separate visible cap.
+      this.positionArmSegment(arm.fore, ex, ey, ez, gx, gy, gz);
+      arm.hand.position.set(gx, gy, gz);
+      arm.hand.rotation.set(0, steeringYaw, 0);
     }
   }
 
@@ -877,38 +884,15 @@ export class RickshawRig {
       }
     }
 
-    const la = this.puller.getObjectByName('leftArm');
-    const ra = this.puller.getObjectByName('rightArm');
+    this.positionDriverArms(this.steering.rotation.y);
     const hd = this.puller.getObjectByName('pullerHead');
-    if (la && ra && hd) {
+    if (hd) {
       if (this.poseMode === 'victory') {
-        // Celebratory winner snapshot pose: right fist raised high, left hand steady on handlebar!
-        la.position.set(0.185, 1.38, 0.08);
-        la.rotation.set(0, 0, 0);
-        ra.position.set(-0.185, 1.40, 0.08);
-        ra.rotation.set(-1.58 + Math.sin(this.poseTime * 3.2) * 0.10, -0.18, -0.24);
         hd.rotation.set(-0.08, 0.32 + Math.sin(this.poseTime * 1.8) * 0.08, 0);
       } else if (this.poseMode === 'intro') {
-        // Rival intro taunt pose: confident head turn & subtle shoulder swagger
-        const steer = clampVal(opts.steerAngle, -0.55, 0.55);
-        la.position.set(0.185, 1.38, 0.08 + 0.24 * Math.sin(steer));
-        ra.position.set(-0.185, 1.38, 0.08 - 0.24 * Math.sin(steer));
-        la.rotation.set(0, -steer * 0.36, 0);
-        ra.rotation.set(Math.sin(this.poseTime * 2.6) * 0.06, -steer * 0.36, 0);
         hd.rotation.set(Math.sin(this.poseTime * 2.2) * 0.05, -0.22 + Math.sin(this.poseTime * 1.1) * 0.14, 0);
       } else {
-        // Riding pose: hands track the exact rotating handlebar grips (`steering.rotation.y = -steerAngle`)!
-        const steer = clampVal(opts.steerAngle, -0.68, 0.68);
-        const sinS = Math.sin(steer);
-        la.position.set(0.185 - 0.05 * sinS, 1.38, 0.08 + 0.25 * sinS);
-        ra.position.set(-0.185 - 0.05 * sinS, 1.38, 0.08 - 0.25 * sinS);
-        la.rotation.set(-0.04 * sinS, -steer * 0.34, 0);
-        ra.rotation.set(0.04 * sinS, -steer * 0.34, 0);
-        hd.rotation.set(
-          clampVal(-opts.pitch * 0.35, -0.14, 0.14),
-          -steer * 0.45,
-          -opts.roll * 0.35,
-        );
+        hd.rotation.set(clampVal(-opts.pitch * 0.35, -0.14, 0.14), -opts.steerAngle * 0.45, -opts.roll * 0.35);
       }
     }
 

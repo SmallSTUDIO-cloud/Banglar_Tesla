@@ -14,6 +14,8 @@
  *   - pure scheduling logic (no rendering) — unit-testable with injected rng
  */
 
+import { isInsideDrmcCampus } from '../world/drmcGeo';
+
 export type DirectorEventKind =
   | 'traffic_accident'
   | 'broken_vehicle'
@@ -125,7 +127,7 @@ export class EventDirector {
         this.onDespawn?.(ev);
       }
     }
-    if (ctx.paused) return null;
+    if (ctx.paused || isInsideDrmcCampus(ctx.x, ctx.z, 2)) return null;
     if (
       ctx.inMission ||
       ctx.inRace ||
@@ -147,6 +149,7 @@ export class EventDirector {
     const radius = 26 + rng() * 42;
     const x = ctx.x + Math.sin(angle) * radius;
     const z = ctx.z + Math.cos(angle) * radius;
+    if (isInsideDrmcCampus(x, z, 4)) return null;
     for (const ev of this.active) {
       if (Math.hypot(ev.x - x, ev.z - z) < MIN_ZONE_SPACING) return null;
     }

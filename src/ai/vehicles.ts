@@ -21,7 +21,7 @@
 
 import * as THREE from 'three';
 import { Bucket } from '../world/geo';
-import { buildDriverArms, type ArmChainPose } from '../characters/limbRig';
+import { buildArmChain, buildDriverArms, type ArmChainPose } from '../characters/limbRig';
 
 export type TrafficType =
   | 'cng'
@@ -88,6 +88,8 @@ export interface InstancedVehicleState {
   braking: boolean;
   visible: boolean;
   nearLod: boolean;
+  /** Visual steering angle, derived from the traffic agent's current turn. */
+  steerAngle?: number;
 }
 
 const dummyMat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -145,7 +147,8 @@ export const NPC_RICKSHAW_PULLER_ARMS = buildDriverArms({
 
 /** NPC traffic rickshaw passenger — both hands resting naturally on the lap. */
 export const NPC_RICKSHAW_PASSENGER_ARMS = buildDriverArms({
-  shoulderX: 0.215,
+  shoulderX: 0.16,
+  shoulderCenterX: 0.06,
   shoulderY: 1.26,
   shoulderZ: -0.72,
   gripLeft: { x: 0.175, y: 0.965, z: -0.575 },
@@ -157,7 +160,7 @@ export const NPC_RICKSHAW_PASSENGER_ARMS = buildDriverArms({
   elbowLift: 0.02,
 });
 
-/** CNG driver gripping the steering wheel at (±0.165, 1.155, 0.70). */
+/** Dhaka CNG driver gripping the handlebar at (±0.165, 1.155, 0.70). */
 export const NPC_CNG_DRIVER_ARMS = buildDriverArms({
   shoulderX: 0.155,
   shoulderY: 1.23,
@@ -169,8 +172,8 @@ export const NPC_CNG_DRIVER_ARMS = buildDriverArms({
   handSize: { x: 0.058, y: 0.052, z: 0.078 },
   elbowBend: 0.07,
   elbowLift: 0.04,
-  handRotLeft: { x: 0.5, y: 0, z: -0.35 },
-  handRotRight: { x: 0.5, y: 0, z: 0.35 },
+  handRotLeft: { x: 0.18, y: 0, z: -0.12 },
+  handRotRight: { x: 0.18, y: 0, z: 0.12 },
 });
 
 /** EasyBike driver gripping the cabin handlebar at (±0.175, 1.09, 0.84). */
@@ -189,6 +192,30 @@ export const NPC_EASYBIKE_DRIVER_ARMS = buildDriverArms({
   handRotRight: { x: 0.18, y: 0, z: 0.12 },
 });
 
+export type SteeringDriverType = 'rickshaw' | 'cng' | 'easybike';
+export const NPC_STEERING_ANGLES = [-0.5, -0.25, 0, 0.25, 0.5] as const;
+
+/** Precomputed visual poses: both hands remain on the rotating control. */
+export function npcSteeringPose(type: SteeringDriverType, angle: number): [ArmChainPose, ArmChainPose] {
+  const base = type === 'rickshaw' ? NPC_RICKSHAW_PULLER_ARMS : type === 'cng' ? NPC_CNG_DRIVER_ARMS : NPC_EASYBIKE_DRIVER_ARMS;
+  const centre = type === 'rickshaw' ? { y: 1.155, z: 0.725 } : type === 'cng' ? { y: 1.155, z: 0.70 } : { y: 1.09, z: 0.84 };
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const result = base.map((chain) => {
+    const x = chain.grip.x;
+    // All three steer via handlebars rotating around the vertical steering stem.
+    const grip = { x: x * c, y: centre.y, z: centre.z - x * s };
+    const midX = chain.shoulder.x + (chain.grip.x - chain.shoulder.x) * 0.52;
+    const midY = chain.shoulder.y + (chain.grip.y - chain.shoulder.y) * 0.52;
+    return buildArmChain({
+      side: chain.side, shoulder: chain.shoulder, grip,
+      upperRadius: chain.upper.radius, foreRadius: chain.fore.radius,
+      handSize: chain.hand.size, handRot: chain.hand.rot,
+      elbowBend: Math.abs(chain.elbow.x - midX), elbowLift: chain.elbow.y - midY,
+    });
+  });
+  return [result[0], result[1]];
+}
+
 /**
  * Emit one contiguous arm chain into a fleet detail bucket: upper arm, elbow
  * ball, forearm (ending INSIDE the hand) and the hand box seated on the grip.
@@ -196,31 +223,10 @@ export const NPC_EASYBIKE_DRIVER_ARMS = buildDriverArms({
 function emitArmChain(bucket: Bucket, chain: ArmChainPose, skinHex: string, sleeveHex: string): void {
   const u = chain.upper;
   bucket.cylinder(u.mid, u.radius, u.length, sleeveHex, u.rot);
-  bucket.cylinder(chain.elbowCap.center, chain.elbowCap.radius, chain.elbowCap.radius * 1.15, skinHex, u.rot);
   const f = chain.fore;
   bucket.cylinder(f.mid, f.radius, f.length, skinHex, f.rot);
   // Hand box seated on the grip — forearm's rounded end stays buried inside it.
   bucket.box(chain.hand.center, chain.hand.size, skinHex, chain.hand.rot);
-  // Small curled-knuckle ridge so the grip reads as a closed hand, not a cube.
-  const gripDir = normalizeGripDir(chain);
-  bucket.box(
-    {
-      x: chain.hand.center.x + gripDir.x * 0.024,
-      y: chain.hand.center.y + gripDir.y * 0.024,
-      z: chain.hand.center.z + gripDir.z * 0.024,
-    },
-    { x: chain.hand.size.x * 0.86, y: chain.hand.size.y * 0.72, z: chain.hand.size.z * 0.62 },
-    skinHex,
-    chain.hand.rot,
-  );
-}
-
-function normalizeGripDir(chain: ArmChainPose): { x: number; y: number; z: number } {
-  const dx = chain.grip.x - chain.elbow.x;
-  const dy = chain.grip.y - chain.elbow.y;
-  const dz = chain.grip.z - chain.elbow.z;
-  const l = Math.hypot(dx, dy, dz) || 1;
-  return { x: dx / l, y: dy / l, z: dz / l };
 }
 
 const archetypeCache = new Map<TrafficType, TrafficArchetype>();
@@ -302,7 +308,13 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     primary.box({ x: 0, y: 0.50, z: 0.84 }, { x: 0.86, y: 0.44, z: 0.54 }, '#ffffff', { x: 0.08 });
     primary.cylinder({ x: 0, y: 0.48, z: 0.96 }, 0.34, 0.38, '#ffffff', { z: Math.PI / 2 });
     primary.box({ x: 0, y: 0.36, z: 1.02 }, { x: 0.32, y: 0.14, z: 0.38 }, '#ffffff');
-    primary.box({ x: 0, y: 1.08, z: 0.78 }, { x: 1.06, y: 0.68, z: 0.05 }, '#ffffff', { x: -0.22 });
+    // The old solid front slab hid the driver entirely. Keep only the
+    // painted frame; a separate translucent pane fills its opening.
+    for (const sx of [-0.50, 0.50]) {
+      primary.box({ x: sx, y: 1.08, z: 0.78 }, { x: 0.06, y: 0.68, z: 0.05 }, '#ffffff', { x: -0.22 });
+    }
+    primary.box({ x: 0, y: 1.42, z: 0.70 }, { x: 1.06, y: 0.06, z: 0.06 }, '#ffffff');
+    primary.box({ x: 0, y: 0.74, z: 0.85 }, { x: 1.06, y: 0.08, z: 0.06 }, '#ffffff');
 
     // Yellow-black Dhaka taxi-stripe, arched black tarpaulin roof & front chrome bumper
     detail.box({ x: 0, y: 0.69, z: -0.18 }, { x: 1.26, y: 0.06, z: 1.74 }, '#e6b832');
@@ -310,7 +322,6 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     detail.box({ x: 0, y: 1.46, z: -0.10 }, { x: 1.24, y: 0.09, z: 1.84 }, '#1d221e');
     detail.box({ x: 0, y: 1.53, z: -0.12 }, { x: 1.08, y: 0.08, z: 1.68 }, '#262c27');
     detail.box({ x: 0, y: 1.58, z: -0.14 }, { x: 0.84, y: 0.05, z: 1.48 }, '#2f3630');
-    detail.box({ x: 0, y: 1.09, z: 0.805 }, { x: 0.94, y: 0.54, z: 0.03 }, '#1e3a48', { x: -0.22 });
     detail.box({ x: 0.06, y: 1.04, z: 0.83 }, { x: 0.02, y: 0.42, z: 0.02 }, '#111111', { x: -0.22, z: 0.32 });
     for (const sx of [-0.61, 0.61]) {
       detail.cylinder({ x: sx, y: 1.08, z: -0.95 }, 0.018, 0.78, '#1e2226');
@@ -323,17 +334,17 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
       }
       detail.box({ x: sx * 1.12, y: 1.12, z: 0.76 }, { x: 0.10, y: 0.08, z: 0.03 }, '#cfd6de');
     }
-    // Upholstered bench + visible CNG driver with head, hair & steering wheel grip!
+    // Upholstered bench + visible CNG driver with head, hair & handlebar grip.
     detail.box({ x: 0, y: 0.68, z: -0.58 }, { x: 1.08, y: 0.28, z: 0.45 }, '#542a1c');
+    detail.box({ x: 0, y: 0.73, z: 0.24 }, { x: 0.40, y: 0.09, z: 0.32 }, '#302e2a');
+    for (const side of [-1, 1]) {
+      detail.box({ x: side * 0.09, y: 0.64, z: 0.31 }, { x: 0.11, y: 0.20, z: 0.24 }, '#252f3a');
+    }
     detail.box({ x: 0, y: 0.98, z: 0.24 }, { x: 0.34, y: 0.42, z: 0.22 }, '#2b4c72');
     detail.cylinder({ x: 0, y: 1.26, z: 0.25 }, 0.095, 0.19, '#8d5b3c');
     detail.cylinder({ x: 0, y: 1.34, z: 0.24 }, 0.098, 0.07, '#18181b');
-    // Compact steering wheel the two hands wrap (one hand per side).
-    detail.torus({ x: 0, y: 1.155, z: 0.70 }, 0.175, '#22282d', { x: 0.72 });
+    // The handlebar and hands are emitted together by the pose instancer.
     detail.cylinder({ x: 0, y: 1.08, z: 0.60 }, 0.018, 0.24, '#3a4046', { x: 1.12 });
-    for (const chain of NPC_CNG_DRIVER_ARMS) {
-      emitArmChain(detail, chain, '#8d5b3c', '#2b4c72');
-    }
     detail.cylinder({ x: 0, y: 0.86, z: -1.07 }, 0.22, 0.11, '#1a1c1f', { x: Math.PI / 2 });
     addHead(0, 0.64, 1.15, 0.16, 0.16, 0.04, '#fff6cf');
     for (const sx of [-0.34, 0.34]) {
@@ -367,20 +378,19 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     detail.cylinder({ x: 0, y: 0.66, z: 0.38 }, 0.022, 0.92, '#145a44', { x: 0.98 });
     detail.cylinder({ x: 0, y: 0.88, z: 0.36 }, 0.018, 0.84, '#145a44', { x: Math.PI / 2 });
     detail.cylinder({ x: 0, y: 0.94, z: 0.78 }, 0.02, 0.42, '#cfd6de', { x: -0.14 });
-    detail.cylinder({ x: 0, y: 1.15, z: 0.73 }, 0.014, 0.46, '#dce3ea', { z: Math.PI / 2 });
     detail.box({ x: 0, y: 0.53, z: -0.34 }, { x: 0.88, y: 0.04, z: 0.36 }, '#5e3c20');
     detail.box({ x: 0, y: 0.65, z: -0.76 }, { x: 0.90, y: 0.22, z: 0.54 }, '#145a44');
     detail.box({ x: 0, y: 0.78, z: -0.74 }, { x: 0.84, y: 0.11, z: 0.46 }, '#a61c2b');
     detail.box({ x: 0, y: 1.02, z: -0.98 }, { x: 0.88, y: 0.56, z: 0.06 }, '#f2b938');
+    // The puller sits on a supported cycle saddle; feet rest on actual pedals.
+    detail.cylinder({ x: 0, y: 0.84, z: 0.02 }, 0.018, 0.30, '#84918b');
+    detail.box({ x: 0, y: 0.99, z: 0.02 }, { x: 0.25, y: 0.055, z: 0.28 }, '#302921');
     for (const side of [-1, 1]) {
       detail.box({ x: side * 0.52, y: 0.72, z: -0.66 }, { x: 0.12, y: 0.06, z: 0.72 }, '#145a44');
       // Pedalling leg (thigh + calf) — feet reach the crank below.
       detail.cylinder({ x: side * 0.10, y: 0.82, z: 0.05 }, 0.055, 0.44, '#1f4e70', { x: 0.16 });
       detail.box({ x: side * 0.11, y: 0.58, z: 0.12 }, { x: 0.075, y: 0.05, z: 0.16 }, '#2c2622');
-    }
-    // Contiguous shoulder->elbow->forearm->hand chains: exactly one hand per grip.
-    for (const chain of NPC_RICKSHAW_PULLER_ARMS) {
-      emitArmChain(detail, chain, '#8b5e3c', '#d98236');
+      detail.box({ x: side * 0.11, y: 0.54, z: 0.12 }, { x: 0.13, y: 0.03, z: 0.10 }, '#464e4b');
     }
     detail.box({ x: 0, y: 1.71, z: -0.64 }, { x: 0.98, y: 0.025, z: 0.12 }, '#f2b938');
     detail.box({ x: 0, y: 1.52, z: -0.26 }, { x: 0.96, y: 0.09, z: 0.03 }, '#f2b938');
@@ -390,6 +400,11 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     detail.cylinder({ x: 0, y: 1.54, z: 0.14 }, 0.102, 0.03, '#c92a2a'); // red gamcha headband!
     // Seated passenger with hair + resting arms/hands on the lap
     detail.box({ x: 0.06, y: 1.10, z: -0.74 }, { x: 0.32, y: 0.38, z: 0.22 }, '#f0b429');
+    for (const side of [-1, 1]) {
+      // A seated thigh and shin connect the cushion to the footboard.
+      detail.box({ x: 0.06 + side * 0.09, y: 0.85, z: -0.56 }, { x: 0.12, y: 0.12, z: 0.36 }, '#33384a');
+      detail.box({ x: 0.06 + side * 0.09, y: 0.71, z: -0.38 }, { x: 0.12, y: 0.28, z: 0.12 }, '#33384a');
+    }
     detail.cylinder({ x: 0.06, y: 1.38, z: -0.74 }, 0.09, 0.18, '#8b5e3c');
     detail.cylinder({ x: 0.06, y: 1.46, z: -0.75 }, 0.093, 0.07, '#18181b');
     for (const passArm of NPC_RICKSHAW_PASSENGER_ARMS) {
@@ -420,19 +435,20 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     }
     detail.box({ x: 0, y: 1.62, z: -0.05 }, { x: 1.34, y: 0.08, z: 2.28 }, '#f4f1e6');
     detail.box({ x: 0, y: 0.36, z: 1.25 }, { x: 1.02, y: 0.08, z: 0.08 }, '#cfd6de'); // chrome bullbar
-    detail.box({ x: 0, y: 1.16, z: 0.94 }, { x: 1.06, y: 0.62, z: 0.04 }, '#204254', { x: -0.16 });
+    // Transparent windscreen is emitted separately so the hands are visible.
     detail.box({ x: 0, y: 0.32, z: -0.35 }, { x: 0.96, y: 0.16, z: 0.95 }, '#1d242b');
     detail.box({ x: 0, y: 0.72, z: -0.82 }, { x: 1.16, y: 0.18, z: 0.42 }, '#7a2323');
     detail.box({ x: 0, y: 0.72, z: -0.12 }, { x: 1.16, y: 0.18, z: 0.38 }, '#7a2323');
+    // Separate driver's seat, rather than leaving the torso floating in the cab.
+    detail.box({ x: 0, y: 0.77, z: 0.46 }, { x: 0.40, y: 0.10, z: 0.32 }, '#302e2a');
+    for (const side of [-1, 1]) {
+      detail.box({ x: side * 0.09, y: 0.66, z: 0.53 }, { x: 0.11, y: 0.20, z: 0.25 }, '#242f41');
+    }
     // Visible EasyBike driver with head, cap & hands on the cabin handlebar
     detail.box({ x: 0, y: 1.02, z: 0.46 }, { x: 0.34, y: 0.42, z: 0.22 }, '#1e3a8a');
     detail.cylinder({ x: 0, y: 1.31, z: 0.47 }, 0.095, 0.18, '#8d5b3c');
     detail.cylinder({ x: 0, y: 1.39, z: 0.47 }, 0.098, 0.07, '#f8fafc');
-    detail.cylinder({ x: 0, y: 1.09, z: 0.84 }, 0.016, 0.42, '#cfd6de', { z: Math.PI / 2 });
     detail.cylinder({ x: 0, y: 1.04, z: 0.80 }, 0.018, 0.12, '#8a929c', { x: 1.15 });
-    for (const chain of NPC_EASYBIKE_DRIVER_ARMS) {
-      emitArmChain(detail, chain, '#8d5b3c', '#1e3a8a');
-    }
     addHead(0, 0.74, 1.25, 0.16, 0.14, 0.04, '#e8fbff');
     addBrake(-0.46, 0.56, -1.18, 0.16, 0.08, 0.03);
     addBrake(0.46, 0.56, -1.18, 0.16, 0.08, 0.03);
@@ -679,8 +695,35 @@ interface TypeLayerPair {
  * Packs only visible vehicles into contiguous instance slots each frame and
  * eliminates 500+ scene-graph child nodes and duplicate materials.
  */
+// Glass cannot share the opaque vertex-colour detail material. Two instanced
+// layers retain the original pane geometry without hiding the occupants.
+const glassFleetMat = new THREE.MeshLambertMaterial({ color: '#8bc2d2', transparent: true, opacity: 0.24, depthWrite: false });
+const glassGeometry = {
+  cng: new THREE.BoxGeometry(0.94, 0.54, 0.03).rotateX(-0.22).translate(0, 1.09, 0.805),
+  easybike: new THREE.BoxGeometry(1.06, 0.62, 0.04).rotateX(-0.16).translate(0, 1.16, 0.94),
+};
+
+const steeringGeometry = new Map<string, THREE.BufferGeometry>();
+function getSteeringGeometry(type: SteeringDriverType, angle: number): THREE.BufferGeometry {
+  const key = `${type}:${angle}`;
+  const existing = steeringGeometry.get(key);
+  if (existing) return existing;
+  const b = new Bucket(`traffic.${type}.steering`, detailFleetMat);
+  const skin = type === 'rickshaw' ? '#8b5e3c' : '#8d5b3c';
+  const sleeve = type === 'rickshaw' ? '#d98236' : type === 'cng' ? '#2b4c72' : '#1e3a8a';
+  for (const chain of npcSteeringPose(type, angle)) emitArmChain(b, chain, skin, sleeve);
+  const y = type === 'easybike' ? 1.09 : 1.155;
+  const z = type === 'rickshaw' ? 0.725 : type === 'cng' ? 0.70 : 0.84;
+  b.cylinder({ x: 0, y, z }, 0.016, type === 'rickshaw' ? 0.46 : 0.42, '#dce3ea', { y: angle, z: Math.PI / 2 });
+  const geometry = b.build({ cast: false, receive: true })!.geometry;
+  steeringGeometry.set(key, geometry);
+  return geometry;
+}
+
 export class InstancedTrafficFleet {
   private layers = new Map<TrafficType, TypeLayerPair>();
+  private steeringLayers = new Map<SteeringDriverType, THREE.InstancedMesh[]>();
+  private glassLayers = new Map<'cng' | 'easybike', THREE.InstancedMesh>();
   private spokedWheels: THREE.InstancedMesh;
   private discWheels: THREE.InstancedMesh;
   private headLampMesh: THREE.InstancedMesh;
@@ -721,6 +764,31 @@ export class InstancedTrafficFleet {
 
       parent.add(primary, detail);
       this.layers.set(type, { arch, primary, detail });
+    }
+
+    // Five quantized steering poses per affected vehicle type. Each is one
+    // shared instanced mesh, not an Object3D hierarchy per traffic vehicle.
+    for (const type of ['rickshaw', 'cng', 'easybike'] as const) {
+      const layers = NPC_STEERING_ANGLES.map((angle) => {
+        const mesh = new THREE.InstancedMesh(getSteeringGeometry(type, angle), detailFleetMat, maxVehicles);
+        mesh.name = `traffic.${type}.steering.${angle}`;
+        mesh.frustumCulled = false;
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        mesh.count = 0;
+        parent.add(mesh);
+        return mesh;
+      });
+      this.steeringLayers.set(type, layers);
+    }
+
+    for (const type of ['cng', 'easybike'] as const) {
+      const mesh = new THREE.InstancedMesh(glassGeometry[type], glassFleetMat, maxVehicles);
+      mesh.name = `traffic.${type}.windscreen`;
+      mesh.frustumCulled = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.count = 0;
+      parent.add(mesh);
+      this.glassLayers.set(type, mesh);
     }
 
     const maxSpoked = maxVehicles * 3;
@@ -764,6 +832,8 @@ export class InstancedTrafficFleet {
       pair.primary.count = 0;
       pair.detail.count = 0;
     }
+    for (const layers of this.steeringLayers.values()) for (const mesh of layers) mesh.count = 0;
+    for (const mesh of this.glassLayers.values()) mesh.count = 0;
     let spokedCount = 0;
     let discCount = 0;
     let headCount = 0;
@@ -789,12 +859,19 @@ export class InstancedTrafficFleet {
       pair.detail.setMatrixAt(slot, this.tmpMat);
       pair.primary.count = slot + 1;
       pair.detail.count = slot + 1;
+      const glass = this.glassLayers.get(a.kind as 'cng' | 'easybike');
+      if (glass) glass.setMatrixAt(glass.count++, this.tmpMat);
+      const steering = this.steeringLayers.get(a.kind as SteeringDriverType);
+      if (steering) {
+        const index = Math.max(0, Math.min(NPC_STEERING_ANGLES.length - 1, Math.round(((a.steerAngle ?? 0) + 0.5) / 0.25)));
+        const mesh = steering[index];
+        mesh.setMatrixAt(mesh.count++, this.tmpMat);
+      }
 
-      // Full spinning wheels & live lamps within near/mid gameplay range (~82m);
-      // beyond 82m wheels/lamps are sub-pixel so skipping them saves ~180 matrix writes!
-      if (!a.nearLod) continue;
-
-      this.tmpSpinQuat.setFromAxisAngle(this.xAxis, a.wheelSpin);
+      // Wheels are essential to the silhouette even at far LOD: omitting them
+      // made distant vehicles float. Far wheels use a fixed orientation; near
+      // wheels keep their animation. Both use the same existing instanced draw.
+      this.tmpSpinQuat.setFromAxisAngle(this.xAxis, a.nearLod ? a.wheelSpin : 0);
       this.tmpWheelQuat.multiplyQuaternions(this.tmpQuat, this.tmpSpinQuat);
       const r = arch.wheelRadius;
       const mounts = arch.wheelMounts;
@@ -817,6 +894,12 @@ export class InstancedTrafficFleet {
         }
       }
 
+      // Live lamps are sub-pixel beyond the near/mid range. Reset the shared
+      // scale before continuing so the next vehicle body is not wheel-scaled.
+      if (!a.nearLod) {
+        unitScale.set(1, 1, 1);
+        continue;
+      }
       const heads = arch.headLamps;
       for (let h = 0; h < heads.length; h++) {
         const l = heads[h];
@@ -850,6 +933,17 @@ export class InstancedTrafficFleet {
         pair.primary.instanceMatrix.needsUpdate = true;
         if (pair.primary.instanceColor) pair.primary.instanceColor.needsUpdate = true;
         pair.detail.instanceMatrix.needsUpdate = true;
+      }
+    }
+
+    for (const mesh of this.glassLayers.values()) {
+      mesh.visible = mesh.count > 0;
+      if (mesh.count > 0) mesh.instanceMatrix.needsUpdate = true;
+    }
+    for (const layers of this.steeringLayers.values()) {
+      for (const mesh of layers) {
+        mesh.visible = mesh.count > 0;
+        if (mesh.count > 0) mesh.instanceMatrix.needsUpdate = true;
       }
     }
 
@@ -889,6 +983,8 @@ export class InstancedTrafficFleet {
     for (const pair of this.layers.values()) {
       meshes.push(pair.primary, pair.detail);
     }
+    for (const layers of this.steeringLayers.values()) meshes.push(...layers);
+    for (const mesh of this.glassLayers.values()) meshes.push(mesh);
     for (const m of meshes) {
       savedCounts.push(m.count);
       if (m.count === 0) {

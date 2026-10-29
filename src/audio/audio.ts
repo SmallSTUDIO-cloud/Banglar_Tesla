@@ -1391,6 +1391,12 @@ export class AudioEngine {
     this.trackSynthOneShot(0.26);
   }
 
+  /** Brief original two-note signal under a roadside passenger's call. */
+  roadsideCallCue(): void {
+    this.uiTone(660, 0.055, 0.035);
+    this.uiTone(784, 0.07, 0.035, 0.06);
+  }
+
   uiTap(): void {
     this.uiTone(520, 0.045, 0.08);
   }

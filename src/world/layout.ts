@@ -421,8 +421,9 @@ export const PLACES: PlaceDef[] = [
   makePlaceOnSegment('salimullah', 'place.salimullah', 'salimullah_1', 0.54, -1, 'both'),
   makePlaceOnSegment('humayun', 'place.humayun', 'humayun_2', 0.5, 1, 'both'),
   makePlaceOnSegment('zakir', 'place.zakir', 'zakir_3', 0.52, 1, 'both'),
-  // Dhaka Residential Model College (DRMC) — verified public gate approach (vNext §1)
-  makePlaceOnSegment('drmc', 'place.drmc', 'shahjahan_2', 0.42, 1, 'both'),
+  // Two public-road approaches to the approximate in-game campus entrances.
+  makePlaceOnSegment('drmc', 'place.drmc', 'shahjahan_2', 0.38, 1, 'both'),
+  makePlaceOnSegment('drmc_side', 'place.drmcSide', 'aurangzeb_humayun', 0.52, -1, 'poi'),
 ];
 
 export function placeById(id: string): PlaceDef | undefined {

@@ -2,7 +2,7 @@
   "name": "banglar-tesla",
   "private": true,
   "version": "0.6.0",
-  "description": "Banglar Tesla \u2014 a 3D Mohammadpur, Dhaka rickshaw driving simulator.",
+  "description": "Banglar Tesla — a 3D Mohammadpur, Dhaka rickshaw driving simulator.",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
@@ -21,7 +21,8 @@
     "test:vnext": "node tests/e2e/verify-vnext.mjs",
     "benchmark": "node tests/e2e/benchmark-suite.mjs",
     "shots": "node tests/e2e/shoot.mjs",
-    "perf": "node tests/e2e/perf.mjs"
+    "perf": "node tests/e2e/perf.mjs",
+    "test:vnext-repair": "node tests/e2e/verify-vnext-repair.mjs"
   },
   "dependencies": {
     "three": "0.186.1"

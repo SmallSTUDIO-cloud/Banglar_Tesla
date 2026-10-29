@@ -62,7 +62,7 @@ export function button(label: string, opts: {
   if (opts.sub) content.append(h('span', { class: 'sub', text: opts.sub }));
   const btn = h('button', {
     class: classes.join(' '),
-    attrs: { ...(opts.attrs ?? {}), type: 'button', disabled: opts.disabled, 'aria-disabled': opts.disabled },
+    attrs: { ...(opts.attrs ?? {}), type: 'button', ...(opts.disabled !== undefined ? { disabled: opts.disabled, 'aria-disabled': opts.disabled } : {}) },
     on: { click: () => opts.onClick?.() },
   }, content);
   return btn;

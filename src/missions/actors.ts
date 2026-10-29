@@ -90,10 +90,14 @@ export function archetypeById(id: Archetype): ArchetypeDef {
 const shared = {
   head: new THREE.SphereGeometry(0.11, 10, 8),
   torso: new THREE.CapsuleGeometry(0.16, 0.44, 3, 8),
-  leg: new THREE.BoxGeometry(0.12, 0.5, 0.14),
+  leg: new THREE.BoxGeometry(0.12, 0.7, 0.14),
+  seatedThigh: new THREE.BoxGeometry(0.12, 0.38, 0.14),
+  seatedShin: new THREE.BoxGeometry(0.12, 0.28, 0.14),
   skirt: new THREE.ConeGeometry(0.27, 0.76, 9, 1, true),
   bag: new THREE.BoxGeometry(0.2, 0.24, 0.1),
   hair: new THREE.SphereGeometry(0.116, 10, 8, 0, TAU, 0, Math.PI / 1.7),
+  arm: new THREE.CylinderGeometry(0.036, 0.036, 0.44, 8),
+  hand: new THREE.BoxGeometry(0.055, 0.075, 0.060),
 };
 
 const actorMatCache = new Map<string, THREE.MeshLambertMaterial>();
@@ -111,13 +115,24 @@ function sharedActorMat(color: string, doubleSided = false): THREE.MeshLambertMa
 }
 const sharedHairMat = sharedActorMat('#1b1410');
 
+export interface PassengerActorOptions {
+  hairColor?: string;
+  bagColor?: string;
+  /** Called once on disposal with the actor's final world position. */
+  onDispose?: (x: number, z: number) => void;
+}
+
 export class PassengerActor {
   readonly group = new THREE.Group();
   readonly def: ArchetypeDef;
   private torso: THREE.Mesh;
   private head: THREE.Mesh;
+  private hair: THREE.Mesh;
+  private armL: THREE.Group;
+  private armR: THREE.Group;
   private legL: THREE.Mesh;
   private legR: THREE.Mesh;
+  private seatedShins: THREE.Mesh[];
   private skirtMesh: THREE.Mesh | null = null;
   private bagMesh: THREE.Mesh | null = null;
   private phase = 0;
@@ -127,8 +142,9 @@ export class PassengerActor {
   private speed = 1.35;
   private onArrive: (() => void) | null = null;
   private seatYaw = 0;
+  private disposed = false;
 
-  constructor(def: ArchetypeDef) {
+  constructor(def: ArchetypeDef, private readonly options: PassengerActorOptions = {}) {
     this.def = def;
     const shirt = sharedActorMat(def.colors.shirt);
     const skin = sharedActorMat(def.colors.skin);
@@ -140,13 +156,36 @@ export class PassengerActor {
     this.torso.castShadow = true;
     this.head = new THREE.Mesh(shared.head, skin);
     this.head.position.y = 1.47;
-    const hair = new THREE.Mesh(shared.hair, sharedHairMat);
-    hair.position.y = 1.47;
+    this.hair = new THREE.Mesh(shared.hair, options.hairColor ? sharedActorMat(options.hairColor) : sharedHairMat);
+    this.hair.position.y = 1.47;
     this.legL = new THREE.Mesh(shared.leg, lower);
     this.legR = new THREE.Mesh(shared.leg, lower);
-    this.legL.position.set(-0.09, 0.5, 0);
-    this.legR.position.set(0.09, 0.5, 0);
-    this.group.add(this.torso, this.head, hair, this.legL, this.legR);
+    this.legL.name = 'passengerLeftLeg';
+    this.legR.name = 'passengerRightLeg';
+    this.legL.position.set(-0.09, 0.35, 0);
+    this.legR.position.set(0.09, 0.35, 0);
+    this.seatedShins = [-1, 1].map((side) => {
+      const shin = new THREE.Mesh(shared.seatedShin, lower);
+      shin.name = side < 0 ? 'passengerLeftShin' : 'passengerRightShin';
+      shin.position.set(side * 0.11, -0.11, 0.37);
+      shin.visible = false;
+      return shin;
+    });
+    const makeArm = (side: -1 | 1): THREE.Group => {
+      const arm = new THREE.Group();
+      arm.name = side < 0 ? 'passengerLeftArm' : 'passengerRightArm';
+      arm.position.set(side * 0.19, 1.27, 0);
+      const limb = new THREE.Mesh(shared.arm, skin);
+      limb.position.y = -0.22;
+      const hand = new THREE.Mesh(shared.hand, skin);
+      hand.name = 'passengerHand';
+      hand.position.y = -0.46;
+      arm.add(limb, hand);
+      return arm;
+    };
+    this.armL = makeArm(-1);
+    this.armR = makeArm(1);
+    this.group.add(this.torso, this.head, this.hair, this.armL, this.armR, this.legL, this.legR, ...this.seatedShins);
 
     if (def.skirt > 0) {
       this.skirtMesh = new THREE.Mesh(shared.skirt, accent);
@@ -154,7 +193,8 @@ export class PassengerActor {
       this.group.add(this.skirtMesh);
     }
     if (def.bag) {
-      this.bagMesh = new THREE.Mesh(shared.bag, accent);
+      this.bagMesh = new THREE.Mesh(shared.bag, options.bagColor ? sharedActorMat(options.bagColor) : accent);
+      this.bagMesh.name = 'passengerBag';
       this.bagMesh.position.set(0.22, 1.0, -0.04);
       this.group.add(this.bagMesh);
     }
@@ -187,10 +227,20 @@ export class PassengerActor {
     this.group.rotation.set(0, 0, 0);
     this.torso.position.set(0, 0.32, 0);
     this.head.position.set(0, 0.74, 0);
-    this.legL.position.set(-0.11, 0.16, 0.18);
-    this.legR.position.set(0.11, 0.16, 0.18);
-    this.legL.rotation.x = -1.35;
-    this.legR.rotation.x = -1.35;
+    this.hair.position.set(0, 0.74, 0);
+    this.armL.position.set(-0.19, 0.56, 0);
+    this.armR.position.set(0.19, 0.56, 0);
+    this.armL.rotation.set(-0.55, 0, -0.12);
+    this.armR.rotation.set(-0.55, 0, 0.12);
+    // Thighs rest on the cushion, knees meet the vertical shins, and the
+    // shins end on the footboard instead of leaving two floating horizontal legs.
+    this.legL.geometry = shared.seatedThigh;
+    this.legR.geometry = shared.seatedThigh;
+    this.legL.position.set(-0.11, 0.03, 0.18);
+    this.legR.position.set(0.11, 0.03, 0.18);
+    this.legL.rotation.x = -Math.PI / 2;
+    this.legR.rotation.x = -Math.PI / 2;
+    for (const shin of this.seatedShins) shin.visible = true;
     if (this.skirtMesh) this.skirtMesh.position.set(0, 0.06, 0.04);
     if (this.bagMesh) this.bagMesh.position.set(0.24, 0.34, 0.02);
     this.seatYaw = 0;
@@ -203,11 +253,20 @@ export class PassengerActor {
     scene.add(this.group);
     this.torso.position.set(0, 1.02, 0);
     this.head.position.set(0, 1.47, 0);
-    this.legL.position.set(-0.09, 0.5, 0);
-    this.legR.position.set(0.09, 0.5, 0);
+    this.hair.position.set(0, 1.47, 0);
+    this.armL.position.set(-0.19, 1.27, 0);
+    this.armR.position.set(0.19, 1.27, 0);
+    this.armL.rotation.set(0, 0, 0);
+    this.armR.rotation.set(0, 0, 0);
+    this.legL.geometry = shared.leg;
+    this.legR.geometry = shared.leg;
+    this.legL.position.set(-0.09, 0.35, 0);
+    this.legR.position.set(0.09, 0.35, 0);
     this.legL.rotation.x = 0;
     this.legR.rotation.x = 0;
-    if (this.skirtMesh) this.skirtMesh.position.y = 0.74;
+    for (const shin of this.seatedShins) shin.visible = false;
+    if (this.skirtMesh) this.skirtMesh.position.set(0, 0.74, 0);
+    if (this.bagMesh) this.bagMesh.position.set(0.22, 1.0, -0.04);
     this.group.position.set(x, 0, z);
     this.group.rotation.y = yaw;
     this.walkTo(walkToX, walkToZ);
@@ -239,8 +298,11 @@ export class PassengerActor {
     this.phase += dt * 9;
     this.legL.rotation.x = Math.sin(this.phase) * 0.55;
     this.legR.rotation.x = -Math.sin(this.phase) * 0.55;
+    this.armL.rotation.x = -Math.sin(this.phase) * 0.35;
+    this.armR.rotation.x = Math.sin(this.phase) * 0.35;
     this.torso.position.y = 1.02 + Math.abs(Math.sin(this.phase)) * 0.03;
     this.head.position.y = 1.47 + Math.abs(Math.sin(this.phase)) * 0.03;
+    this.hair.position.y = this.head.position.y;
   }
 
   setVisible(visible: boolean): void {
@@ -287,9 +349,18 @@ export class PassengerActor {
     this.legR.rotation.set(0, 0, 0);
     this.torso.position.set(0, 1.02, 0);
     this.head.position.set(0, 1.47, 0);
+    this.hair.position.set(0, 1.47, 0);
+    this.armL.position.set(-0.19, 1.27, 0);
+    this.armR.position.set(0.19, 1.27, 0);
+    this.armL.rotation.set(0, 0, 0);
+    this.armR.rotation.set(0, 0, 0);
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    const world = this.options.onDispose ? this.group.getWorldPosition(new THREE.Vector3()) : null;
     this.group.removeFromParent();
+    if (world) this.options.onDispose?.(world.x, world.z);
   }
 }

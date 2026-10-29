@@ -9,7 +9,10 @@ import { MISSION } from '../core/config';
 import { Emitter } from '../core/events';
 import { clamp, clamp01 } from '../core/mathx';
 import { computeFare, type FareBreakdown } from '../economy/economy';
-import { isClearOfRoads, placeById, segmentById, type PlaceDef } from '../world/layout';
+import { placeById, type PlaceDef } from '../world/layout';
+import { isInsideDrmcCampus } from '../world/drmcGeo';
+import { PED_PATHS } from '../ai/pedestrians';
+import { nearestSafeSidewalk } from './roadside';
 import { releaseScratchCanvas } from '../world/textures';
 import { PassengerActor, archetypeById } from './actors';
 import type { MissionOffer } from './mission';
@@ -154,24 +157,17 @@ export class MissionSystem extends Emitter<MissionEvents> {
   }
 
   private safeSidewalkSpotNear(place: PlaceDef): { x: number; z: number; yaw: number } {
-    const seg = segmentById(place.segmentId);
-    if (seg) {
-      for (const side of [1, -1] as const) {
-        const sx = place.x + seg.leftX * (seg.halfWidth * 0.55 + 1.4) * side;
-        const sz = place.z + seg.leftZ * (seg.halfWidth * 0.55 + 1.4) * side;
-        if (isClearOfRoads(sx, sz, 0.35)) {
-          return { x: sx, z: sz, yaw: Math.atan2(place.x - sx, place.z - sz) };
-        }
-      }
-    }
-    return { x: place.x + 2.2, z: place.z + 1.2, yaw: 0 };
+    // Existing pedestrian paths have already been clipped away from campus.
+    // Use them for mission actors too, including DRMC-adjacent destinations.
+    return nearestSafeSidewalk(PED_PATHS, place.x, place.z) ?? { x: place.x, z: place.z, yaw: 0 };
   }
 
-  start(offer: MissionOffer): void {
+  start(offer: MissionOffer, waitingActor?: PassengerActor): void {
     this.clearPassenger();
     this.flushLeavingActors();
     this.offer = offer;
-    this.pickup = placeById(offer.pickupId) ?? null;
+    const namedPickup = placeById(offer.pickupId) ?? null;
+    this.pickup = namedPickup && offer.pickupPosition ? { ...namedPickup, ...offer.pickupPosition } : namedPickup;
     this.drop = placeById(offer.dropId) ?? null;
     this.state = 'toPickup';
     this.mood = clamp(MISSION.moodStart + archetypeById(offer.archetype).moodBias, 40, 100);
@@ -182,8 +178,8 @@ export class MissionSystem extends Emitter<MissionEvents> {
 
     if (this.pickup) {
       const waitSpot = this.safeSidewalkSpotNear(this.pickup);
-      const actor = new PassengerActor(archetypeById(offer.archetype));
-      actor.place(waitSpot.x, waitSpot.z, waitSpot.yaw);
+      const actor = waitingActor ?? new PassengerActor(archetypeById(offer.archetype));
+      if (!waitingActor) actor.place(waitSpot.x, waitSpot.z, waitSpot.yaw);
       this.host.scene.add(actor.group);
       this.passenger = actor;
       this.setMarker(this.pickup, 'pickup');
@@ -208,6 +204,13 @@ export class MissionSystem extends Emitter<MissionEvents> {
     this.sprite.material.map = kind === 'pickup' ? this.pickupTexture : this.dropTexture;
     this.sprite.material.needsUpdate = true;
     this.markerGroup.visible = true;
+  }
+
+  /** Let a declined roadside caller leave on the sidewalk, with bounded cleanup. */
+  dismissWaitingActor(actor: PassengerActor, x: number, z: number): void {
+    if (this.leavingActors.length >= 2) this.leavingActors.shift()!.actor.dispose();
+    actor.walkTo(x, z);
+    this.leavingActors.push({ actor, ttl: 4.5 });
   }
 
   private flushLeavingActors(): void {
@@ -300,8 +303,10 @@ export class MissionSystem extends Emitter<MissionEvents> {
       if (dist < MISSION.acceptRadius && Math.abs(speed) < MISSION.pickupStopSpeed) {
         this.state = 'boarding';
         this.boardingTimer = 0;
-        const targetX = px + 0.9;
-        const targetZ = pz;
+        // Walk to the actual seat anchor instead of a world-axis offset.
+        const seat = this.host.seatAnchor.getWorldPosition(this.markerWorldOut);
+        const targetX = seat.x;
+        const targetZ = seat.z;
         this.passenger?.walkTo(targetX, targetZ, () => {
           if (!this.passenger) return;
           this.passenger.seat(this.host.seatAnchor);
@@ -319,7 +324,9 @@ export class MissionSystem extends Emitter<MissionEvents> {
       }
     } else if (this.state === 'boarding') {
       this.boardingTimer += dt;
-      if (this.boardingTimer > 3.8) {
+      // Roadside passengers reach the seat by walking; do not teleport them
+      // after the legacy timeout. Controls are held until boarding completes.
+      if (this.boardingTimer > 3.8 && this.offer?.agreedFare === undefined) {
         this.passenger?.seat(this.host.seatAnchor);
         this.state = 'toDropoff';
         this.boardedAt = this.elapsed;
@@ -330,7 +337,7 @@ export class MissionSystem extends Emitter<MissionEvents> {
     } else if (this.state === 'toDropoff' && this.drop) {
       const dist = Math.hypot(px - this.drop.x, pz - this.drop.z);
       this.distance = Math.max(0, this.offer?.distance ?? this.distance);
-      if (dist < MISSION.dropRadius && Math.abs(speed) < MISSION.dropStopSpeed) {
+      if (dist < MISSION.dropRadius && Math.abs(speed) < MISSION.dropStopSpeed && !isInsideDrmcCampus(px, pz, 1.6)) {
         this.completeRide();
       }
       this.poseTimer += dt;
@@ -364,6 +371,13 @@ export class MissionSystem extends Emitter<MissionEvents> {
       fareMultiplier: this.offer.multiplier,
       trafficBonus,
     });
+    // A roadside agreement is an actual flat fare, not an estimate that can
+    // silently shrink after bargaining. Normal duty fare rules are unchanged.
+    if (this.offer.agreedFare !== undefined) {
+      fare.base = this.offer.agreedFare;
+      fare.distance = fare.time = fare.smooth = fare.tip = fare.traffic = fare.damage = 0;
+      fare.total = this.offer.agreedFare;
+    }
     const offer = this.offer;
     const mood = this.mood;
     const distance = this.offer.distance;
@@ -372,15 +386,10 @@ export class MissionSystem extends Emitter<MissionEvents> {
     if (this.passenger) {
       const actor = this.passenger;
       const safeExit = this.safeSidewalkSpotNear(this.drop);
-      actor.leave(
-        this.host.scene,
-        safeExit.x,
-        safeExit.z,
-        safeExit.yaw,
-        safeExit.x + 2.4,
-        safeExit.z - 1.8,
-      );
-      this.leavingActors.push({ actor, ttl: 4.5 });
+      const seat = this.host.seatAnchor.getWorldPosition(this.markerWorldOut);
+      const walkDistance = Math.hypot(safeExit.x - seat.x, safeExit.z - seat.z);
+      actor.leave(this.host.scene, seat.x, seat.z, safeExit.yaw, safeExit.x, safeExit.z);
+      this.leavingActors.push({ actor, ttl: Math.min(14, Math.max(4.5, walkDistance / 1.35 + 1)) });
       this.passenger = null;
     }
     this.emit('dialogue', {

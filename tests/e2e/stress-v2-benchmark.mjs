@@ -54,7 +54,7 @@ async function waitFor(url, ms = 30000) {
 
 async function main() {
   fs.mkdirSync(artifacts, { recursive: true });
-  const server = spawn('npx', ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
+  const server = spawn(path.join(root, 'node_modules/.bin/vite'), ['preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
     cwd: root,
     stdio: 'ignore',
   });
@@ -98,7 +98,14 @@ async function main() {
       window.__banglarTesla.debugSetQuality('balanced');
       window.__banglarTesla.debugStartMode('free');
     });
-    await page.waitForFunction('window.__banglarTesla.debugSnapshot().audioAssets === 26', { timeout: 15000 });
+    // Asset counts change as new sounds are added. Wait for every asset the
+    // running build expects, rather than silently profiling a partly loaded mix
+    // or timing out forever on an obsolete hard-coded count.
+    await page.waitForFunction(() => {
+      const game = window.__banglarTesla;
+      return game.audio.expectedAssetCount > 0 &&
+        game.debugSnapshot().audioAssets === game.audio.expectedAssetCount;
+    }, { timeout: 45000 });
 
     async function profileScenario(name, setupFnStr) {
       await cdp.send('HeapProfiler.collectGarbage').catch(() => {});

@@ -3,8 +3,8 @@
  *  1. Bangla voice gate: all 10 Blacklist intros play sequenced manifest lines
  *     (intro + taunt + distinct sting), with subtitles + skip cleanup; manifest
  *     WAV assets resolve with HTTP 200 from the built bundle.
- *  2. Four-rickshaw race: 3 distinct AI rivals + player, standings 1/4..4/4,
- *     winner photo (victory only) with captured scrapbook thumbnail + records.
+ *  2. Ranked boss 1v1 and optional four-rickshaw race, plus victory-only
+ *     winner photo, scrapbook thumbnail and records (checkpoint fixtures).
  *  3. Five-state weather: sunny/overcast/rain/windy/storm settable, lightning
  *     respects low-flash, wind drives litter strength, no page errors.
  *  4. DRMC: campus + gate present, route guidance reaches the gate from two
@@ -49,7 +49,7 @@ async function waitFor(url, ms = 30000) {
 
 async function main() {
   fs.mkdirSync(artifacts, { recursive: true });
-  const server = spawn('npx', ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
+  const server = spawn(path.join(root, 'node_modules/.bin/vite'), ['preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
     cwd: root,
     stdio: 'ignore',
   });
@@ -139,6 +139,7 @@ async function main() {
       g.state.markBlacklistIntroSeen();
       const out = [];
       for (let rank = 10; rank >= 1; rank--) {
+        const beforeSpeech = g.debugSnapshot().speechCount;
         g.playRivalIntro(rank, false);
         const playing = g.debugSnapshot().cinematicPlaying === true;
         const sting = g.cinematic.activeStingId;
@@ -150,13 +151,13 @@ async function main() {
         const overlay = !document.getElementById('cinematic-overlay')?.classList.contains('hidden');
         g.skipBlacklistIntro();
         const cleaned = g.debugSnapshot().cinematicPlaying === false;
-        out.push({ rank, playing, stingActive: !!sting, overlay, spoke: spoke > 0, cleaned });
+        out.push({ rank, playing, stingActive: !!sting, overlay, spoke: spoke > beforeSpeech, cleaned });
       }
       return out;
     });
     const introsOk = introResults.every((r) => r.playing && r.stingActive && r.overlay && r.spoke && r.cleaned);
     check(
-      'All 10 Blacklist rival intros play voice + distinct sting + subtitle and skip cleanly',
+      'All 10 Blacklist intros request speech and a sting, show the overlay and skip cleanly (not listening QA)',
       introsOk,
       JSON.stringify(introResults.slice(0, 3)),
     );
@@ -242,11 +243,17 @@ async function main() {
     );
 
     // ------------------------------------------------------------------
-    // 5. Four-rickshaw race + winner photo + scrapbook records + thumbnail
+    // 5. Optional four-racer and ranked 1v1 + winner photo (teleport fixtures)
     // ------------------------------------------------------------------
     const raceCheck = await page.evaluate(() => {
       const g = window.__banglarTesla;
       g.debugStartMode('free');
+      g.startRivalEvent('ev_duel_ring');
+      const optional = g.raceSystem.getAiRacersSnapshot();
+      const optionalParticipants = g.raceSystem.participantCount;
+      g.exitRaceToFreeRide();
+      // Seed the prerequisite fixture; separate repair smoke exercises real callbacks.
+      g.state.progress.blacklistTasks = ['10:race', '10:fare'];
       g.startRivalEvent('bl_boss_10');
       const ai = g.raceSystem.getAiRacersSnapshot();
       g.debugStepSim(3.2);
@@ -265,8 +272,10 @@ async function main() {
       const thumbOk = photoRecords.some((r) => typeof r.photoThumb === 'string' && r.photoThumb.startsWith('data:image/jpeg'));
       return {
         aiCount: ai.length,
-        distinctIds: new Set(ai.map((r) => r.id)).size,
-        distinctTendencies: new Set(ai.map((r) => r.tendency)).size,
+        rivalId: ai[0]?.id,
+        optionalParticipants,
+        optionalIds: new Set(optional.map((r) => r.id)).size,
+        optionalTendencies: new Set(optional.map((r) => r.tendency)).size,
         allDriversVisible: ai.every((r) => r.hasVisibleDriver),
         sheetMode,
         photoWindow,
@@ -278,14 +287,16 @@ async function main() {
       };
     });
     check(
-      'Four-rickshaw race: 3 distinct visible rivals + standings + victory-only winner photo with scrapbook thumbnail',
-      raceCheck.aiCount === 3 &&
-        raceCheck.distinctIds === 3 &&
-        raceCheck.distinctTendencies === 3 &&
+      'Ranked 1v1 and optional four-racer formats; victory photo and scrapbook thumbnail (teleport fixtures)',
+      raceCheck.aiCount === 1 &&
+        raceCheck.rivalId === 'bl_10_raju' &&
+        raceCheck.optionalParticipants === 4 &&
+        raceCheck.optionalIds === 3 &&
+        raceCheck.optionalTendencies === 3 &&
         raceCheck.allDriversVisible &&
         raceCheck.sheetMode === 'winner-photo' &&
         raceCheck.photoWindow === true &&
-        raceCheck.standingsPills === 4 &&
+        raceCheck.standingsPills === 2 &&
         raceCheck.hasWinRecord &&
         raceCheck.topSpeed > 50 &&
         raceCheck.thumbOk,
@@ -389,7 +400,7 @@ async function main() {
     // Screenshot evidence for the QA record
     await page.evaluate(() => {
       const g = window.__banglarTesla;
-      g.startRivalEvent('bl_boss_07');
+      g.startRivalEvent('ev_duel_ring');
       g.debugStepSim(3.1);
     });
     await page.screenshot({ path: path.join(artifacts, 'vnext-4race-grid.png') });

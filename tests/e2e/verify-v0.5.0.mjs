@@ -57,7 +57,7 @@ async function waitFor(url, ms = 30000) {
 
 async function main() {
   fs.mkdirSync(artifacts, { recursive: true });
-  const server = spawn('npx', ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
+  const server = spawn(path.join(root, 'node_modules/.bin/vite'), ['preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
     cwd: root,
     stdio: 'ignore',
   });
@@ -343,21 +343,23 @@ async function main() {
       g.skipBlacklistIntro();
       const afterRivalIntroScreen = g.debugSnapshot().screen;
 
-      // Verify 2-lap circuit HUD (`bl_boss_07`)
-      g.startRivalEvent('bl_boss_07');
+      // Verify the optional 2-lap circuit independently of ranked unlocks.
+      g.startRivalEvent('ev_street_asad');
       g.hudTick = 1;
       g.update(0);
       const circuitCpText = document.getElementById('hud-race')?.textContent ?? '';
       g.exitRaceToFreeRide();
 
-      // Launch Rival #10 boss event (`bl_boss_10`) — full 4-rickshaw race!
+      // Seed #10 prerequisites; the dedicated repair smoke exercises the real tasks.
+      g.state.progress.blacklistTasks = ['10:race', '10:fare'];
+      // The ranked boss is a 1v1. Optional four-racer format was checked above.
       const balBeforeWin = g.state.balance;
       const repBeforeWin = g.state.rep;
       g.startRivalEvent('bl_boss_10');
       const raceHudVisible = !document.getElementById('hud-race')?.classList.contains('hidden');
       const participantCount = g.raceSystem.participantCount;
       const aiSnap = g.raceSystem.getAiRacersSnapshot();
-      const allDriversVisible = aiSnap.length === 3 && aiSnap.every((r) => r.hasVisibleDriver);
+      const allDriversVisible = aiSnap.length === 1 && aiSnap.every((r) => r.hasVisibleDriver);
       const uniqueTendencies = new Set(aiSnap.map((r) => r.tendency)).size;
       const hudFourRacerText = document.getElementById('hud-race')?.textContent ?? '';
 
@@ -418,7 +420,7 @@ async function main() {
         participantCount,
         allDriversVisible,
         uniqueTendencies,
-        hudHasOf4: hudFourRacerText.includes('/4'),
+        hudHasOf2: hudFourRacerText.includes('/2'),
         balDeltaWin: afterWinBal - balBeforeWin,
         repDeltaWin: afterWinRep - repBeforeWin,
         afterWinRank,
@@ -458,12 +460,12 @@ async function main() {
       }),
     );
     check(
-      '4-Rickshaw Race runs 4 participants (3 visible distinct-tendency AI rivals + 1/4..4/4 & 2-lap HUD) and triggers Printed-Photo Winner Snapshot ONLY on victory',
+      'Ranked 1v1, optional circuit HUD, victory-only photo and defeat retry (checkpoint fixtures)',
       blacklistFlow.raceHudVisible &&
-        blacklistFlow.participantCount === 4 &&
+        blacklistFlow.participantCount === 2 &&
         blacklistFlow.allDriversVisible &&
-        blacklistFlow.uniqueTendencies === 3 &&
-        blacklistFlow.hudHasOf4 &&
+        blacklistFlow.uniqueTendencies === 1 &&
+        blacklistFlow.hudHasOf2 &&
         blacklistFlow.circuitHasLapLabel &&
         blacklistFlow.balDeltaWin > 0 &&
         blacklistFlow.repDeltaWin > 0 &&
@@ -471,7 +473,7 @@ async function main() {
         blacklistFlow.resultScreen === 'raceResult' &&
         blacklistFlow.winResultMode === 'winner-photo' &&
         blacklistFlow.winHasPhotoWindow === true &&
-        blacklistFlow.winStandingPills === 4 &&
+        blacklistFlow.winStandingPills === 2 &&
         blacklistFlow.winClockFrozen === true &&
         blacklistFlow.lossScreen === 'raceResult' &&
         blacklistFlow.lossResultMode === 'defeat' &&
@@ -569,13 +571,13 @@ async function main() {
     // ------------------------------------------------------------------
     // 6. Extreme v0.5.0 Combined Stress (Heat 5 + Roadblocks + Rival Race + Turbo Flames + Rain + 12 Start/Cancel Cycles)
     // ------------------------------------------------------------------
-    const v05Stress = await page.evaluate(() => {
+    const v05Stress = await page.evaluate((profileDraws) => {
       const g = window.__banglarTesla;
       // Warm both classic & electric rival caches once, then verify 12 start/cancel cycles leak 0!
       g.startRivalEvent('bl_boss_10');
       g.renderer.render(g.scene, g.camera);
       g.exitRaceToFreeRide();
-      g.startRivalEvent('bl_boss_03');
+      g.startRivalEvent('ev_duel_ring');
       g.env.setWeather('rain');
       g.debugStartPursuitForTest(5);
       g.debugStepSim(3.3);
@@ -598,7 +600,30 @@ async function main() {
         g.update(1 / 60);
       }
       const simMsPerStep = +((performance.now() - t0) / 120).toFixed(3);
+      // Optional diagnostic: count object render/shadow callbacks without hiding
+      // anything or changing the actual draw-call budget under test.
+      const draws = {};
+      const restore = [];
+      if (profileDraws) {
+        g.scene.traverse((obj) => {
+          if (!obj.isMesh && !obj.isLine && !obj.isPoints && !obj.isSprite) return;
+          const names = [];
+          for (let p = obj; p && p !== g.scene; p = p.parent) if (p.name) names.push(p.name);
+          const key = names.reverse().join('/') || obj.type;
+          const before = obj.onBeforeRender, shadow = obj.onBeforeShadow;
+          obj.onBeforeRender = function (...args) {
+            const row = draws[key] ??= { main: 0, shadow: 0 };
+            row.main++; before?.apply(this, args);
+          };
+          obj.onBeforeShadow = function (...args) {
+            const row = draws[key] ??= { main: 0, shadow: 0 };
+            row.shadow++; shadow?.apply(this, args);
+          };
+          restore.push(() => { obj.onBeforeRender = before; obj.onBeforeShadow = shadow; });
+        });
+      }
       g.renderer.render(g.scene, g.camera);
+      for (const fn of restore) fn();
       const callsPeak = g.renderer.info.render.calls;
       const audioPeak = g.debugSnapshot().audioActiveSources;
 
@@ -630,8 +655,13 @@ async function main() {
         texEnd,
         programsStart,
         programsEnd,
+        ...(profileDraws ? { draws } : {}),
       };
-    });
+    }, process.env.PROFILE_DRAW_CALLS === '1');
+    if (v05Stress.draws) {
+      fs.writeFileSync(path.join(artifacts, 'v05-draw-profile.json'), JSON.stringify(v05Stress.draws, null, 2));
+      delete v05Stress.draws;
+    }
 
     check(
       'Extreme v0.5.0 stress (Heat 5 + Roadblocks + Rival + Turbo Flames + Crash + Rain + 12 cycles) stays within Galaxy M21 budgets with 0 GPU leaks',

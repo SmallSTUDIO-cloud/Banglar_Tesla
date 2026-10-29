@@ -41,7 +41,7 @@ describe('DRMC map accuracy gate (vNext §1)', () => {
     }
   });
 
-  it('pins the campus SW boundary to the game Shahjahan chain (the verified boundary road)', () => {
+  it('keeps the approximated western wall near the Shahjahan chain', () => {
     const chain = [segmentById('shahjahan_2')!, segmentById('shahjahan_3')!];
     for (const w of DRMC_SW_WALL) {
       // Every wall anchor sits within 16 m of the shahjahan chain centreline
@@ -56,7 +56,7 @@ describe('DRMC map accuracy gate (vNext §1)', () => {
     }
   });
 
-  it('places the gate on the campus boundary near the verified OSM gate point', () => {
+  it('places the gate on the campus boundary near the unverified candidate point', () => {
     const report = drmcOverlayReport();
     // The fitted OSM gate point lands within 14 m of the in-game wall line
     expect(report.gateToWallDistance).toBeLessThan(14);
@@ -67,8 +67,9 @@ describe('DRMC map accuracy gate (vNext §1)', () => {
   it('excludes buildings/trees/lamps from campus grounds while keeping roads clear', () => {
     expect(isDrmcKeepClear(100, -120)).toBe(true); // deep inside campus
     expect(isDrmcKeepClear(0, 0)).toBe(false); // city centre, far away
-    // Road corridor on shahjahan_2 must NOT be blocked by the keep-clear rule
-    expect(isDrmcKeepClear(31.5, -56)).toBe(false);
+    // The public road itself is not blocked; the keep-clear rule prevents a
+    // prop or building from being constructed across the gate apron.
+    expect(isDrmcKeepClear(31.5, -56)).toBe(true);
     // Campus corners are inside
     for (const c of DRMC_CAMPUS) {
       expect(isInsideDrmcCampus(c.x, c.z, 0.5)).toBe(true);
@@ -93,7 +94,7 @@ describe('DRMC map accuracy gate (vNext §1)', () => {
     }
   });
 
-  it('routes along connected roads to the verified public entrance from multiple districts', () => {
+  it('routes along connected roads toward the public approach from multiple districts', () => {
     const drmc = placeById('drmc');
     expect(drmc, 'DRMC place marker must exist').toBeTruthy();
     const fromWest = findRoute(-126, -136, drmc!.x, drmc!.z);
