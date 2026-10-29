@@ -2376,7 +2376,14 @@ export class AppUI {
     body.append(h('h3', { text: t('settings.graphicsDisplay') }));
     body.append(slider({
       label: t('settings.renderScale'), value: s.renderScale, min: 0.6, max: 1.2, step: 0.05,
-      display: (v) => `${Math.round(v * 100)}%`, onInput: (v) => patch({ renderScale: v }, false),
+      display: (v) => `${Math.round(v * 100)}%`, onInput: (v) => {
+        patch({ renderScale: v }, false);
+        // Do not rebuild the sheet during an active pointer drag; still reflect Custom immediately.
+        const qualityField = [...(this.graphicsEl?.querySelectorAll('.field') ?? [])]
+          .find((field) => field.querySelector('label')?.textContent === t('settings.quality'));
+        qualityField?.querySelectorAll('button').forEach((btn) =>
+          btn.classList.toggle('on', btn.textContent === t('settings.graphicsCustom')));
+      },
     }));
     body.append(segmented<'30' | '60'>({
       label: t('settings.fps'), value: s.fpsTarget === 30 ? '30' : '60',
@@ -2394,9 +2401,9 @@ export class AppUI {
     body.append(segmented<Settings['rainDensity']>({
       label: t('settings.rainDensity'), value: s.rainDensity,
       options: [
-        { value: 'low', label: t('quality.low') },
-        { value: 'medium', label: t('quality.balanced') },
-        { value: 'high', label: t('quality.high') },
+        { value: 'low', label: t('settings.levelLow') },
+        { value: 'medium', label: t('settings.levelMedium') },
+        { value: 'high', label: t('settings.levelHigh') },
       ],
       onChange: (v) => patch({ rainDensity: v }),
     }));
