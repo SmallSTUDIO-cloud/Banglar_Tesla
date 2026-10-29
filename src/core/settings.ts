@@ -3,7 +3,7 @@
  * Persisted separately from progress so that a "new game" keeps preferences.
  */
 
-import { CAMERA_MODES, type CameraMode, type QualityPreset } from './config';
+import { CAMERA_MODES, type CameraMode, type QualityPreset, type WeatherKind } from './config';
 import { clamp } from './mathx';
 import type { Locale } from './i18n';
 
@@ -16,6 +16,7 @@ export interface StorageLike {
 export interface Settings {
   language: Locale;
   quality: QualityPreset;
+  weatherPreference: WeatherKind | 'auto';
   renderScale: number;
   shadows: boolean;
   fpsTarget: 30 | 60;
@@ -51,6 +52,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   language: 'bn',
   quality: 'balanced',
+  weatherPreference: 'auto',
   renderScale: 1,
   shadows: true,
   fpsTarget: 60,
@@ -119,6 +121,9 @@ export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS
     raw.quality === 'pc_high'
   ) {
     out.quality = raw.quality;
+  }
+  if (raw.weatherPreference === 'auto' || ['sunny', 'overcast', 'rain', 'windy', 'storm'].includes(String(raw.weatherPreference))) {
+    out.weatherPreference = raw.weatherPreference as Settings['weatherPreference'];
   }
   if (raw.radioMode === 'both' || raw.radioMode === 'music' || raw.radioMode === 'street') {
     out.radioMode = raw.radioMode;

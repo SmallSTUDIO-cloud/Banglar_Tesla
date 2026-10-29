@@ -598,12 +598,34 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   }
 
   // ---------------- 4. DENSE STREET-ALIGNED MOHAMMADPUR BUILDINGS (Section 9)
-  interface PlacedCircle {
+  interface PlacedFootprint {
     x: number;
     z: number;
-    r: number;
+    halfX: number;
+    halfZ: number;
+    yaw: number;
+    radius: number;
   }
-  const placedBuildings: PlacedCircle[] = [];
+  const placedBuildings: PlacedFootprint[] = [];
+
+  // Bounding circles used to reject neighboring angled facades with large
+  // empty wedges between their real footprints. A SAT test allows close,
+  // staggered street frontage without merging buildings or narrowing roads.
+  const footprintSeparated = (a: PlacedFootprint, b: PlacedFootprint, gap: number): boolean => {
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    if (dx * dx + dz * dz >= (a.radius + b.radius + gap) ** 2) return true;
+    const ac = Math.cos(a.yaw), as = Math.sin(a.yaw);
+    const bc = Math.cos(b.yaw), bs = Math.sin(b.yaw);
+    const axes: [number, number][] = [[ac, -as], [as, ac], [bc, -bs], [bs, bc]];
+    for (const [ux, uz] of axes) {
+      const projectedDistance = Math.abs(dx * ux + dz * uz);
+      const ra = a.halfX * Math.abs(ux * ac - uz * as) + a.halfZ * Math.abs(ux * as + uz * ac);
+      const rb = b.halfX * Math.abs(ux * bc - uz * bs) + b.halfZ * Math.abs(ux * bs + uz * bc);
+      if (projectedDistance >= ra + rb + gap) return true;
+    }
+    return false;
+  };
 
   const canPlaceBuilding = (
     cx: number,
@@ -612,17 +634,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     depth: number,
     yaw: number,
   ): boolean => {
-    // Reject the whole footprint, not only its centre, near campus walls/aprons.
     if (isDrmcKeepClear(cx, cz, Math.hypot(width, depth) * 0.5 + 0.8)) return false;
     if (!isFootprintClearOfCorridor(cx, cz, width, depth, yaw, 0.55)) return false;
-    const rad = Math.hypot(width * 0.5, depth * 0.5) * 0.84;
-    for (let i = 0; i < placedBuildings.length; i++) {
-      const pb = placedBuildings[i];
-      const dx = cx - pb.x;
-      const dz = cz - pb.z;
-      if (dx * dx + dz * dz < (rad + pb.r) * (rad + pb.r)) return false;
-    }
-    return true;
+    const candidate: PlacedFootprint = {
+      x: cx, z: cz, halfX: width / 2, halfZ: depth / 2, yaw,
+      radius: Math.hypot(width, depth) / 2,
+    };
+    return placedBuildings.every((other) => footprintSeparated(candidate, other, 1.15));
   };
 
   let signCursor = 0;
@@ -642,9 +660,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
         if (canPlaceBuilding(cx, cz, bDepth, bWidth, yaw)) {
           placedBuildings.push({
-            x: cx,
-            z: cz,
-            r: Math.hypot(bWidth * 0.5, bDepth * 0.5) * 0.82,
+            x: cx, z: cz, halfX: bDepth / 2, halfZ: bWidth / 2, yaw,
+            radius: Math.hypot(bDepth, bWidth) / 2,
           });
 
           const floors =

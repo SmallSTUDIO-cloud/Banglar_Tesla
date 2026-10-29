@@ -119,3 +119,14 @@ describe('race formats and route completion', () => {
     expect(bad).toEqual([]);
   }, 30000);
 });
+
+it('approaches the #10 mid-block tea finish directly without routing past it and doubling back', () => {
+  const course = buildRaceCourse(BLACKLIST_RIVALS[0].bossEvent);
+  const route = buildAiWaypointsForTendency(course, course.gridSlots[0], 'shortcut_seeker');
+  const lastGateIndex = course.allCheckpoints.length - 1;
+  const leg = route.filter((point) => point.targetGateIndex === lastGateIndex);
+  const finish = course.allCheckpoints[lastGateIndex];
+  expect(leg.length).toBe(1);
+  expect(leg[0].x).toBeCloseTo(finish.x, 4);
+  expect(leg[0].z).toBeCloseTo(finish.z, 4);
+});
