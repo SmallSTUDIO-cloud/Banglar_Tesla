@@ -188,7 +188,7 @@ export const DRMC_SIDE_GATE_ROAD_POINT: GamePoint = { x: 107.85, z: -116.45 };
 
 export const DRMC_MAIN_BLOCK: GamePoint = { x: 48, z: -112 };
 export const DRMC_SECOND_BLOCK: GamePoint = { x: 47, z: -147 };
-export const DRMC_SPORTS_GROUND: GamePoint = { x: 80, z: -105 };
+export const DRMC_SPORTS_GROUND: GamePoint = { x: 74, z: -105 };
 
 /** True perimeter, including the western road bend. Keep a shared copy for
  * per-frame pursuit checks; callers requesting the polygon receive their own array. */

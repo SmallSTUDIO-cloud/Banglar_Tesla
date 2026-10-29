@@ -3,7 +3,7 @@ import { getLaneGraph } from '../../src/ai/routes';
 import { PED_PATHS } from '../../src/ai/pedestrians';
 import { EventDirector, type EventContext } from '../../src/events/eventDirector';
 import { buildDrmcCampus } from '../../src/world/drmc';
-import { crossesDrmcCampus, DRMC_GATE, DRMC_GATE_ROAD_POINT, DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT, isInsideDrmcCampus } from '../../src/world/drmcGeo';
+import { crossesDrmcCampus, DRMC_GATE, DRMC_GATE_ROAD_POINT, DRMC_SPORTS_GROUND, DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT, isInsideDrmcCampus } from '../../src/world/drmcGeo';
 import { findRoute, placeById, ROAD_SEGMENTS } from '../../src/world/layout';
 import type { Collider } from '../../src/world/city';
 
@@ -68,6 +68,23 @@ describe('DRMC road integration and ambient exclusion', () => {
         const dx = gate.x - road.x, dz = gate.z - road.z, len = Math.hypot(dx, dz);
         const x = gate.x + dx / len * n, z = gate.z + dz / len * n;
         expect(campus.colliders.filter((c) => blocksPoint(c, x, z, 0.6)), `${placeId} at ${n}`).toEqual([]);
+      }
+    }
+  });
+  it('keeps the side-gate field-edge lane off the marked playing surface', () => {
+    const edge = DRMC_SPORTS_GROUND.x + 33 / 2;
+    // Both road segments share the corner at (95,-114) and run east of
+    // the football pitch; allow the 1.5-unit road half-width and a verge.
+    const gateIn = (() => {
+      const dx = DRMC_SIDE_GATE.x - DRMC_SIDE_GATE_ROAD_POINT.x;
+      const dz = DRMC_SIDE_GATE.z - DRMC_SIDE_GATE_ROAD_POINT.z;
+      const len = Math.hypot(dx, dz);
+      return { x: DRMC_SIDE_GATE.x + dx / len * 6.8, z: DRMC_SIDE_GATE.z + dz / len * 6.8 };
+    })();
+    for (const segment of [[gateIn, { x: 95, z: -114 }], [{ x: 95, z: -114 }, { x: 92, z: -91 }]] as const) {
+      for (let i = 0; i <= 20; i++) {
+        const x = segment[0].x + (segment[1].x - segment[0].x) * i / 20;
+        expect(x - 1.5, 'lane must not cut through the football pitch').toBeGreaterThanOrEqual(edge);
       }
     }
   });
