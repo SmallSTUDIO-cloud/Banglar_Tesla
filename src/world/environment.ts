@@ -91,6 +91,42 @@ export const PHASES: Record<DayPhase, PhaseConfig> = {
   },
 };
 
+/** Interpolated 24-hour light keyframes; the last key joins the first across midnight. */
+const DAY_KEYS: { minute: number; phase: DayPhase; night: number }[] = [
+  { minute: 0, phase: 'night', night: 1 },
+  { minute: 295, phase: 'night', night: 1 },
+  { minute: 450, phase: 'morning', night: 0 },
+  { minute: 750, phase: 'noon', night: 0 },
+  { minute: 1005, phase: 'golden', night: 0 },
+  { minute: 1105, phase: 'blue', night: 0.35 },
+  { minute: 1275, phase: 'night', night: 1 },
+  { minute: 1440, phase: 'night', night: 1 },
+];
+
+export function sampleDayLighting(raw: number): { cfg: PhaseConfig; night: number } {
+  const minute = ((raw % 1440) + 1440) % 1440;
+  let index = 0;
+  while (index + 2 < DAY_KEYS.length && DAY_KEYS[index + 1].minute < minute) index++;
+  const a = DAY_KEYS[index], b = DAY_KEYS[index + 1];
+  const t = clamp((minute - a.minute) / (b.minute - a.minute), 0, 1);
+  const first = PHASES[a.phase], second = PHASES[b.phase];
+  const mix = (x: number, y: number) => x + (y - x) * t;
+  const color = (x: string, y: string) => `#${new THREE.Color(x).lerp(new THREE.Color(y), t).getHexString()}`;
+  return { night: mix(a.night, b.night), cfg: {
+    zenith: color(first.zenith, second.zenith),
+    horizon: color(first.horizon, second.horizon),
+    sunColor: color(first.sunColor, second.sunColor),
+    sunIntensity: mix(first.sunIntensity, second.sunIntensity),
+    elevation: mix(first.elevation, second.elevation),
+    azimuth: mix(first.azimuth, second.azimuth),
+    ambient: mix(first.ambient, second.ambient),
+    fog: color(first.fog, second.fog),
+    fogDensity: mix(first.fogDensity, second.fogDensity),
+    lamps: mix(first.lamps, second.lamps),
+    exposure: mix(first.exposure, second.exposure),
+  } };
+}
+
 const SKY_VERT = /* glsl */ `
 varying vec3 vWorld;
 void main() {
@@ -138,6 +174,11 @@ export class EnvironmentSystem {
   private scene: THREE.Scene;
   private quality: QualitySettings;
   private phase: DayPhase = 'morning';
+  private clockMinutes: number | null = null;
+  private appliedLamps = 0;
+  private appliedNight = 0;
+  private appliedElevation = PHASES.morning.elevation;
+  private appliedAzimuth = PHASES.morning.azimuth;
   private weather: WeatherKind = 'sunny';
   private rain: THREE.Points | null = null;
   private rainMode: 'normal' | 'dynamic' = 'normal';
@@ -338,7 +379,18 @@ export class EnvironmentSystem {
     this.rebuildRain();
   }
 
-  setPhase(phase: DayPhase): void {
+  /** Explicit overrides (photo/intro/debug) use null; active clock is smoothed. */
+  setClockMinutes(minutes: number | null): void {
+    if (minutes === null || Number.isFinite(minutes)) {
+      if (minutes === null || this.clockMinutes === null || Math.abs(minutes - this.clockMinutes) >= 0.025) {
+        this.clockMinutes = minutes;
+        this.blendDirty = true;
+      }
+    }
+  }
+
+  setPhase(phase: DayPhase, overrideClock = false): void {
+    if (overrideClock) this.clockMinutes = null;
     this.phase = phase;
     this.apply();
     this.onPhaseChange?.(phase);
@@ -400,7 +452,13 @@ export class EnvironmentSystem {
   }
 
   private apply(): void {
-    const cfg = PHASES[this.phase];
+    const sampled = this.clockMinutes === null ? null : sampleDayLighting(this.clockMinutes);
+    const cfg = sampled?.cfg ?? PHASES[this.phase];
+    const nightWeight = sampled?.night ?? (this.phase === 'night' ? 1 : this.phase === 'blue' ? 0.35 : 0);
+    this.appliedNight = nightWeight;
+    this.appliedLamps = cfg.lamps;
+    this.appliedElevation = cfg.elevation;
+    this.appliedAzimuth = cfg.azimuth;
     // Blend-driven sun/sky multipliers: sunny 1.0, overcast ~0.55, rain ~0.41, storm ~0.18.
     const overcast = clamp(1 - 0.82 * this.blend.overcast, 0.14, 1.05);
     const wetFog = 1 + 0.55 * this.blend.rain + 0.2 * this.blend.overcast + 0.12 * this.blend.wind;
@@ -408,29 +466,28 @@ export class EnvironmentSystem {
     this.skyUniforms.uZenith.value.set(cfg.zenith).multiplyScalar(overcast * 0.96 + 0.04);
     this.skyUniforms.uHorizon.value.set(cfg.horizon).multiplyScalar(overcast * 0.9 + 0.1);
     this.skyUniforms.uSunColor.value.set(cfg.sunColor).multiplyScalar(overcast);
-    this.skyUniforms.uNight.value = this.phase === 'night' ? 1 : this.phase === 'blue' ? 0.4 : 0;
+    this.skyUniforms.uNight.value = nightWeight;
 
     const el = THREE.MathUtils.degToRad(cfg.elevation);
     const az = THREE.MathUtils.degToRad(cfg.azimuth);
     const dir = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)).normalize();
     this.skyUniforms.uSunDir.value.copy(dir);
 
-    this.sun.color.set(flash > 0.02 ? '#dfe9ff' : this.phase === 'night' ? '#7f9ad0' : cfg.sunColor);
+    this.sun.color.set(flash > 0.02 ? '#dfe9ff' : cfg.sunColor);
     this.sun.intensity = cfg.sunIntensity * overcast;
     // Night keeps a cool moonlight key so silhouettes never read as black cards.
-    if (this.phase === 'night') this.sun.intensity = 0.22;
+    this.sun.intensity = this.sun.intensity * (1 - nightWeight) + 0.22 * nightWeight;
     this.hemi.intensity = cfg.ambient * (this.blend.overcast > 0.35 ? 1.1 + this.blend.overcast * 0.3 : 1);
-    if (this.phase === 'night') this.hemi.intensity = 0.16;
-    if (this.phase === 'blue') this.hemi.intensity = 0.34;
+    this.hemi.intensity = this.hemi.intensity * (1 - nightWeight) + 0.16 * nightWeight;
     // Lightning: bounded sun/hemi/exposure surge (zero new lights, zero shader variants).
+    this.ambient.intensity = 0.3 - 0.22 * nightWeight;
     if (flash > 0.002) {
       this.sun.intensity += flash * 7.5;
       this.hemi.intensity += flash * 1.65;
       this.ambient.intensity += flash * 0.55;
     }
-    this.hemi.color.set(this.phase === 'night' ? '#2b3a52' : '#bcd6ee');
-    this.hemi.groundColor.set(this.phase === 'night' ? '#0f1518' : '#6b5a44');
-    this.ambient.intensity = this.phase === 'night' ? 0.08 : 0.3;
+    this.hemi.color.set('#bcd6ee').lerp(new THREE.Color('#2b3a52'), nightWeight);
+    this.hemi.groundColor.set('#6b5a44').lerp(new THREE.Color('#0f1518'), nightWeight);
 
     if (this.scene.fog instanceof THREE.FogExp2) {
       this.scene.fog.color.set(cfg.fog);
@@ -449,7 +506,7 @@ export class EnvironmentSystem {
     // Image-based ambient from the room probe is very bright; dim it at night so
     // the street actually reads as night instead of a grey overcast afternoon.
     this.scene.environmentIntensity =
-      this.phase === 'night' ? 0.1 : this.phase === 'blue' ? 0.22 : this.phase === 'golden' ? 0.42 : 0.5;
+      0.5 - 0.4 * nightWeight - Math.max(0, cfg.lamps - nightWeight * 1.6) * 0.18;
     const moonDir = this.tmpSunDir.set(
       Math.cos(el) * Math.sin(az),
       Math.max(0.22, Math.sin(el)),
@@ -518,9 +575,8 @@ export class EnvironmentSystem {
       this.apply();
     }
 
-    const cfg = PHASES[this.phase];
     const lampTarget =
-      cfg.lamps * ((this.blend.rain > 0.25 || this.blend.overcast > 0.6) && this.phase !== 'night' ? 0.62 : 1);
+      this.appliedLamps * ((this.blend.rain > 0.25 || this.blend.overcast > 0.6) ? 0.62 + 0.38 * this.appliedNight : 1);
 
     if (this.lampPositions.length > 0 && this.glowSprites.length > 0) {
       if (lampTarget <= 0.02) {
@@ -569,13 +625,13 @@ export class EnvironmentSystem {
     }
 
     // keep a little warm light on the hero vehicle after dusk
-    const dusk = this.phase === 'night' ? 1 : this.phase === 'blue' ? 0.55 : 0;
+    const dusk = this.appliedNight;
     this.playerFill.intensity = dusk * 14;
     this.playerFill.position.set(focus.x, 3.0, focus.z + 0.6);
 
     this.sun.target.position.set(focus.x, 0, focus.z);
-    const el = THREE.MathUtils.degToRad(cfg.elevation);
-    const az = THREE.MathUtils.degToRad(cfg.azimuth);
+    const el = THREE.MathUtils.degToRad(this.appliedElevation);
+    const az = THREE.MathUtils.degToRad(this.appliedAzimuth);
     this.tmpSunDir.set(Math.cos(el) * Math.sin(az), Math.max(0.22, Math.sin(el)), Math.cos(el) * Math.cos(az)).normalize();
     this.sun.position.set(focus.x, 0, focus.z).addScaledVector(this.tmpSunDir, 55);
     this.sun.target.updateMatrixWorld();

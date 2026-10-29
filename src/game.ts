@@ -257,6 +257,7 @@ export class Game implements UIBridge {
     };
     this.env.onWetnessChange = (wet) => this.city.setWetness(wet);
     this.env.onPhaseChange = (phase) => this.city.setNight(phase === 'night' || phase === 'blue');
+    this.env.setClockMinutes(this.gameTime.minutesOfDay);
     this.env.setPhase(this.gameTime.phase);
 
     this.colliderDebug = new DevColliderDebugView(this.scene);
@@ -876,6 +877,7 @@ export class Game implements UIBridge {
     this.traffic.setPlayer(this.controller.x, this.controller.z, this.controller.speed);
     this.traffic.setTimeMinutes(this.gameTime.minutesOfDay);
     this.traffic.update(dt);
+    this.peds.setTimeMinutes(this.gameTime.minutesOfDay);
     this.peds.update(dt, this.controller.x, this.controller.z, this.controller.speed, this.controller.yaw);
 
     if (this.mode === 'menu') {
@@ -894,6 +896,7 @@ export class Game implements UIBridge {
     // Advance Dynamic In-Game Clock only during active unpaused gameplay!
     this.simClockSec += dt;
     this.gameTime.update(dt);
+    if (!this.phaseLockedForDebug) this.env.setClockMinutes(this.gameTime.minutesOfDay);
     this.state.setClockMinutes(this.gameTime.minutesOfDay);
 
     const sampled = this.input.sample();
@@ -2093,7 +2096,7 @@ export class Game implements UIBridge {
     this.paused = false;
     this.ui.show(null);
     const prevPhase = this.env.getPhase();
-    this.env.setPhase('blue');
+    this.env.setPhase('blue', true);
     this.cinematic.start(
       {
         x: this.controller.x,
@@ -2103,6 +2106,7 @@ export class Game implements UIBridge {
       },
       () => {
         if (!this.phaseLockedForDebug) {
+          this.env.setClockMinutes(this.gameTime.minutesOfDay);
           this.env.setPhase(this.mode === 'menu' ? prevPhase : this.gameTime.phase);
         }
         if (this.pendingBlacklistFrom === 'hud' && this.mode !== 'menu') {
@@ -2122,7 +2126,7 @@ export class Game implements UIBridge {
     this.paused = false;
     this.ui.show(null);
     const prevPhase = this.env.getPhase();
-    this.env.setPhase('golden');
+    this.env.setPhase('golden', true);
     this.cinematic.startRivalIntro(
       rival,
       {
@@ -2133,6 +2137,7 @@ export class Game implements UIBridge {
       },
       () => {
         if (!this.phaseLockedForDebug) {
+          this.env.setClockMinutes(this.gameTime.minutesOfDay);
           this.env.setPhase(this.mode === 'menu' ? prevPhase : this.gameTime.phase);
         }
         if (launchRaceAfter) {
@@ -3207,6 +3212,7 @@ export class Game implements UIBridge {
 
   debugSetPhase(phase: DayPhase, weather: WeatherKind): void {
     this.phaseLockedForDebug = true;
+    this.env.setClockMinutes(null);
     this.env.setPhase(phase);
     this.env.setWeather(weather);
   }
@@ -3215,6 +3221,7 @@ export class Game implements UIBridge {
     this.phaseLockedForDebug = false;
     this.gameTime.setMinutes(hour24 * 60 + minute);
     this.state.setClockMinutes(this.gameTime.minutesOfDay);
+    this.env.setClockMinutes(this.gameTime.minutesOfDay);
     this.env.setPhase(this.gameTime.phase);
     this.hudTick = 1;
     this.updateHud(this.state.vehicle().kind === 'electric');
