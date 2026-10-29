@@ -218,7 +218,7 @@ export class Game implements UIBridge {
     this.weatherDirector.onWeatherChange = (w) => {
       this.env.setWeather(w);
       this.state.progress.weather = w;
-      this.ui.setRainDrops(w === 'rain' || w === 'storm');
+      this.ui.setRainDrops(this.settings.get().rainMode === 'dynamic' && (w === 'rain' || w === 'storm'));
       if (w === 'storm' && this.simClockSec - this.stormToastAt > 120) {
         this.stormToastAt = this.simClockSec;
         this.speakLine('weather.storm.1', 3);
@@ -1360,7 +1360,7 @@ export class Game implements UIBridge {
     this.weatherDirector.setWeatherImmediate(weather);
     this.env.setWeather(weather);
     const wNow = this.env.getWeather();
-    this.ui.setRainDrops(wNow === 'rain' || wNow === 'storm');
+    this.ui.setRainDrops(this.settings.get().rainMode === 'dynamic' && (wNow === 'rain' || wNow === 'storm'));
     this.state.progress.dayPhase = phase;
     this.state.progress.weather = weather;
   }
@@ -2336,7 +2336,7 @@ export class Game implements UIBridge {
       this.weatherDirector.setWeatherImmediate(ev.weatherOverride);
       this.env.setWeather(ev.weatherOverride);
       const wEv = this.env.getWeather();
-      this.ui.setRainDrops(wEv === 'rain' || wEv === 'storm');
+      this.ui.setRainDrops(this.settings.get().rainMode === 'dynamic' && (wEv === 'rain' || wEv === 'storm'));
     }
 
     const grid = this.raceSystem.startEvent(ev, rival, this.controller.hits);
@@ -2925,6 +2925,8 @@ export class Game implements UIBridge {
     }
     this.renderer.shadowMap.enabled = s.shadows && quality.shadows;
     this.env.setQuality({ ...quality, shadows: s.shadows && quality.shadows });
+    this.env.setRainGraphics(s.rainMode, s.rainDensity, s.wetRoad, s.lightningEffects);
+    this.ui.setRainDrops(s.rainMode === 'dynamic' && ['rain', 'storm'].includes(this.env.getWeather()));
     this.traffic.setQuality(quality);
     this.peds.setQuality(quality);
     this.audio.setVolumes({

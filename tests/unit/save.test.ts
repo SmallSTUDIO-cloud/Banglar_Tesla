@@ -148,6 +148,27 @@ describe('settings', () => {
     expect(new SettingsStore(storage).get().weatherPreference).toBe('auto');
   });
 
+  it('migrates old quality and rejects invalid graphics fields without changing weather/audio', () => {
+    storage.setItem('banglar-tesla.settings.v1', JSON.stringify({ quality: 'high', weatherPreference: 'storm', master: 0.2 }));
+    const old = new SettingsStore(storage);
+    expect(old.get().graphicsProfile).toBe('high');
+    expect(old.get().rainMode).toBe('normal');
+    old.set({ graphicsProfile: 'custom', rainMode: 'dynamic', rainDensity: 'high', wetRoad: false });
+    const reloaded = new SettingsStore(storage);
+    expect(reloaded.get().graphicsProfile).toBe('custom');
+    expect(reloaded.get().rainMode).toBe('dynamic');
+    expect(reloaded.get().rainDensity).toBe('high');
+    expect(reloaded.get().wetRoad).toBe(false);
+    expect(reloaded.get().weatherPreference).toBe('storm');
+    expect(reloaded.get().master).toBe(0.2);
+    storage.setItem('banglar-tesla.settings.v1', JSON.stringify({ graphicsProfile: 'ultra', rainMode: 'wet', rainDensity: null, renderScale: NaN }));
+    const invalid = new SettingsStore(storage).get();
+    expect(invalid.graphicsProfile).toBe('balanced');
+    expect(invalid.rainMode).toBe('normal');
+    expect(invalid.rainDensity).toBe('medium');
+    expect(Number.isFinite(invalid.renderScale)).toBe(true);
+  });
+
   it('clamps out-of-range values', () => {
     const store = new SettingsStore(storage);
     store.set({ music: 5, renderScale: -2, deadzone: 99 });

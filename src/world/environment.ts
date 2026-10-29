@@ -140,6 +140,10 @@ export class EnvironmentSystem {
   private phase: DayPhase = 'morning';
   private weather: WeatherKind = 'sunny';
   private rain: THREE.Points | null = null;
+  private rainMode: 'normal' | 'dynamic' = 'normal';
+  private rainDensity: 'low' | 'medium' | 'high' = 'medium';
+  private wetRoadEnabled = true;
+  private lightningEnabled = true;
   private rainVel: Float32Array = new Float32Array(0);
   private rainDrops: Float32Array = new Float32Array(0);
   private rainGeo: THREE.BufferGeometry | null = null;
@@ -230,7 +234,7 @@ export class EnvironmentSystem {
   }
 
   private initRainPool(): void {
-    const maxDrops = 420;
+    const maxDrops = 700;
     const positions = new Float32Array(maxDrops * 6);
     this.rainDrops = new Float32Array(maxDrops * 3);
     this.rainVel = new Float32Array(maxDrops);
@@ -303,6 +307,14 @@ export class EnvironmentSystem {
     }
   }
 
+  setRainGraphics(mode: 'normal' | 'dynamic', density: 'low' | 'medium' | 'high', wetRoad: boolean, lightning: boolean): void {
+    this.rainMode = mode;
+    this.rainDensity = density;
+    this.wetRoadEnabled = wetRoad;
+    this.lightningEnabled = lightning;
+    this.rebuildRain();
+  }
+
   setQuality(quality: QualitySettings): void {
     this.quality = quality;
     const prevSize = this.sun.shadow.mapSize.x;
@@ -359,7 +371,7 @@ export class EnvironmentSystem {
 
   /** Bounded lightning strike: brief world/sky illumination WITHOUT new lights. */
   strike(intensity: number, flashAllowed: boolean): void {
-    this.lightningFlash = (flashAllowed ? 0.62 : 0.13) * clamp(intensity, 0, 1);
+    this.lightningFlash = this.lightningEnabled ? (flashAllowed ? 0.62 : 0.13) * clamp(intensity, 0, 1) : 0;
     this.applyAccum = 1; // force immediate visual response
     this.blendDirty = true;
     this.onLightningFlash?.(this.lightningFlash, flashAllowed);
@@ -463,7 +475,8 @@ export class EnvironmentSystem {
     const maxDrops = this.rainVel.length;
     const count = Math.min(
       maxDrops,
-      Math.max(60, Math.round(this.quality.rainParticles * clamp(0.5 + rainAmt * 0.7, 0.5, 1.3))),
+      Math.max(60, Math.round(this.quality.rainParticles * (this.rainDensity === 'low' ? 0.55 : this.rainDensity === 'high' ? 1.25 : 1) *
+          (this.rainMode === 'dynamic' ? 1.2 : 0.8) * clamp(0.5 + rainAmt * 0.7, 0.5, 1.3))),
     );
     this.activeRainDrops = count;
     this.rainGeo.setDrawRange(0, count * 2);
@@ -491,7 +504,7 @@ export class EnvironmentSystem {
 
   update(dt: number, focus: THREE.Vector3): void {
     const previousWet = this.wetness;
-    this.wetness = damp(this.wetness, this.targetWetness, 0.8, dt);
+    this.wetness = damp(this.wetness, this.wetRoadEnabled ? this.targetWetness : 0, 0.8, dt);
     if (Math.abs(this.wetness - previousWet) > 0.0008) this.onWetnessChange?.(this.wetness);
 
     // Lightning flash decay (brief, bounded) + throttled blend application (~8 Hz max)
@@ -572,7 +585,7 @@ export class EnvironmentSystem {
       const arr = pos.array as Float32Array;
       const drops = this.rainDrops;
       const count = this.activeRainDrops;
-      const windX = 2.2 * dt;
+      const windX = (this.rainMode === 'dynamic' ? this.blend.wind * 6.0 : 1.0) * dt;
       for (let i = 0; i < count; i++) {
         const fx = drops[i * 3] + windX;
         const fy = drops[i * 3 + 1] - this.rainVel[i] * dt;
@@ -593,7 +606,7 @@ export class EnvironmentSystem {
         arr[i * 6] = x;
         arr[i * 6 + 1] = y;
         arr[i * 6 + 2] = z;
-        arr[i * 6 + 3] = x + 0.07;
+        arr[i * 6 + 3] = x + (this.rainMode === 'dynamic' ? 0.1 + this.blend.wind * 0.3 : 0.07);
         arr[i * 6 + 4] = y - len;
         arr[i * 6 + 5] = z;
       }

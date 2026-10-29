@@ -213,6 +213,56 @@ await page.evaluate(() => {
   [...field.querySelectorAll('button')].find((n) => n.textContent === 'Auto')?.click();
 });
 check('Auto resumes after reload', await page.evaluate(() => window.__banglarTesla.settings.get().weatherPreference === 'auto'));
+// Dedicated Graphics screen: real DOM controls, profile -> Custom -> reload -> reset.
+check('Graphics entry opens its own screen', await page.evaluate(() => {
+  document.querySelector('[data-action="open-graphics"]')?.click();
+  return window.__banglarTesla.ui.currentScreen === 'graphics';
+}));
+const graphicsSelect = async (label, value) => page.evaluate(({ label, value }) => {
+  const field = [...document.querySelectorAll('.screen:not(.hidden) .field')]
+    .find((n) => n.querySelector('label')?.textContent === label);
+  const btn = [...(field?.querySelectorAll('button') ?? [])].find((n) => n.textContent === value);
+  btn?.click(); return !!btn;
+}, { label, value });
+check('Performance profile applies real render/population/weather-cost settings',
+  await graphicsSelect('Quality', 'Performance') && await page.evaluate(() => {
+    const s = window.__banglarTesla.settings.get();
+    return s.graphicsProfile === 'performance' && s.quality === 'low' && s.renderScale === 0.8 &&
+      s.rainMode === 'normal' && s.weatherPreference === 'auto';
+  }));
+check('High profile enables Dynamic without changing selected weather',
+  await graphicsSelect('Quality', 'High') && await page.evaluate(() => {
+    const s = window.__banglarTesla.settings.get();
+    return s.graphicsProfile === 'high' && s.quality === 'high' && s.rainMode === 'dynamic' && s.weatherPreference === 'auto';
+  }));
+check('Individual rain control enters persistent Custom profile',
+  await graphicsSelect('Rain effects', 'Normal') && await page.evaluate(() => {
+    const s = window.__banglarTesla.settings.get();
+    return s.graphicsProfile === 'custom' && s.rainMode === 'normal' && s.weatherPreference === 'auto';
+  }));
+await page.screenshot({ path: path.join(root, 'artifacts', 'graphics-custom-portrait.png') });
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForFunction('Boolean(window.__banglarTesla)', { timeout: 60000 });
+await page.evaluate(() => document.getElementById('boot-skip')?.click());
+await new Promise((r) => setTimeout(r, 600));
+check('Custom graphics survives reload', await page.evaluate(() => {
+  const s = window.__banglarTesla.settings.get();
+  return s.graphicsProfile === 'custom' && s.rainMode === 'normal' && s.weatherPreference === 'auto';
+}));
+await clickText(page, 'Settings');
+await page.evaluate(() => document.querySelector('[data-action="open-graphics"]')?.click());
+check('Reset Graphics leaves audio and weather untouched', await page.evaluate(() => {
+  const game = window.__banglarTesla;
+  game.settings.set({ master: 0.24, weatherPreference: 'windy' });
+  [...document.querySelectorAll('.screen:not(.hidden) button')].find((el) => el.textContent === 'Reset graphics only')?.click();
+  const s = game.settings.get();
+  return s.graphicsProfile === 'balanced' && s.quality === 'balanced' && s.master === 0.24 && s.weatherPreference === 'windy';
+}));
+check('Graphics Back returns to Settings', await page.evaluate(() => {
+  [...document.querySelectorAll('.screen:not(.hidden) button')].find((el) => el.textContent === 'Back')?.click();
+  return window.__banglarTesla.ui.currentScreen === 'settings';
+}));
+await page.evaluate(() => window.__banglarTesla.settings.set({ master: 0.85, weatherPreference: 'auto' }));
 await clickText(page, 'Back');
 await new Promise((r) => setTimeout(r, 600));
 const backToMenuEn = await page.evaluate(() => window.__banglarTesla.debugSnapshot());

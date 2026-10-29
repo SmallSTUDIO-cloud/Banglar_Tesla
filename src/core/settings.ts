@@ -17,6 +17,12 @@ export interface Settings {
   language: Locale;
   quality: QualityPreset;
   weatherPreference: WeatherKind | 'auto';
+  /** Separate from weather choice: editing a single graphic control enters Custom. */
+  graphicsProfile: 'performance' | 'balanced' | 'high' | 'custom';
+  rainMode: 'normal' | 'dynamic';
+  rainDensity: 'low' | 'medium' | 'high';
+  wetRoad: boolean;
+  lightningEffects: boolean;
   renderScale: number;
   shadows: boolean;
   fpsTarget: 30 | 60;
@@ -53,6 +59,11 @@ export const DEFAULT_SETTINGS: Settings = {
   language: 'bn',
   quality: 'balanced',
   weatherPreference: 'auto',
+  graphicsProfile: 'balanced',
+  rainMode: 'normal',
+  rainDensity: 'medium',
+  wetRoad: true,
+  lightningEffects: true,
   renderScale: 1,
   shadows: true,
   fpsTarget: 60,
@@ -122,6 +133,14 @@ export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS
   ) {
     out.quality = raw.quality;
   }
+  if (['performance', 'balanced', 'high', 'custom'].includes(String(raw.graphicsProfile))) {
+    out.graphicsProfile = raw.graphicsProfile as Settings['graphicsProfile'];
+  } else if (raw.quality === 'low' || raw.quality === 'high') {
+    // Existing saves had only the quality preset; migrate without losing it.
+    out.graphicsProfile = raw.quality === 'low' ? 'performance' : 'high';
+  }
+  if (raw.rainMode === 'normal' || raw.rainMode === 'dynamic') out.rainMode = raw.rainMode;
+  if (raw.rainDensity === 'low' || raw.rainDensity === 'medium' || raw.rainDensity === 'high') out.rainDensity = raw.rainDensity;
   if (raw.weatherPreference === 'auto' || ['sunny', 'overcast', 'rain', 'windy', 'storm'].includes(String(raw.weatherPreference))) {
     out.weatherPreference = raw.weatherPreference as Settings['weatherPreference'];
   }
@@ -148,6 +167,8 @@ export function sanitizeSettings(raw: unknown, base: Settings = DEFAULT_SETTINGS
   num('hudScale', 0.8, 1.3, base.hudScale);
 
   bool('shadows', base.shadows);
+  bool('wetRoad', base.wetRoad);
+  bool('lightningEffects', base.lightningEffects);
   bool('muted', base.muted);
   bool('musicEnabled', base.musicEnabled);
   bool('sfxEnabled', base.sfxEnabled);
