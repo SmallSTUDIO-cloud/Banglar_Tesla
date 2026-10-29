@@ -36,7 +36,7 @@ export class WheelSplashes {
   }
 
   update(dt: number, x: number, y: number, z: number, yaw: number, speed: number,
-    wetness: number, dynamic: boolean, cameraQuat?: THREE.Quaternion): void {
+    wetness: number, dynamic: boolean, cameraQuat?: THREE.Quaternion, wind = 0): void {
     if (cameraQuat) this.quat.copy(cameraQuat);
     const strength = clamp(wetness, 0, 1) * clamp(Math.abs(speed) / 6, 0, 1);
     if (strength > 0.04) {
@@ -50,7 +50,7 @@ export class WheelSplashes {
         this.x[i] = x - fx * 0.68 - Math.cos(yaw) * side * 0.55;
         this.z[i] = z - fz * 0.68 + Math.sin(yaw) * side * 0.55;
         this.y[i] = y + 0.12;
-        this.vx[i] = side * Math.cos(yaw) * (0.8 + this.rng()) - fx * 0.45;
+        this.vx[i] = side * Math.cos(yaw) * (0.8 + this.rng()) - fx * 0.45 + (dynamic ? wind * 0.5 : 0);
         this.vz[i] = -side * Math.sin(yaw) * (0.8 + this.rng()) - fz * 0.45;
         this.vy[i] = 1.1 + this.rng() * 1.2;
         this.life[i] = 0.32 + this.rng() * 0.28;

@@ -150,6 +150,7 @@ export class Game implements UIBridge {
   private menuTime = 0;
   private simClockSec = 0;
   private nearMissCooldown = 0;
+  private roadBumpSoundCooldown = 0;
   private lastEventId: string | null = null;
   private pendingBlacklistFrom: 'menu' | 'hud' | 'pause' = 'menu';
   private activeBlacklistEscapeRank: number | null = null;
@@ -967,6 +968,7 @@ export class Game implements UIBridge {
     let lastImpactZ = 0;
     let steppedDistance = 0;
     let onSidewalk = false;
+    this.roadBumpSoundCooldown = Math.max(0, this.roadBumpSoundCooldown - dt);
     while (this.accumulator >= stepSize && steps < 4) {
       const events = this.controller.step(
         stepSize,
@@ -984,6 +986,11 @@ export class Game implements UIBridge {
         totalImpact = Math.max(totalImpact, events.impact);
         lastImpactX = events.impactX;
         lastImpactZ = events.impactZ;
+      }
+      if (events.roughBump > 0.24 && this.roadBumpSoundCooldown === 0) {
+        this.audio.bump(Math.min(0.7, events.roughBump * 0.45));
+        this.chase.addTrauma(Math.min(0.07, events.roughBump * 0.03));
+        this.roadBumpSoundCooldown = 0.22;
       }
       steppedDistance += events.distance;
       onSidewalk = events.onSidewalk;
@@ -1120,7 +1127,8 @@ export class Game implements UIBridge {
 
     this.wheelSplashes.update(dt, this.controller.x, this.controller.y, this.controller.z,
       this.controller.yaw, this.controller.speed, wetness,
-      settings.rainMode === 'dynamic' && !settings.reduceEffects, this.camera.quaternion);
+      settings.rainMode === 'dynamic' && !settings.reduceEffects, this.camera.quaternion,
+      this.env.getWindStrength());
     this.arcadeVfx.setReduceEffects(settings.reduceEffects);
     this.arcadeVfx.update(
       dt,

@@ -70,3 +70,19 @@ These observations **do not prove an improvement**. Visual and simulation states
 | 22 | Finished/partial/blocked/untested distinguished | **Pass in this report**. |
 
 Unimplemented items must not be inferred from a green generic E2E run. The master brief's full validation matrix (§10) remains mostly open. Next work should start with real NPC input QA and baseline screenshot fixtures; then coherent sky/frontage/roads, meaningful mirror and rain effects, exhaustive settings implementation and matched physical-device testing before calling this a Great Graphics Update.
+
+## Revision 2 validation — 29 October 2026 (post-code)
+
+| Command / evidence | Result / limits |
+|---|---|
+| `npm run typecheck`, `npm run build`, `npm test` | PASS; final build after wind/audio adjustment and **179/179** units across 25 files. |
+| `node tests/e2e/graphics-mirrors.mjs` | PASS browser fixture; cockpit render counter advances; chase stays static; 279 geometries / 18 textures in both sampled states. Post-position screenshot `artifacts/v2-driver-mirrors.png` visually inspected. |
+| `node tests/e2e/graphics-road.mjs` | PASS browser fixture: 8 authored potholes, 26 eligible infills, hole depth 0.065 m, terrain center -0.051 m, scripted vehicle movement; screenshot `artifacts/v2-pothole-drive.png`. Not a race or phone run. |
+| `npm run test:ui` | PASS 33/33 graphics/weather/persistence/UI clicks. |
+| `npm run test:spec` | PASS 12/12, including seven cameras and steering/wheel-contact checks. |
+| `npm run test:mobile` | PASS 13/13 browser touch and orientation checks, not physical Android. |
+| `npm run test:vnext-repair` | PASS eight browser checks on caller/bargaining/race/escape; script reports no page error. |
+| `node tests/e2e/benchmark-suite.mjs --tag=v2-final` | Saved `artifacts/benchmark-v2-final.json`; pre-code comparator `artifacts/benchmark-v2-current.json`. SwiftShader-only; normal p95 regresses 5.83→7.70 ms, long-drive p95 improves 22.57→9.63 ms; 15-minute simulated fixture at 5/10/15 min reports 307 geometries/22 textures and ~12.02/12.10/12.18 MB retained. Rendering p95 outliers in jam/high reached ~960/3872 ms, requiring investigation; async GPU timing unavailable. Benchmark executed before final small wind/audio feedback amendment, so **not identical to the final commit**. |
+| `npm run build:apk` | **BLOCKED** after web production build: `AssertionError: Missing aapt2 at /tmp/android-tools/node_modules/aaptjs3/bin/x64/linux/aapt2`; no APK, signing/package metadata inspection or real-device result. Official Android SDK/CI provision and retry required; preserve `com.shostalab.banglartesla`, minSdk 24. |
+
+The road and mirror captures are browser fixture screenshots under a software renderer, not a full human-driven race/night/rain gallery. The full NPC junction/blocked-traffic and map-corridor matrix, every settings-control inspection, complete quality-preset × weather × camera captures and audio audition remain **unverified**. Prior event/trigger tests cannot substitute for listening to generated sound. Re-read the 855-line v2 brief for the second stable-ID audit; `GREAT_GRAPHICS_UPDATE_REQUIREMENTS.md` keeps 590 rows with conservative states. The final result is partial, not the requested complete acceptance.

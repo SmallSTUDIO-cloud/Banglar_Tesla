@@ -43,3 +43,31 @@ No protected game maps, character likenesses, music or assets were imported. No 
 ## APK and source protection
 
 `npm run build:apk` was attempted on this checkout after the changes; the web build passed but `scripts/build-apk.py` stopped at `Missing aapt2 at /tmp/android-tools/node_modules/aaptjs3/bin/x64/linux/aapt2`. No installed Java/JDK, Android SDK/platform, `android.jar`, Gradle wrapper, or `adb` were found. The native project is an offline Android WebView wrapper, not a configured Capacitor integration. Official Android SDK artifacts are not reachable via the permitted network hosts; do not replace them with random npm binaries. No APK was produced or device installed. On a trusted machine/CI with the official SDK 34 build-tools/platform and JDK, use the native Android Gradle project with an appropriate maintained Gradle wrapper or provision the **documented** exact local script prerequisites from trusted sources, run debug packaging and verify metadata/signature/assets. Release signing requires a legitimate private keystore; it has not been provisioned.
+
+## Revision 2 continuation — 29 October 2026 (incomplete audit, no completion claim)
+
+This is a continuation of the partial update, not a new graphics engine. The source-line-stable 590-row brief ledger in `GREAT_GRAPHICS_UPDATE_REQUIREMENTS.md` was run both before implementation and after final tests. Its final counts are **10 PASS, 57 PARTIAL, 9 BLOCKED, 514 NOT TESTED**; many rows are compound and intentionally stay open. See the ledger for per-line location, method, result, and next action.
+
+### Implemented in the continuation
+
+- `src/world/environment.ts`, `src/ai/pedestrians.ts`: clock-interpolated light/sky and gradual quiet-hour pedestrian schedule. Unit continuity checks pass; not a full 00:00–07:00 traffic/rain/night visual acceptance run.
+- `src/vehicle/driverMirrors.ts`, `src/vehicle/rickshawModel.ts`: cockpit-only dual world-rendered mirrors. Browser fixture verifies active cockpit rendering and no chase updates. Post-adjustment image `artifacts/v2-driver-mirrors.png` inspected; mirrors remain visible but the right pane is near the right HUD cluster.
+- `src/world/city.ts`: eight public-road authored potholes, sampled by the terrain grid; side facade service doors, grilles and pipes; 26 corridor-checked slender infills in browser fixture. `artifacts/v2-city/shot-chase.png` still shows a gray frontage apron near spawn; do not call the density issue solved. `artifacts/v2-pothole-drive.png` is a scripted browser fixture, not a driven race. Night/rain pothole legibility is not certified.
+- `src/vehicle/rickshawController.ts`, `src/ai/traffic.ts`: player three-wheel entry response and NPC type-specific shallow-bump response with bounded pitch/roll/speed loss; limited camera/audio bump feedback. `tests/unit/pothole-physics.test.ts` checks off-road/rest/low-vs-high-speed and seat attenuation; browser fixture confirms 0.065 m authored center depth and -0.051 m sampled road height.
+- `src/world/wheelSplashes.ts`: 48 recycled instanced wheel-contact droplets; Dynamic mode adds more and applies wind; wetness and speed control emission. Unit verifies dry decay and fixed resource count. This is **not** evidence of compelling rain visual quality on a real phone.
+- `src/economy/catalog.ts`, `src/economy/economy.ts`, `src/core/gameState.ts`, `src/core/i18n.ts`, `src/ui/ui.ts`: independently added Weatherproof Motor Seal. After three completed rides, 420/980 taka buys two levels that recover part of wet-road acceleration without changing dry acceleration or maximum speed. Existing save sanitizer bounds levels and UI is localized. Seat upgrade now attenuates pothole impacts.
+
+### Matched browser comparison (SwiftShader, not Mali/Android)
+
+| Repeated fixture | Pre-v2 code | v2 final bundle | Assessment |
+|---|---|---|---|
+| Normal drive: draws/triangles | 176 / 608,682 | 171 / 648,910 | Lower draws, higher geometry |
+| Normal drive: p50/p95/retained heap | 4.10 / 5.83 ms / 10.06 MB | 3.00 / 7.70 ms / 10.22 MB | **p95 worse**; not a performance win |
+| Long drive: draws/triangles | 216 / 729,405 | 217 / 778,743 | Higher work |
+| Long drive: p50/p95/retained heap | 2.98 / 22.57 ms / 10.84 MB | 3.20 / 9.63 ms / 11.06 MB | p95 better, p50/heap worse |
+
+Full ignored raw output: `artifacts/benchmark-v2-current.json`, `artifacts/benchmark-v2-final.json`. Different transient stalls, load and a software renderer prevent an Android FPS claim; jam/high captures showed severe outliers. Selected inspected captures: `artifacts/v2-baseline/`, `artifacts/v2-city/shot-chase.png`, `artifacts/v2-driver-mirrors.png`, `artifacts/v2-pothole-drive.png`. No screenshot is asserted to represent every weather/preset/camera route. Prior optional OSM/DRMC fit remains about 31.5 nominal acres within the road boundary, not a manufactured contiguous 52 acres.
+
+### Open follow-up (not silently omitted)
+
+Complete gray parcel/chase-spawn frontage, wet/night road and puddle clarity, full wind/screen-drop visual tuning, every camera/LOD/driver/NPC/rival rig, wide/intersection/no-route NPC drive validation, minimap/gate/mission graph traversal, audio **audition** (trigger-only tests are not audition), per-preset/weather matched visual/thermal/real-phone profiling and a legitimate Android build after installing official SDK `aapt2`. Do not infer APK validity from a successful web bundle. See the ledger for all 590 retained details and the test report for exact outcomes.
