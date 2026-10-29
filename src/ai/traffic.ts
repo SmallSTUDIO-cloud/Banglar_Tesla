@@ -29,6 +29,19 @@ import {
   type TrafficType,
 } from './vehicles';
 
+/** Signed forward corridor: rear and side approaches cannot trigger a stop. */
+export function forwardPlayerGap(
+  npcX: number, npcZ: number, yaw: number, halfWidth: number, halfLength: number,
+  playerX: number, playerZ: number,
+): number | null {
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const dx = playerX - npcX, dz = playerZ - npcZ;
+  const forward = dx * fx + dz * fz;
+  const lateral = Math.abs(dx * fz - dz * fx);
+  if (forward <= 0.4 || forward >= 18 || lateral >= halfWidth + 1.05) return null;
+  return forward - (halfLength + 1.35);
+}
+
 export type VehicleKind = TrafficType;
 
 export interface TrafficObstacle {
@@ -56,6 +69,9 @@ interface ActiveTrafficAgent extends InstancedVehicleState {
   stuckTimer: number;
   honkTimer: number;
   farAccum: number;
+  /** Damp lateral discontinuity at lane junctions without jumping the vehicle. */
+  turnOffsetX: number;
+  turnOffsetZ: number;
   roadRageHold: number;
   rageImmuneTimer: number;
 }
@@ -196,6 +212,8 @@ export class TrafficSystem {
       stuckTimer: 0,
       honkTimer: 1 + this.rng() * 5,
       farAccum: (index % 5) * 0.016,
+      turnOffsetX: 0,
+      turnOffsetZ: 0,
       roadRageHold: 0,
       rageImmuneTimer: 0,
     };
@@ -450,17 +468,10 @@ export class TrafficSystem {
         }
       }
 
-      if (distSqToPlayer < 18 * 18) {
-        const fx = Math.sin(a.yaw);
-        const fz = Math.cos(a.yaw);
-        const dx = this.playerX - a.x;
-        const dz = this.playerZ - a.z;
-        const aheadDot = dx * fx + dz * fz;
-        const latDot = Math.abs(dx * fz - dz * fx);
-        if (aheadDot > 0.4 && latDot < a.arch.halfWidth + 1.05) {
-          minGap = Math.min(minGap, aheadDot - (a.arch.halfLength + 1.35));
-        }
-      }
+      const playerGap = distSqToPlayer < 18 * 18
+        ? forwardPlayerGap(a.x, a.z, a.yaw, a.arch.halfWidth, a.arch.halfLength, this.playerX, this.playerZ)
+        : null;
+      if (playerGap !== null) minGap = Math.min(minGap, playerGap);
 
       const redSignal =
         a.stuckTimer < 8.5 &&
@@ -494,19 +505,36 @@ export class TrafficSystem {
       if (minGap < 15) {
         desiredSpeed = Math.min(desiredSpeed, Math.max(0, minGap * 0.72));
       }
-      if (a.stuckTimer > 8.5) {
+      // A stationary player is not a traffic jam to drive through.
+      if (a.stuckTimer > 8.5 && playerGap === null) {
         desiredSpeed = Math.max(desiredSpeed, 1.35);
         if (a.stuckTimer > 13.5) a.stuckTimer = 0;
       }
 
       const accel = clamp(desiredSpeed - a.speed, -6.8, 2.8);
       a.speed = clamp(a.speed + accel * stepDt, 0, a.cruise + 0.8);
+      // Long vehicles need to slow before a real turn; never stop abruptly at a straight link.
+      if (distToNode < 8 && a.lane.nextLaneIds.length > 0 &&
+          !a.lane.nextLaneIds.some((id) => {
+            const next = this.graph.byId.get(id);
+            return next && a.lane.ux * next.ux + a.lane.uz * next.uz > 0.9;
+          })) {
+        a.speed = Math.min(a.speed, a.kind === 'bus' || a.kind === 'truck' ? 3.4 : 4.3);
+      }
       a.s += a.speed * stepDt;
 
       if (a.s >= a.lane.length) {
         const over = a.s - a.lane.length;
+        const previousX = a.x, previousZ = a.z;
         a.lane = this.chooseNextLane(a);
         a.s = Math.min(over, a.lane.length * 0.4);
+        sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
+        // Bridge only small lane-center discontinuities, not disconnected graph errors.
+        const jumpX = previousX - this.tmpPt.x, jumpZ = previousZ - this.tmpPt.z;
+        if (jumpX * jumpX + jumpZ * jumpZ < 36) {
+          a.turnOffsetX = jumpX;
+          a.turnOffsetZ = jumpZ;
+        }
       }
 
       if (a.speed < a.cruise * 0.42) {
@@ -522,9 +550,17 @@ export class TrafficSystem {
       }
 
       sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
-      a.x = this.tmpPt.x;
-      a.z = this.tmpPt.z;
-      a.yaw += angleDelta(a.yaw, this.tmpPt.yaw) * (1 - Math.exp(-9 * stepDt));
+      const prevX = a.x, prevZ = a.z;
+      a.turnOffsetX *= Math.exp(-3.2 * stepDt);
+      a.turnOffsetZ *= Math.exp(-3.2 * stepDt);
+      a.x = this.tmpPt.x + a.turnOffsetX;
+      a.z = this.tmpPt.z + a.turnOffsetZ;
+      // Orient to actual motion during the junction, limited for wide vehicles.
+      const moved = Math.hypot(a.x - prevX, a.z - prevZ);
+      const heading = moved > 0.025 && (Math.abs(a.turnOffsetX) + Math.abs(a.turnOffsetZ) > 0.02)
+        ? Math.atan2(a.x - prevX, a.z - prevZ) : this.tmpPt.yaw;
+      const maxYaw = (a.kind === 'bus' || a.kind === 'truck' ? 1.0 : 1.7) * stepDt;
+      a.yaw += clamp(angleDelta(a.yaw, heading), -maxYaw, maxYaw);
 
       if (a.visible) {
         // Only sample heightAt when moving or near bumps; stationary vehicles keep cached ground Y!
@@ -574,6 +610,7 @@ export class TrafficSystem {
       const d = Math.hypot(mx - this.playerX, mz - this.playerZ);
       if (d > 82 && d < 162) {
         a.lane = cand;
+        a.turnOffsetX = a.turnOffsetZ = 0;
         a.s = this.rng() * cand.length * 0.8;
         sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
         a.x = this.tmpPt.x;
@@ -650,6 +687,7 @@ export class TrafficSystem {
       }
     }
     a.lane = bestLane;
+    a.turnOffsetX = a.turnOffsetZ = 0;
     a.s = bestS;
     a.lateralOffset = 0;
     a.targetLateral = 0;
