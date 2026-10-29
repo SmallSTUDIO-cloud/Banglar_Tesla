@@ -42,6 +42,16 @@ export function forwardPlayerGap(
   return forward - (halfLength + 1.35);
 }
 
+/** Smooth quiet-hours population: no hard cut at midnight or 07:00. */
+export function quietTrafficFactor(minutes: number): number {
+  const m = ((minutes % 1440) + 1440) % 1440;
+  if (m < 210) return 0.9 - (m / 210) * 0.45;
+  if (m < 300) return 0.45;
+  if (m < 420) return 0.45 + ((m - 300) / 120) * 0.55;
+  if (m < 1320) return 1;
+  return 1 - ((m - 1320) / 120) * 0.1;
+}
+
 export type VehicleKind = TrafficType;
 
 export interface TrafficObstacle {
@@ -109,6 +119,9 @@ export class TrafficSystem {
   private playerX = 0;
   private playerZ = 0;
   private viewDistSq = 185 * 185;
+  private baseTrafficCount = 32;
+  private quietFactor = 1;
+  private populationTick = 0;
   private heightAt: (x: number, z: number) => number = () => 0.014;
   congestionEpoch = 1;
 
@@ -149,7 +162,8 @@ export class TrafficSystem {
   setQuality(quality: QualitySettings): void {
     const visR = Math.max(120, quality.viewDistance + 15);
     this.viewDistSq = visR * visR;
-    const target = Math.max(8, quality.trafficCount);
+    this.baseTrafficCount = quality.trafficCount;
+    const target = Math.max(8, Math.round(quality.trafficCount * this.quietFactor));
     while (this.agents.length > target) {
       this.agents.pop();
     }
@@ -159,12 +173,37 @@ export class TrafficSystem {
     this.fleet.sync(this.agents);
   }
 
+  setTimeMinutes(minutes: number): void {
+    this.quietFactor = quietTrafficFactor(minutes);
+  }
+
+  private adjustPopulation(dt: number): void {
+    this.populationTick += dt;
+    if (this.populationTick < 2) return;
+    this.populationTick = 0;
+    const target = Math.max(8, Math.round(this.baseTrafficCount * this.quietFactor));
+    if (this.agents.length < target) {
+      this.agents.push(this.spawnAgent(this.agents.length));
+    } else if (this.agents.length > target) {
+      const last = this.agents[this.agents.length - 1];
+      // Keep near traffic in place, especially during a player collision or race.
+      if (Math.hypot(last.x - this.playerX, last.z - this.playerZ) > 75) this.agents.pop();
+    }
+  }
+
   private pickVehicleSpec(narrowLane: boolean): (typeof FLEET_DISTRIBUTION)[number] {
     let r = this.rng();
     for (let i = 0; i < FLEET_DISTRIBUTION.length; i++) {
       const item = FLEET_DISTRIBUTION[i];
       if (narrowLane && (item.kind === 'bus' || item.kind === 'truck')) continue;
-      if (r <= item.weight) return item;
+      if (r <= item.weight) {
+        // CNGs are less frequent in the quiet hours; existing nearby vehicles
+        // are never swapped out merely because the clock ticked.
+        if (item.kind === 'cng' && this.quietFactor < 0.75 && this.rng() > this.quietFactor) {
+          return FLEET_DISTRIBUTION[0];
+        }
+        return item;
+      }
       r -= item.weight;
     }
     return FLEET_DISTRIBUTION[0];
@@ -350,6 +389,7 @@ export class TrafficSystem {
   update(dt: number): void {
     if (this.debugSimFrozen) return;
     this.clock += dt;
+    this.adjustPopulation(dt);
     this.hornCooldown = Math.max(0, this.hornCooldown - dt);
 
     for (const list of this.laneOccupancy.values()) list.length = 0;

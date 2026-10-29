@@ -21,3 +21,15 @@ describe('NPC forward collision corridor', () => {
     expect(gap(-9, 0, Math.PI / 2)).toBeNull();
   });
 });
+
+describe('quiet hours', () => {
+  it('gradually thins traffic after midnight and restores it before 07:00 without an hour-boundary step', async () => {
+    const { quietTrafficFactor } = await import('../../src/ai/traffic');
+    expect(Math.abs(quietTrafficFactor(1439.9) - quietTrafficFactor(0))).toBeLessThan(0.002);
+    expect(quietTrafficFactor(10)).toBeLessThan(quietTrafficFactor(0));
+    expect(quietTrafficFactor(210)).toBeCloseTo(0.45);
+    expect(quietTrafficFactor(390)).toBeGreaterThan(quietTrafficFactor(300));
+    expect(Math.abs(quietTrafficFactor(419.9) - quietTrafficFactor(420))).toBeLessThan(0.002);
+    expect(quietTrafficFactor(430)).toBe(1);
+  });
+});

@@ -186,19 +186,27 @@ async function main() {
       // rain droplets + wind strength
       g.weatherDirector.setWeatherImmediate('rain');
       g.update(0.2);
-      const dropsOn = document.querySelectorAll('.rain-drop.on').length;
-      return { states, lowFlashLevel, fullFlashLevel, dropsOn, flashes };
+      const normalDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.settings.set({ rainMode: 'dynamic' });
+      g.applySettings();
+      const dynamicDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.weatherDirector.setWeatherImmediate('sunny');
+      g.update(0.2);
+      const sunnyDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.settings.set({ rainMode: 'normal' });
+      g.applySettings();
+      return { states, lowFlashLevel, fullFlashLevel, normalDrops, dynamicDrops, sunnyDrops, flashes };
     });
     check(
-      'Five weather states apply with distinct blends; lightning honors low-flash; rain droplets activate',
+      'Five weather states, bounded lightning, and Dynamic-only screen drops (none in sun)',
       weatherCheck.states.length === 5 &&
         weatherCheck.states.every((s) => s.env === s.w) &&
         weatherCheck.states.find((s) => s.w === 'storm').blendRain > 0.5 &&
         weatherCheck.states.find((s) => s.w === 'windy').wind >= 1 &&
         weatherCheck.lowFlashLevel < 0.2 &&
         weatherCheck.fullFlashLevel > 0.35 &&
-        weatherCheck.dropsOn === 10,
-      JSON.stringify({ states: weatherCheck.states.map((s) => s.w), low: weatherCheck.lowFlashLevel, full: weatherCheck.fullFlashLevel, drops: weatherCheck.dropsOn }),
+        weatherCheck.normalDrops === 0 && weatherCheck.dynamicDrops === 10 && weatherCheck.sunnyDrops === 0,
+      JSON.stringify({ states: weatherCheck.states.map((s) => s.w), low: weatherCheck.lowFlashLevel, full: weatherCheck.fullFlashLevel, normalDrops: weatherCheck.normalDrops, dynamicDrops: weatherCheck.dynamicDrops, sunnyDrops: weatherCheck.sunnyDrops }),
     );
 
     // ------------------------------------------------------------------

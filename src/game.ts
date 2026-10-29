@@ -141,6 +141,7 @@ export class Game implements UIBridge {
   private paused = false;
   private accumulator = 0;
   private lastTime = 0;
+  private frameIntervalAccum = 0;
   private running = false;
   private menuTime = 0;
   private simClockSec = 0;
@@ -766,16 +767,17 @@ export class Game implements UIBridge {
   }
 
   private frame(time: number): void {
-    const rawDt = (time - this.lastTime) / 1000;
+    const rawDt = Math.max(0, (time - this.lastTime) / 1000);
     this.lastTime = time;
-    const dt = clamp(rawDt, 0, 0.1);
-    this.frameCount++;
-
+    // Browsers do not expose VSync control; skip *both* render and simulation
+    // callbacks until the requested interval, preserving elapsed time for the
+    // fixed-step physics accumulator. Clamp tab-resume stalls as before.
+    this.frameIntervalAccum += rawDt;
     const frameBudget = 1 / this.settings.get().fpsTarget;
-    if (this.settings.get().fpsTarget === 30 && rawDt < frameBudget * 0.82) {
-      this.render();
-      return;
-    }
+    if (this.frameIntervalAccum < frameBudget * 0.88 && this.frameIntervalAccum < 0.1) return;
+    const dt = clamp(this.frameIntervalAccum, 0, 0.1);
+    this.frameIntervalAccum = 0;
+    this.frameCount++;
 
     if (!this.paused) this.update(dt);
     else {
@@ -872,6 +874,7 @@ export class Game implements UIBridge {
       settings.shadows && q.shadows,
     );
     this.traffic.setPlayer(this.controller.x, this.controller.z, this.controller.speed);
+    this.traffic.setTimeMinutes(this.gameTime.minutesOfDay);
     this.traffic.update(dt);
     this.peds.update(dt, this.controller.x, this.controller.z, this.controller.speed, this.controller.yaw);
 
