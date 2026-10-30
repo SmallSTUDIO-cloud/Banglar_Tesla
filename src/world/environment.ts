@@ -443,6 +443,11 @@ export class EnvironmentSystem {
     return this.blend;
   }
 
+  /** Continuously sampled 0..1 night lighting, shared by lamps, facades and vehicle. */
+  get nightFactor(): number {
+    return this.appliedNight;
+  }
+
   getPhase(): DayPhase {
     return this.phase;
   }

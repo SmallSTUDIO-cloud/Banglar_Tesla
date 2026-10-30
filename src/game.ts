@@ -261,7 +261,7 @@ export class Game implements UIBridge {
       this.scrapbook.recordBestCombo(best);
     };
     this.env.onWetnessChange = (wet) => this.city.setWetness(wet);
-    this.env.onPhaseChange = (phase) => this.city.setNight(phase === 'night' || phase === 'blue');
+    this.env.onPhaseChange = () => this.city.setNight(this.env.nightFactor);
     this.env.setClockMinutes(this.gameTime.minutesOfDay);
     this.env.setPhase(this.gameTime.phase);
 
@@ -883,6 +883,7 @@ export class Game implements UIBridge {
       this.audio.setWindAudio(wb.wind);
     }
     this.env.update(dt, this.tmpPlayerVec);
+    this.city.setNight(this.env.nightFactor);
     const windStrength = this.weatherDirector.weatherBlend.wind;
     this.city.updateStreetLitter(dt, windStrength, this.controller.x, this.controller.z);
     this.destruction.update(dt);
@@ -1171,7 +1172,7 @@ export class Game implements UIBridge {
       this.controller.y,
       this.controller.pitch,
     );
-    this.player.setNightLighting(this.env.getPhase() === 'night' || this.env.getPhase() === 'blue', 1);
+    this.player.setNightLighting(this.env.nightFactor > 0.005, this.env.nightFactor);
 
     // -------- 7-mode NFS MW camera
     this.chase.setMode(settings.cameraMode);

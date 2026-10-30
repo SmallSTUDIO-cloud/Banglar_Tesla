@@ -99,7 +99,7 @@ export interface CityResult {
   spawn: { x: number; z: number; yaw: number };
   placeAnchors: Map<string, THREE.Vector3>;
   setWetness: (wet: number) => void;
-  setNight: (on: boolean) => void;
+  setNight: (intensity: number) => void;
   litterCount: number;
   infillCount: number;
   courtyardCount: number;
@@ -192,6 +192,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   });
   const glowMat = new THREE.MeshBasicMaterial({
     vertexColors: true,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
   });
 
   // Ground base plane beneath everything (urban earth / courtyard compound floor)
@@ -1355,8 +1358,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     puddleMat.opacity = 0.42 + 0.48 * w;
   };
 
-  const setNight = (on: boolean): void => {
-    nightGroup.visible = on;
+  const setNight = (intensity: number): void => {
+    const v = clamp(intensity, 0, 1);
+    glowMat.opacity = v;
+    nightGroup.visible = v > 0.005;
   };
 
   const withPrewarmState = (run: () => void): void => {
