@@ -103,6 +103,16 @@ const DAY_KEYS: { minute: number; phase: DayPhase; night: number }[] = [
   { minute: 1440, phase: 'night', night: 1 },
 ];
 
+/** Pooled rain draw budget continuously follows the actual weather blend. */
+export function rainDrawCount(amount: number, budget: number,
+  density: 'low' | 'medium' | 'high', mode: 'normal' | 'dynamic', capacity = 700): number {
+  const rain = clamp(Number.isFinite(amount) ? amount : 0, 0, 1);
+  if (rain <= 0.02) return 0;
+  const multiplier = (density === 'low' ? 0.55 : density === 'high' ? 1.25 : 1) *
+    (mode === 'dynamic' ? 1.2 : 0.8);
+  return clamp(Math.round(Math.max(0, budget) * multiplier * rain), 0, capacity);
+}
+
 export function sampleDayLighting(raw: number): { cfg: PhaseConfig; night: number } {
   const minute = ((raw % 1440) + 1440) % 1440;
   let index = 0;
@@ -528,21 +538,16 @@ export class EnvironmentSystem {
 
   private rebuildRain(): void {
     if (!this.rain || !this.rainGeo) return;
-    const rainAmt = Math.max(this.blend.rain, this.weather === 'rain' || this.weather === 'storm' ? 0.45 : 0);
-    if (rainAmt <= 0.03) {
-      this.rain.visible = false;
-      this.activeRainDrops = 0;
-      return;
-    }
-    const maxDrops = this.rainVel.length;
-    const count = Math.min(
-      maxDrops,
-      Math.max(60, Math.round(this.quality.rainParticles * (this.rainDensity === 'low' ? 0.55 : this.rainDensity === 'high' ? 1.25 : 1) *
-          (this.rainMode === 'dynamic' ? 1.2 : 0.8) * clamp(0.5 + rainAmt * 0.7, 0.5, 1.3))),
-    );
+    // Use the actual weather director blend, not the previous named weather:
+    // during a rain→sun transition the named state remains Rain until the
+    // blend finishes, and a state fallback held 60+ drops then cut them off.
+    const rainAmt = clamp(this.blend.rain, 0, 1);
+    const count = rainDrawCount(rainAmt, this.quality.rainParticles,
+      this.rainDensity, this.rainMode, this.rainVel.length);
     this.activeRainDrops = count;
     this.rainGeo.setDrawRange(0, count * 2);
-    this.rain.visible = true;
+    (this.rain.material as THREE.LineBasicMaterial).opacity = Math.min(0.55, rainAmt * 0.55);
+    this.rain.visible = count > 0;
   }
 
   /** Temporarily reveal pooled weather/glow objects so `renderer.compile()` prewarms them at boot. */

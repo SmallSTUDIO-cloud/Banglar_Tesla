@@ -880,6 +880,9 @@ export class Game implements UIBridge {
       this.weatherBlendAccum = 0;
       const wb = this.weatherDirector.weatherBlend;
       this.env.setWeatherBlend(wb, wb.wet);
+      const screenRain = this.settings.get().rainMode === 'dynamic' ? wb.rain : 0;
+      this.ui.setRainIntensity(screenRain);
+      this.ui.setRainDrops(screenRain > 0.02);
       this.audio.setWindAudio(wb.wind);
     }
     this.env.update(dt, this.tmpPlayerVec);

@@ -2959,6 +2959,15 @@ export class AppUI {
     this.lightningEl.style.opacity = '0';
   }
 
+  /** Adjust screen-water visibility at the same low rate as weather blending. */
+  private rainIntensityKey = -1;
+  setRainIntensity(intensity: number): void {
+    const key = Math.round(Math.max(0, Math.min(1, intensity)) * 20);
+    if (key === this.rainIntensityKey) return;
+    this.rainIntensityKey = key;
+    this.root.style.setProperty('--rain-opacity', (key / 20).toFixed(2));
+  }
+
   /** Toggle the pooled rain droplets (event-driven, zero per-frame cost). */
   setRainDrops(active: boolean): void {
     if (active === this.rainDropsActive) return;

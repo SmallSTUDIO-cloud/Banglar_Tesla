@@ -181,8 +181,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   });
   const puddleMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
-    roughness: 0.08,
-    metalness: 0.82,
+    roughness: 0.24,
+    metalness: 0.28,
     transparent: true,
     opacity: 0.72,
     depthWrite: false,
@@ -1349,13 +1349,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   };
 
   const dryColor = new THREE.Color('#ffffff');
-  const wetColor = new THREE.Color('#7c828c');
+  const wetColor = new THREE.Color('#454d56');
   const setWetness = (wet: number): void => {
     const w = clamp(wet, 0, 1);
-    roadMat.color.copy(dryColor).lerp(wetColor, w * 0.65);
-    roadMat.roughness = 0.9 - 0.58 * w;
-    roadMat.metalness = 0.05 + 0.38 * w;
-    puddleMat.opacity = 0.42 + 0.48 * w;
+    roadMat.color.copy(dryColor).lerp(wetColor, w * 0.8);
+    roadMat.roughness = 0.9 - 0.17 * w;
+    roadMat.metalness = 0.05 + 0.08 * w;
+    puddleMat.opacity = 0.30 + 0.35 * w;
   };
 
   const setNight = (intensity: number): void => {
