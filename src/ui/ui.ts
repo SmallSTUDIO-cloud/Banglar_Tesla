@@ -61,6 +61,7 @@ export interface HudState {
   tanActive?: boolean;
   teaAvailable?: boolean;
   routePoints?: { x: number; z: number }[] | null;
+  drmcNavigation?: boolean;
   jammedSegments?: string[];
   detourActive?: boolean;
   // v0.5.0 Dynamic Time, Turbo, REP, Condition, Police & Rival Race
@@ -106,6 +107,7 @@ export interface UIBridge {
   returnToMenu(): void;
   nextJob(): void;
   enterFreeRide(): void;
+  toggleDrmcNavigation(): void;
   openGarage(from: 'menu' | 'pause' | 'result'): void;
   closeGarage(): void;
   openShowroomFromMenu?(): void;
@@ -604,7 +606,13 @@ export class AppUI {
     this.hudClockTextEl = clockTextEl;
     const mini = h('div', { class: 'minimap' });
     this.miniCanvas = h('canvas', { attrs: { width: 208, height: 208 } });
-    mini.append(this.miniCanvas, clockChip);
+    const drmcNav = h('button', {
+      class: 'minimap-nav',
+      attrs: { id: 'hud-drmc-nav', type: 'button', 'aria-label': 'Navigate to DRMC', 'aria-pressed': 'false' },
+      text: 'DRMC ↗',
+      on: { click: () => this.bridge.toggleDrmcNavigation() },
+    });
+    mini.append(this.miniCanvas, clockChip, drmcNav);
 
     const repCondSpan = h('span', { text: `${t('hud.rep')} 0 · ${t('hud.condition')} 100%` });
     const repCondPill = h('div', { class: 'rep-cond-pill', attrs: { id: 'hud-rep-cond' } }, repCondSpan);
@@ -1280,7 +1288,13 @@ export class AppUI {
       this.hudRecoverBtn = null;
     }
 
+    const navButton = this.hud.querySelector('#hud-drmc-nav');
+    navButton?.setAttribute('aria-pressed', String(!!state.drmcNavigation));
     this.drawMinimap(state);
+  }
+
+  setDrmcNavigationActive(active: boolean): void {
+    this.hud.querySelector('#hud-drmc-nav')?.setAttribute('aria-pressed', String(active));
   }
 
   private ensureMinimapBase(scale: number): HTMLCanvasElement {

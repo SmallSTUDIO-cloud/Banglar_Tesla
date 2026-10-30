@@ -486,9 +486,19 @@ export function findRoute(
   goalX: number,
   goalZ: number,
   congestionMultiplier?: (segmentId: string) => number,
+  preferRoadApproach = false,
 ): RoutePlan {
   const startNode = nearestNodeId(startX, startZ);
-  const goalNode = nearestNodeId(goalX, goalZ);
+  // A destination midway along a street must be approached from the cheaper
+  // connected end, not from whichever junction is nearest in a straight line.
+  // Otherwise the map can guide drivers *past* a gate and then back through a
+  // wall, even though that road was reached from the opposite end.
+  const goalRoad = snapToNearestRoad(goalX, goalZ).segment;
+  const goalAlong = clamp((goalX - goalRoad.ax) * goalRoad.ux + (goalZ - goalRoad.az) * goalRoad.uz, 0, goalRoad.length);
+  const goalRoadX = goalRoad.ax + goalAlong * goalRoad.ux;
+  const goalRoadZ = goalRoad.az + goalAlong * goalRoad.uz;
+  const goalOnRoad = preferRoadApproach && Math.hypot(goalX - goalRoadX, goalZ - goalRoadZ) < goalRoad.halfWidth + 4;
+  let goalNode = nearestNodeId(goalX, goalZ);
 
   const distCost = new Map<string, number>();
   const distMetres = new Map<string, number>();
@@ -514,7 +524,7 @@ export function findRoute(
         u = n.id;
       }
     }
-    if (!u || u === goalNode || !Number.isFinite(best)) break;
+    if (!u || !Number.isFinite(best)) break;
     visited.add(u);
 
     const uNode = nodeMap.get(u)!;
@@ -535,6 +545,14 @@ export function findRoute(
     }
   }
 
+  if (goalOnRoad) {
+    const speed = goalRoad.kind === 'main' ? 6.2 : goalRoad.kind === 'medium' ? 5.6 : 4.8;
+    const jam = congestionMultiplier ? Math.max(1, congestionMultiplier(goalRoad.id)) : 1;
+    const throughA = (distCost.get(goalRoad.from) ?? Infinity) + goalAlong / speed * jam;
+    const throughB = (distCost.get(goalRoad.to) ?? Infinity) + (goalRoad.length - goalAlong) / speed * jam;
+    goalNode = throughA <= throughB ? goalRoad.from : goalRoad.to;
+  }
+
   const nodeIds: string[] = [];
   const segmentIds: string[] = [];
   let cur: string | undefined = goalNode;
@@ -546,6 +564,8 @@ export function findRoute(
   }
   nodeIds.reverse();
   segmentIds.reverse();
+  if (goalOnRoad && Math.hypot(goalX - nodeMap.get(goalNode)!.x, goalZ - nodeMap.get(goalNode)!.z) > 1 &&
+      segmentIds[segmentIds.length - 1] !== goalRoad.id) segmentIds.push(goalRoad.id);
 
   const points: { x: number; z: number }[] = [{ x: startX, z: startZ }];
   for (const nid of nodeIds) {
@@ -563,7 +583,7 @@ export function findRoute(
 
   let avoidedJam = false;
   if (congestionMultiplier) {
-    const unjammed = findRoute(startX, startZ, goalX, goalZ);
+    const unjammed = findRoute(startX, startZ, goalX, goalZ, undefined, preferRoadApproach);
     avoidedJam = unjammed.segmentIds.join(',') !== segmentIds.join(',');
   }
 

@@ -16,6 +16,14 @@ function blocksPoint(c: Collider, x: number, z: number, radius = 0): boolean {
 }
 
 describe('DRMC road integration and ambient exclusion', () => {
+  it('approaches the main gate from the connected road, not the farther junction behind it', () => {
+    const route = findRoute(-126, -136, DRMC_GATE_ROAD_POINT.x, DRMC_GATE_ROAD_POINT.z, undefined, true);
+    expect(route.points.at(-2)).toEqual({ x: -12, z: -112 });
+    expect(route.points.at(-1)).toEqual(DRMC_GATE_ROAD_POINT);
+    const last = route.points.at(-2)!;
+    expect(Math.hypot(last.x - DRMC_GATE_ROAD_POINT.x, last.z - DRMC_GATE_ROAD_POINT.z)).toBeLessThan(75);
+  });
+
   it('leaves every existing road centerline outside the private boundary', () => {
     expect(ROAD_SEGMENTS.filter((s) => crossesDrmcCampus(s.ax, s.az, s.bx, s.bz))).toEqual([]);
   });

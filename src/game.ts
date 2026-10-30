@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { DRMC_GATE_ROAD_POINT } from './world/drmcGeo';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import {
@@ -175,6 +176,7 @@ export class Game implements UIBridge {
   private hudTick = 0;
   private routeTick = 0;
   private activeRoute: RoutePlan | null = null;
+  private drmcNavigation = false;
   private jammedList: string[] = [];
   private detourToastCooldown = 0;
   private idleTimer = 0;
@@ -1197,13 +1199,20 @@ export class Game implements UIBridge {
 
     // -------- missions & live jam-aware route guidance
     this.missions.update(dt, this.controller.speed);
+    if (this.drmcNavigation && this.mode === 'free' && !this.raceSystem.isActive &&
+      Math.hypot(this.controller.x - DRMC_GATE_ROAD_POINT.x, this.controller.z - DRMC_GATE_ROAD_POINT.z) < 8) {
+      this.drmcNavigation = false;
+      this.recomputeRoute(null);
+      this.ui.setDrmcNavigationActive(false);
+      this.ui.toast(t('place.drmc'), 'good');
+    }
     this.routeTick += dt;
     if (this.routeTick >= 1.0) {
       this.routeTick = 0;
       this.jammedList = this.traffic.getJammedSegments();
       const routeTarget = raceSnap.active
         ? { x: raceSnap.targetX, z: raceSnap.targetZ }
-        : this.missions.zone;
+        : this.missions.zone ?? (this.mode === 'free' && this.drmcNavigation ? DRMC_GATE_ROAD_POINT : null);
       this.recomputeRoute(routeTarget);
     }
 
@@ -1318,6 +1327,7 @@ export class Game implements UIBridge {
 
     const plan = findRoute(this.controller.x, this.controller.z, target.x, target.z, (segId) =>
       this.traffic.getCongestionMultiplier(segId),
+      this.mode === 'free' && this.drmcNavigation,
     );
     if (plan.avoidedJam && !this.activeRoute?.avoidedJam && this.detourToastCooldown <= 0) {
       this.detourToastCooldown = 18;
@@ -1366,6 +1376,7 @@ export class Game implements UIBridge {
     this.roadRage.cancel();
     if (this.showroomVisible) this.showroomVisible = false;
     this.mode = mode;
+    this.drmcNavigation = false;
     this.paused = false;
     this.audio.setSceneMode('driving');
     this.state.setMode(mode);
@@ -1597,6 +1608,16 @@ export class Game implements UIBridge {
     this.activeRoute = null;
     this.ui.show('hud');
     this.ui.toast(t('toast.freeRide'));
+  }
+
+  /** An actual free-ride destination, not a debug-only map line. The route
+   * refreshes with traffic every second and clears at the public road approach. */
+  toggleDrmcNavigation(): void {
+    if (this.mode !== 'free' || this.raceSystem.isActive) return;
+    this.drmcNavigation = !this.drmcNavigation;
+    this.ui.setDrmcNavigationActive(this.drmcNavigation);
+    this.recomputeRoute(this.drmcNavigation ? DRMC_GATE_ROAD_POINT : null);
+    this.ui.toast(this.drmcNavigation ? t('place.drmc') : t('hud.free'));
   }
 
   pauseGame(): void {
@@ -2320,7 +2341,7 @@ export class Game implements UIBridge {
 
   /** Route guidance to the verified DRMC public entrance (connected-road path). */
   debugDrmcRoute(fromX: number, fromZ: number): { ok: boolean; distance: number; steps: number } {
-    const plan = findRoute(fromX, fromZ, this.drmc.gate.x, this.drmc.gate.z);
+    const plan = findRoute(fromX, fromZ, DRMC_GATE_ROAD_POINT.x, DRMC_GATE_ROAD_POINT.z, undefined, true);
     return {
       ok: plan.segmentIds.length > 0,
       distance: plan.distance,
@@ -2845,6 +2866,11 @@ export class Game implements UIBridge {
       label = t('hud.free');
       title = t('place.bazaar');
       sub = t('menu.freeRideDesc');
+      if (this.drmcNavigation) {
+        title = t('place.drmc');
+        distance = Math.hypot(DRMC_GATE_ROAD_POINT.x - this.controller.x, DRMC_GATE_ROAD_POINT.z - this.controller.z);
+        sub = formatDistance(distance);
+      }
     } else if (this.pendingOffer) {
       label = this.pendingOffer.kind === 'market' ? t('mission.market') : t('mission.standard');
       title = t(this.pendingOffer.pickupName);
@@ -2899,6 +2925,7 @@ export class Game implements UIBridge {
       tanActive: this.controller.tanActive,
       teaAvailable: this.isTeaRestAvailable(isElectric),
       routePoints: this.activeRoute ? this.activeRoute.points : null,
+      drmcNavigation: this.mode === 'free' && this.drmcNavigation,
       jammedSegments: this.jammedList,
       detourActive: !!this.activeRoute?.avoidedJam,
       clockText: this.gameTime.formatted,
@@ -2936,7 +2963,7 @@ export class Game implements UIBridge {
     };
     this.ui.updateHud(hudState);
     this.ui.setMinimapPlayer(this.controller.x, this.controller.z, this.controller.yaw);
-    this.ui.setMinimapMarker(marker ? { x: marker.x, z: marker.z } : null);
+    this.ui.setMinimapMarker(marker ? { x: marker.x, z: marker.z } : this.drmcNavigation && this.mode === 'free' ? DRMC_GATE_ROAD_POINT : null);
   }
 
   private hintForState(): string | null {
