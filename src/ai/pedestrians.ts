@@ -417,8 +417,22 @@ export class PedestrianSystem {
     else if (this.activeCount > desired) {
       const tail = this.peds[this.activeCount - 1];
       // Do not erase someone walking beside the player or a mission caller.
-      if (tail && !tail.roadsideReserved && Math.hypot(tail.worldX - playerX, tail.worldZ - playerZ) > 50) {
-        this.activeCount--;
+      if (tail && !tail.roadsideReserved) {
+        if (Math.hypot(tail.worldX - playerX, tail.worldZ - playerZ) > 50) {
+          this.activeCount--;
+        } else {
+          // The last instance may be right beside the rider for hours. Keep
+          // that walker visible: retire a distant, unreserved walker instead.
+          // Reserved mission callers keep their stable index throughout.
+          for (let i = this.activeCount - 2; i >= 0; i--) {
+            const candidate = this.peds[i];
+            if (candidate.roadsideReserved || Math.hypot(candidate.worldX - playerX, candidate.worldZ - playerZ) <= 50) continue;
+            this.peds[i] = tail;
+            this.peds[this.activeCount - 1] = candidate;
+            this.activeCount--;
+            break;
+          }
+        }
       }
     }
     for (const mesh of [this.body, this.head, this.hair, this.armL, this.armR, this.legL, this.legR, this.skirt, this.bag]) {

@@ -42,6 +42,15 @@ try {
       await page.screenshot({ path: path.join(root, 'artifacts', `night-${hour}-${minute}.png`) });
     }
   }
+  // Clock jumps check lighting only; population transitions deliberately take
+  // real simulation time rather than deleting people in front of the player.
+  const population = await page.evaluate(() => {
+    const g = window.__banglarTesla;
+    g.debugSetTimeForTest(3, 0);
+    const before = g.peds.activePedestrianCount;
+    g.debugStepSim(18);
+    return { before, after: g.peds.activePedestrianCount, target: Math.round(g.peds.baseCount * g.peds.quietFactor) };
+  });
   for (const i of [0, 1, 2, 3, 7, 8, 9]) {
     if (Math.abs(samples[i].night - samples[i].glow) > 0.02 || Math.abs(samples[i].headlamp / 2.3 - samples[i].night) > 0.12) {
       throw new Error(`world or vehicle light snapped at ${i}: ${JSON.stringify(samples[i])}`);
@@ -50,5 +59,8 @@ try {
   if (!(samples[0].night < samples[1].night && samples[1].night < samples[2].night && samples[2].night < samples[3].night && samples[7].night > samples[8].night && samples[8].night > samples[9].night) || errors.length) {
     throw new Error(JSON.stringify({ samples, errors }));
   }
-  console.log('PASS browser dusk/midnight/dawn lighting sweep', JSON.stringify(samples));
+  if (!(population.after < population.before && population.after >= population.target)) {
+    throw new Error(`night-time population failed to ease: ${JSON.stringify(population)}`);
+  }
+  console.log('PASS browser dusk/midnight/dawn lighting and quiet-hours sweep', JSON.stringify({ samples, population }));
 } finally { await teardownHarness(browser, server); }

@@ -243,6 +243,7 @@ export class AudioEngine {
     if (this.turboLoop) loops++;
     if (this.sirenLoop) loops++;
     if (this.rainSource) loops++;
+    if (this.windSource) loops++;
     if (this.eMotorOsc) loops++;
     if (this.activeDialogueSource) loops++;
     return loops + this.activeOneShots;

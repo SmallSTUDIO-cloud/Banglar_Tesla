@@ -25,7 +25,7 @@ try {
   await page.waitForFunction('!!window.__banglarTesla');
   const read = () => page.evaluate(() => {
     const g = window.__banglarTesla;
-    return { weather: g.env.getWeather(), wetness: g.env.wetness,
+    return { weather: g.env.getWeather(), wetness: g.env.wetness, audioRain: g.audio.rainAmount,
       rainDrops: g.env.activeRainDrops, splashes: g.wheelSplashes.activeCount,
       poolChildren: g.wheelSplashes.group.children.length,
       visiblePuddleChunks: g.city.group.children.filter((o) => o.name.startsWith('roads.puddles') && o.visible).length,
@@ -55,9 +55,10 @@ try {
     g.settings.set({ weatherPreference: 'storm' });
     g.applySettings();
     g.env.strike(0.8, true);
+    g.debugStepSim(0.2);
     const result = { weather: g.env.getWeather(), wind: g.env.getWindStrength(),
       lightning: g.env.lightningLevel, sun: g.env.sun.intensity,
-      rainDrops: g.env.activeRainDrops };
+      rainDrops: g.env.activeRainDrops, audioRain: g.audio.rainAmount };
     return result;
   });
   await page.screenshot({ path: path.join(root, 'artifacts', 'rain-storm-flash.png') });
@@ -69,7 +70,7 @@ try {
   });
   const clear = await read();
   await page.screenshot({ path: path.join(root, 'artifacts', 'rain-cleared.png') });
-  if (!(rainy.rainDrops > 100 && rainy.splashes > 0 && rainy.poolChildren === 1 && rainy.visiblePuddleChunks > 0 && rainy.screenDrops === 10 && clear.rainDrops === 0 && clear.visiblePuddleChunks === 0 && clear.screenDrops === 0 && clear.splashes === 0 && clear.wetness < rainy.wetness && clear.geometries <= rainy.geometries + 8 && rainy.textures === clear.textures) || errors.length) {
+  if (!(rainy.rainDrops > 100 && rainy.audioRain > 0.8 && storm.audioRain > 0.75 && clear.audioRain < 0.05 && rainy.splashes > 0 && rainy.poolChildren === 1 && rainy.visiblePuddleChunks > 0 && rainy.screenDrops === 10 && clear.rainDrops === 0 && clear.visiblePuddleChunks === 0 && clear.screenDrops === 0 && clear.splashes === 0 && clear.wetness < rainy.wetness && clear.geometries <= rainy.geometries + 8 && rainy.textures === clear.textures) || errors.length) {
     throw new Error(JSON.stringify({ rainy, storm, clear, errors }));
   }
   console.log('PASS dynamic rain/wheel spray fade and stable browser resources', JSON.stringify({ rainy, storm, clear }));

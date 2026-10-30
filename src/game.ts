@@ -1295,7 +1295,9 @@ export class Game implements UIBridge {
 
     // -------- audio
     this.audio.setVehicleSpeed(this.controller.speed, input.throttle);
-    this.audio.setRain(this.env.getWeather() === 'rain' ? 1 : 0, wetness);
+    // Keep audible precipitation synchronized with visual rain through storm and
+    // gradual clearing, rather than cutting it off at the weather label change.
+    this.audio.setRain(this.weatherDirector.weatherBlend.rain, wetness);
     this.audio.setCrowd(clamp01(this.peds.activePedestrianCount / 75));
 
     // -------- HUD
