@@ -729,6 +729,16 @@ export class Game implements UIBridge {
                             try {
                               this.renderer.compile(this.scene, this.camera);
                               this.renderer.render(this.scene, this.camera);
+                              // Mirror render targets use a different output color space
+                              // from the main canvas; warm those shader variants and
+                              // the two display planes behind the loading screen too.
+                              this.driverMirrors.update(performance.now(), true,
+                                this.controller.x, this.controller.y, this.controller.z,
+                                this.controller.yaw, this.player.root);
+                              this.driverMirrors.draw(this.camera.aspect);
+                              this.driverMirrors.update(performance.now(), false,
+                                this.controller.x, this.controller.y, this.controller.z,
+                                this.controller.yaw, this.player.root);
                             } finally {
                               this.tanWindLines.visible = false;
                               this.player.setNightLighting(false);

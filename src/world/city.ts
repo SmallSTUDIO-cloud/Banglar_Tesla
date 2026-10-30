@@ -1377,6 +1377,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
   const withPrewarmState = (run: () => void): void => {
     const prevNight = nightGroup.visible;
+    const prevPuddles = puddleMeshes.map((mesh) => mesh.visible);
+    // Wet patches are normally hidden in sunlight. Upload/compile them at boot
+    // so the first monsoon does not allocate seven geometries mid-drive.
+    for (const mesh of puddleMeshes) mesh.visible = true;
     const prevCast = shadowCasters.map((sc) => sc.mesh.castShadow);
     nightGroup.visible = true;
     for (let i = 0; i < shadowCasters.length; i++) shadowCasters[i].mesh.castShadow = true;
@@ -1384,6 +1388,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       run();
     } finally {
       nightGroup.visible = prevNight;
+      for (let i = 0; i < puddleMeshes.length; i++) puddleMeshes[i].visible = prevPuddles[i];
       for (let i = 0; i < shadowCasters.length; i++) shadowCasters[i].mesh.castShadow = prevCast[i];
     }
   };
