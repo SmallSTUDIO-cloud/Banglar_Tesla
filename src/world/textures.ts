@@ -84,6 +84,47 @@ export function makeTexture(
 }
 
 /* ----------------------------------------------------------- road + ground */
+/** Packed-earth and worn courtyard paving where street-aligned buildings leave
+ * open frontage. One repeatable 256px shared texture replaces the flat gray
+ * ground plane; roads/sidewalks remain their own materials and geometry. */
+export function courtyardGroundTexture(): THREE.Texture {
+  return makeTexture('courtyard.ground', 256, 256, (ctx, w, h) => {
+    const rng = mulberry32(70712);
+    ctx.fillStyle = '#888070';
+    ctx.fillRect(0, 0, w, h);
+    // No uniformly repeated checkerboard: short irregular old brick fragments,
+    // silt, shadowed grout, and fine gravel at three physical scales.
+    for (let i = 0; i < 115; i++) {
+      const x = rng() * w, y = rng() * h;
+      const v = 103 + Math.floor(rng() * 53);
+      ctx.fillStyle = `rgba(${v + 8},${v - 2},${v - 17},${0.12 + rng() * 0.18})`;
+      ctx.fillRect(x, y, 6 + rng() * 16, 3 + rng() * 8);
+      if (rng() < 0.3) {
+        ctx.fillStyle = 'rgba(45,39,32,0.17)';
+        ctx.fillRect(x, y + 7, 15 + rng() * 11, 0.7);
+      }
+    }
+    for (let i = 0; i < 7000; i++) {
+      const gray = 69 + Math.floor(rng() * 91);
+      ctx.fillStyle = `rgba(${gray + 6},${gray},${gray - 12},${0.11 + rng() * 0.31})`;
+      ctx.fillRect(rng() * w, rng() * h, rng() < 0.22 ? 2 : 1, 1);
+    }
+    ctx.strokeStyle = 'rgba(49,45,39,0.25)';
+    ctx.lineWidth = 0.8;
+    for (let c = 0; c < 12; c++) {
+      ctx.beginPath();
+      let x = rng() * w, y = rng() * h;
+      ctx.moveTo(x, y);
+      for (let k = 0; k < 3; k++) {
+        x += (rng() - 0.5) * 16;
+        y += (rng() - 0.5) * 14;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }, { repeat: [64, 64] });
+}
+
 
 export function asphaltTexture(): { map: THREE.Texture; rough: THREE.Texture } {
   const map = makeTexture(

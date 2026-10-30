@@ -33,6 +33,7 @@ import {
 import {
   SignAtlas,
   asphaltTexture,
+  courtyardGroundTexture,
   brickTexture,
   plasterFacadeTexture,
   shutterTexture,
@@ -70,6 +71,14 @@ export interface SpeedHump {
   axis: 'x' | 'z';
 }
 
+export interface AuthoredPothole {
+  x: number;
+  z: number;
+  radius: number;
+  depth: number;
+  roadId: string;
+}
+
 interface SurfaceBump {
   x: number;
   z: number;
@@ -82,6 +91,8 @@ export interface CityResult {
   colliders: Collider[];
   breakableLamps: BreakableProp[];
   humps: SpeedHump[];
+  potholes: readonly AuthoredPothole[];
+  potholeDepthAt: (x: number, z: number) => number;
   heightAt: (x: number, z: number) => number;
   lampPositions: THREE.Vector3[];
   signAnchors: THREE.Vector3[];
@@ -90,6 +101,10 @@ export interface CityResult {
   setWetness: (wet: number) => void;
   setNight: (on: boolean) => void;
   litterCount: number;
+  infillCount: number;
+  courtyardCount: number;
+  courtyardSites: readonly { x: number; z: number }[];
+  pocketPlazaCount: number;
   updateStreetLitter: (dt: number, windStrength: number, playerX: number, playerZ: number) => void;
   registerShadowCasters: (root: THREE.Object3D) => void;
   updateShadowFocus: (x: number, z: number, shadowRadius: number, shadowsEnabled: boolean, force?: boolean) => void;
@@ -127,6 +142,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const breakableLamps: BreakableProp[] = [];
   const humps: SpeedHump[] = [];
   const microBumps: SurfaceBump[] = [];
+  const potholes: AuthoredPothole[] = [];
   const lampPositions: THREE.Vector3[] = [];
   const signAnchors: THREE.Vector3[] = [];
   const placeAnchors = new Map<string, THREE.Vector3>();
@@ -181,7 +197,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   // Ground base plane beneath everything (urban earth / courtyard compound floor)
   const groundPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(WORLD.groundExtent * 2, WORLD.groundExtent * 2),
-    new THREE.MeshLambertMaterial({ color: 0x6f6c62 }),
+    new THREE.MeshLambertMaterial({ map: courtyardGroundTexture(), color: 0xffffff }),
   );
   groundPlane.rotation.x = -Math.PI / 2;
   groundPlane.position.y = -0.02;
@@ -486,6 +502,27 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       }
     }
 
+    // Curated rough-road contact zones: away from junctions, destinations,
+    // spawn, campus and other hazards. Their exact polygon is shared with physics.
+    if (potholes.length < 8 && seg.kind !== 'gali' && seg.length > 58) {
+      const d = seg.length * 0.56;
+      const off = Math.min(1.15, seg.halfWidth * 0.32);
+      const px = seg.ax + seg.ux * d + seg.leftX * off;
+      const pz = seg.az + seg.uz * d + seg.leftZ * off;
+      if (!isDrmcKeepClear(px, pz, 5) &&
+        Math.hypot(px - WORLD.playerSpawn.x, pz - WORLD.playerSpawn.z) > 20 &&
+        PLACES.every((place) => Math.hypot(place.x - px, place.z - pz) > 16) &&
+        potholes.every((hole) => Math.hypot(hole.x - px, hole.z - pz) > 35)) {
+        const radius = 0.78;
+        bRoad.cylinder({ x: px, y: 0.017, z: pz }, radius + 0.17, 0.006, '#b8a995');
+        bRoad.cylinder({ x: px, y: 0.019, z: pz }, radius + 0.065, 0.007, '#484139');
+        bRoad.cylinder({ x: px, y: 0.021, z: pz }, radius, 0.006, '#211f1c');
+        // Shallow dark center, visible pale ragged rim, no actual mesh hole.
+        potholes.push({ x: px, z: pz, radius, depth: 0.065, roadId: seg.id });
+        microBumps.push({ x: px, z: pz, radius, deltaY: -0.065 });
+      }
+    }
+
     // ------- 3. VALIDATED STREETLIGHTS, ELECTRIC POLES & TREES (Section 16) --
     // Every single pole/lamp/tree is checked via `isClearOfRoads(x, z, 0.95)`!
     const lampSpacing = seg.kind === 'main' ? 28 : seg.kind === 'medium' ? 34 : 44;
@@ -598,12 +635,34 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   }
 
   // ---------------- 4. DENSE STREET-ALIGNED MOHAMMADPUR BUILDINGS (Section 9)
-  interface PlacedCircle {
+  interface PlacedFootprint {
     x: number;
     z: number;
-    r: number;
+    halfX: number;
+    halfZ: number;
+    yaw: number;
+    radius: number;
   }
-  const placedBuildings: PlacedCircle[] = [];
+  const placedBuildings: PlacedFootprint[] = [];
+
+  // Bounding circles used to reject neighboring angled facades with large
+  // empty wedges between their real footprints. A SAT test allows close,
+  // staggered street frontage without merging buildings or narrowing roads.
+  const footprintSeparated = (a: PlacedFootprint, b: PlacedFootprint, gap: number): boolean => {
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    if (dx * dx + dz * dz >= (a.radius + b.radius + gap) ** 2) return true;
+    const ac = Math.cos(a.yaw), as = Math.sin(a.yaw);
+    const bc = Math.cos(b.yaw), bs = Math.sin(b.yaw);
+    const axes: [number, number][] = [[ac, -as], [as, ac], [bc, -bs], [bs, bc]];
+    for (const [ux, uz] of axes) {
+      const projectedDistance = Math.abs(dx * ux + dz * uz);
+      const ra = a.halfX * Math.abs(ux * ac - uz * as) + a.halfZ * Math.abs(ux * as + uz * ac);
+      const rb = b.halfX * Math.abs(ux * bc - uz * bs) + b.halfZ * Math.abs(ux * bs + uz * bc);
+      if (projectedDistance >= ra + rb + gap) return true;
+    }
+    return false;
+  };
 
   const canPlaceBuilding = (
     cx: number,
@@ -612,17 +671,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     depth: number,
     yaw: number,
   ): boolean => {
-    // Reject the whole footprint, not only its centre, near campus walls/aprons.
     if (isDrmcKeepClear(cx, cz, Math.hypot(width, depth) * 0.5 + 0.8)) return false;
     if (!isFootprintClearOfCorridor(cx, cz, width, depth, yaw, 0.55)) return false;
-    const rad = Math.hypot(width * 0.5, depth * 0.5) * 0.84;
-    for (let i = 0; i < placedBuildings.length; i++) {
-      const pb = placedBuildings[i];
-      const dx = cx - pb.x;
-      const dz = cz - pb.z;
-      if (dx * dx + dz * dz < (rad + pb.r) * (rad + pb.r)) return false;
-    }
-    return true;
+    const candidate: PlacedFootprint = {
+      x: cx, z: cz, halfX: width / 2, halfZ: depth / 2, yaw,
+      radius: Math.hypot(width, depth) / 2,
+    };
+    return placedBuildings.every((other) => footprintSeparated(candidate, other, 1.15));
   };
 
   let signCursor = 0;
@@ -642,9 +697,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
         if (canPlaceBuilding(cx, cz, bDepth, bWidth, yaw)) {
           placedBuildings.push({
-            x: cx,
-            z: cz,
-            r: Math.hypot(bWidth * 0.5, bDepth * 0.5) * 0.82,
+            x: cx, z: cz, halfX: bDepth / 2, halfZ: bWidth / 2, yaw,
+            radius: Math.hypot(bDepth, bWidth) / 2,
           });
 
           const floors =
@@ -713,6 +767,22 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                   );
                 }
               }
+            }
+          }
+
+          // Previously blank ground-floor side walls now have service doors,
+          // ventilation grilles and drain downpipes; all remain inside the OBB.
+          if (bWidth > 8.5) {
+            for (const sideDir of [-1, 1] as const) {
+              const sideX = cx + seg.ux * (bWidth * 0.5 + 0.025) * sideDir;
+              const sideZ = cz + seg.uz * (bWidth * 0.5 + 0.025) * sideDir;
+              const sideFace = sideDir === 1 ? sideYawL : sideYawR;
+              bShut.quad({ x: sideX - fx * 1.35, y: 1.15, z: sideZ - fz * 1.35 },
+                1.55, 2.1, '#4d5b59', { y: sideFace });
+              bDet.box({ x: sideX + fx * 0.9, y: 2.0, z: sideZ + fz * 0.9 },
+                { x: 0.84, y: 0.45, z: 0.08 }, '#41525a', { y: sideFace });
+              bDet.cylinder({ x: sideX + fx * 2.2, y: height * 0.46,
+                z: sideZ + fz * 2.2 }, 0.035, height * 0.89, '#5c6260');
             }
           }
 
@@ -882,6 +952,142 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         }
       }
     }
+  }
+
+  // Slender infill where the primary apartment pass left an actual empty lot.
+  // The same oriented-footprint/DRMC/road-corridor checks protect driving width.
+  let infillCount = 0;
+  const infillBySector = new Uint8Array(SECTOR_COUNT);
+  for (const seg of ROAD_SEGMENTS) {
+    if (infillCount >= 32) break;
+    const yaw = Math.atan2(seg.ux, seg.uz);
+    for (const side of [-1, 1] as const) {
+      for (let along = 16; along < seg.length - 16 && infillCount < 32; along += 6.5) {
+        const width = 4.9, depth = 6.4;
+        const frontDist = seg.halfWidth + seg.sidewalk + 1.0;
+        const cx = seg.ax + seg.ux * along + seg.leftX * (frontDist + depth / 2) * side;
+        const cz = seg.az + seg.uz * along + seg.leftZ * (frontDist + depth / 2) * side;
+        if (!canPlaceBuilding(cx, cz, depth, width, yaw)) continue;
+        const sec = sectorIndex(cx, cz);
+        // Distribute the frontage pass across the city instead of consuming
+        // the whole budget on the first long road's empty parcels.
+        if (infillBySector[sec] >= 3) continue;
+        const faceX = -seg.leftX * side, faceZ = -seg.leftZ * side;
+        const frontX = cx + faceX * (depth / 2 + 0.025);
+        const frontZ = cz + faceZ * (depth / 2 + 0.025);
+        const faceYaw = Math.atan2(faceX, faceZ);
+        const tint = PLASTER_TINTS[(infillCount * 3 + sec) % PLASTER_TINTS.length];
+        sectorWalls[sec].box({ x: cx, y: 3.1, z: cz }, { x: depth, y: 6.2, z: width }, tint, { y: yaw });
+        sectorDetails[sec].box({ x: cx, y: 6.28, z: cz }, { x: depth + 0.15, y: 0.16, z: width + 0.15 }, '#9d9888', { y: yaw });
+        sectorShutters[sec].quad({ x: frontX, y: 1.28, z: frontZ }, 3.1, 2.5, '#a4aeb4', { y: faceYaw });
+        sectorDetails[sec].box({ x: frontX + faceX * 0.18, y: 4.8, z: frontZ + faceZ * 0.18 },
+          { x: 1.7, y: 1.15, z: 0.10 }, '#213940', { y: faceYaw });
+        sectorSigns[sec].quad({ x: frontX + faceX * 0.06, y: 3.17, z: frontZ + faceZ * 0.06 },
+          3.4, 0.72, '#ffffff', { y: faceYaw }, signAtlas.slot(signCursor++));
+        placedBuildings.push({ x: cx, z: cz, halfX: depth / 2, halfZ: width / 2,
+          yaw, radius: Math.hypot(depth, width) / 2 });
+        const ex = Math.abs(Math.cos(yaw)) * depth / 2 + Math.abs(Math.sin(yaw)) * width / 2;
+        const ez = Math.abs(Math.sin(yaw)) * depth / 2 + Math.abs(Math.cos(yaw)) * width / 2;
+        colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez,
+          height: 6.2, cameraBlocking: true, kind: 'building', cx, cz,
+          halfX: depth / 2, halfZ: width / 2, yaw });
+        infillCount++;
+        infillBySector[sec]++;
+      }
+    }
+  }
+
+  // Genuine open frontage is often too shallow for even a two-storey shop.
+  // Fill eligible lots with small roofed tea stalls / planted courtyards, not
+  // solid walls or giant floor slabs. Reject every road/campus/building overlap
+  // using the same oriented footprint checker as the apartments. These are
+  // set back from the footpath so pedestrians and junction sightlines survive.
+  let courtyardCount = 0;
+  const courtyardSites: { x: number; z: number }[] = [];
+  const courtyardBySector = new Uint8Array(SECTOR_COUNT);
+  for (const seg of ROAD_SEGMENTS) {
+    if (courtyardCount >= 36) break;
+    const yaw = Math.atan2(seg.ux, seg.uz);
+    for (const side of [-1, 1] as const) {
+      for (let along = 18; along < seg.length - 18 && courtyardCount < 36; along += 9.5) {
+        const width = 5.2, depth = 3.4;
+        const distance = seg.halfWidth + seg.sidewalk + 1.25 + depth / 2;
+        const x = seg.ax + seg.ux * along + seg.leftX * distance * side;
+        const z = seg.az + seg.uz * along + seg.leftZ * distance * side;
+        const sec = sectorIndex(x, z);
+        if (courtyardBySector[sec] >= 3 || !canPlaceBuilding(x, z, depth, width, yaw)) continue;
+        const frontX = -seg.leftX * side, frontZ = -seg.leftZ * side;
+        const d = sectorDetails[sec];
+        // Terracotta/brick pavers break the monotonous gray ground plane;
+        // a narrow shop counter and woven roof identify the occupied parcel.
+        d.box({ x, y: 0.035, z }, { x: depth, y: 0.07, z: width },
+          courtyardCount % 3 === 0 ? '#92705b' : '#a08b72', { y: yaw });
+        d.box({ x: x - frontX * 0.85, y: 0.75, z: z - frontZ * 0.85 },
+          { x: width - 0.45, y: 0.12, z: 0.72 }, '#735039', { y: Math.atan2(frontX, frontZ) });
+        d.box({ x, y: 2.6, z }, { x: depth + 0.4, y: 0.13, z: width + 0.45 },
+          ['#ac4933', '#365d51', '#ad823d'][courtyardCount % 3], { y: yaw, x: 0.06 });
+        for (const end of [-1, 1] as const) {
+          const px = x + seg.ux * (width * 0.43) * end + frontX * 0.85;
+          const pz = z + seg.uz * (width * 0.43) * end + frontZ * 0.85;
+          d.box({ x: px, y: 1.3, z: pz }, { x: 0.1, y: 2.6, z: 0.1 }, '#574b38');
+          d.cylinder({ x: px - frontX * 0.45, y: 0.22, z: pz - frontZ * 0.45 },
+            0.25, 0.43, '#8f5140');
+          d.cone({ x: px - frontX * 0.45, y: 0.74, z: pz - frontZ * 0.45 },
+            0.37, 0.85, '#346445');
+        }
+        placedBuildings.push({ x, z, halfX: depth / 2, halfZ: width / 2,
+          yaw, radius: Math.hypot(depth, width) / 2 });
+        courtyardSites.push({ x, z });
+        courtyardBySector[sec]++;
+        courtyardCount++;
+      }
+    }
+  }
+
+  // The narrow open lot behind the chase corridor was visibly an unbroken
+  // gray void. Treat it as a pocket tea court instead of forcing a tall block
+  // between two apartment footprints. The same SAT, road and campus checks
+  // prevent this authored frontage from becoming a junction obstruction.
+  let pocketPlazaCount = 0;
+  let plazaX = -13, plazaZ = 12;
+  let plazaFits = false;
+  for (let radius = 0; radius <= 4 && !plazaFits; radius++) {
+    for (let gx = -radius; gx <= radius && !plazaFits; gx++) {
+      for (let gz = -radius; gz <= radius && !plazaFits; gz++) {
+        if (Math.max(Math.abs(gx), Math.abs(gz)) !== radius) continue;
+        const x = -13 + gx * 0.75, z = 12 + gz * 0.75;
+        if (canPlaceBuilding(x, z, 2.4, 2.4, 0)) {
+          plazaX = x; plazaZ = z; plazaFits = true;
+        }
+      }
+    }
+  }
+  if (plazaFits) {
+    const d = sectorDetails[sectorIndex(plazaX, plazaZ)];
+    const sgn = sectorSigns[sectorIndex(plazaX, plazaZ)];
+    // Brick paving is raised just 4 cm and stays within the empty parcel.
+    d.box({ x: plazaX, y: 0.025, z: plazaZ }, { x: 2.4, y: 0.05, z: 2.4 }, '#a17960');
+    d.box({ x: plazaX, y: 0.70, z: plazaZ - 0.45 }, { x: 2.15, y: 1.40, z: 0.58 }, '#786c51');
+    d.box({ x: plazaX, y: 1.25, z: plazaZ + 0.16 }, { x: 2.1, y: 0.14, z: 0.62 }, '#664536');
+    d.box({ x: plazaX, y: 2.48, z: plazaZ }, { x: 2.5, y: 0.13, z: 2.3 }, '#b04b35');
+    for (const end of [-1, 1] as const) {
+      d.box({ x: plazaX + end * 1.02, y: 1.25, z: plazaZ + 0.95 },
+        { x: 0.10, y: 2.5, z: 0.10 }, '#624b34');
+      d.cylinder({ x: plazaX + end * 0.98, y: 0.2, z: plazaZ + 1.18 },
+        0.20, 0.40, '#a25d44');
+      d.cone({ x: plazaX + end * 0.98, y: 0.62, z: plazaZ + 1.18 },
+        0.29, 0.78, '#427049');
+    }
+    sgn.quad({ x: plazaX, y: 1.95, z: plazaZ + 0.78 }, 1.9, 0.55,
+      '#ffffff', { y: 0 }, signAtlas.slot(signCursor++));
+    placedBuildings.push({ x: plazaX, z: plazaZ, halfX: 1.2, halfZ: 1.2,
+      yaw: 0, radius: Math.hypot(1.2, 1.2) });
+    // A low, tight counter collider rather than a full roof footprint keeps
+    // the adjacent side lane traversable for both the player and traffic.
+    colliders.push({ minX: plazaX - 1.05, maxX: plazaX + 1.05,
+      minZ: plazaZ - 0.75, maxZ: plazaZ - 0.15, height: 1.4,
+      cameraBlocking: false, kind: 'building' });
+    pocketPlazaCount = 1;
   }
 
   // Iconic Mohammadpur Mosque Landmarks (Shia Mosque near Ring×Tajmahal & Satmasjid near Satmasjid Rd)
@@ -1129,6 +1335,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     return h;
   };
 
+  const potholeDepthAt = (x: number, z: number): number => {
+    // Eight authored zones maximum; no per-frame allocations or colliders.
+    let depth = 0;
+    for (const hole of potholes) {
+      const distance = Math.hypot(x - hole.x, z - hole.z);
+      if (distance < hole.radius) depth = Math.max(depth, hole.depth * (1 - distance / hole.radius));
+    }
+    return depth;
+  };
+
   const dryColor = new THREE.Color('#ffffff');
   const wetColor = new THREE.Color('#7c828c');
   const setWetness = (wet: number): void => {
@@ -1258,6 +1474,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     colliders,
     breakableLamps,
     humps,
+    potholes,
+    potholeDepthAt,
     heightAt,
     lampPositions,
     signAnchors,
@@ -1266,6 +1484,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     setWetness,
     setNight,
     litterCount: litterItems.length,
+    infillCount,
+    courtyardCount,
+    courtyardSites,
+    pocketPlazaCount,
     updateStreetLitter,
     registerShadowCasters,
     updateShadowFocus,
