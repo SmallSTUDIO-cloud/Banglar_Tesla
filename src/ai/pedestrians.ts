@@ -11,6 +11,7 @@
  *     per-frame heap allocations and 100% preserved crowd density!
  */
 
+import { quietTrafficFactor } from './traffic';
 import { crossesDrmcCampus, isInsideDrmcCampus } from '../world/drmcGeo';
 import * as THREE from 'three';
 import { QUALITY, type QualitySettings } from '../core/config';
@@ -256,6 +257,9 @@ export class PedestrianSystem {
   private bag: THREE.InstancedMesh;
   private maxCapacity: number;
   private activeCount = 0;
+  private baseCount = 68;
+  private quietFactor = 1;
+  private populationTick = 0;
 
   private rng = mulberry32(73319);
   private matrix = new THREE.Matrix4();
@@ -381,7 +385,8 @@ export class PedestrianSystem {
   }
 
   setQuality(quality: QualitySettings): void {
-    this.activeCount = clamp(quality.pedestrians, 8, this.maxCapacity);
+    this.baseCount = clamp(quality.pedestrians, 8, this.maxCapacity);
+    this.activeCount = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
     for (const mesh of [
       this.body,
       this.head,
@@ -397,6 +402,28 @@ export class PedestrianSystem {
     }
     // Only torso casts into shadow map (cuts 8/9ths of pedestrian shadow draw calls!)
     this.body.castShadow = quality.shadows;
+  }
+
+  setTimeMinutes(minutes: number): void {
+    this.quietFactor = quietTrafficFactor(minutes);
+  }
+
+  private adjustPopulation(dt: number, playerX: number, playerZ: number): void {
+    this.populationTick += dt;
+    if (this.populationTick < 1.25) return;
+    this.populationTick = 0;
+    const desired = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
+    if (this.activeCount < desired) this.activeCount++;
+    else if (this.activeCount > desired) {
+      const tail = this.peds[this.activeCount - 1];
+      // Do not erase someone walking beside the player or a mission caller.
+      if (tail && !tail.roadsideReserved && Math.hypot(tail.worldX - playerX, tail.worldZ - playerZ) > 50) {
+        this.activeCount--;
+      }
+    }
+    for (const mesh of [this.body, this.head, this.hair, this.armL, this.armR, this.legL, this.legR, this.skirt, this.bag]) {
+      mesh.count = this.activeCount;
+    }
   }
 
   private pickPathIndex(preferBusy: boolean): number {
@@ -547,6 +574,7 @@ export class PedestrianSystem {
     playerYaw = 0,
   ): void {
     if (PED_PATHS.length === 0) return;
+    this.adjustPopulation(dt, playerX, playerZ);
     this.globalReactCooldown = Math.max(0, this.globalReactCooldown - dt);
 
     const absSpeed = Math.abs(playerSpeed);

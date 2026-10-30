@@ -133,6 +133,39 @@ for (const shot of shots) {
     }, shot);
     await new Promise((r) => setTimeout(r, 900));
     await page.screenshot({ path: path.join(out, `shot-${shot}.png`) });
+  } else if (shot === 'density-town' || shot === 'density-north' || shot === 'density-south') {
+    await page.evaluate((view) => {
+      const g = window.__banglarTesla;
+      g.debugStartMode('free'); g.debugSetPhase('golden', 'sunny');
+      g.ui.show(null); g.debugFreeCamera = true;
+      // Fixed gameplay-eye viewpoints and lens for repeatable frontage comparisons.
+      const views = {
+        'density-town': [[42, 2.1, 104], [115, 2.1, 83]],
+        'density-north': [[-115, 2.1, -133], [0, 2.1, -167]],
+        'density-south': [[-103, 2.1, 183], [-16, 2.1, 133]],
+      };
+      const [eye, target] = views[view];
+      g.camera.position.set(...eye); g.camera.lookAt(...target);
+      g.camera.fov = 58; g.camera.updateProjectionMatrix();
+    }, shot);
+    await new Promise((r) => setTimeout(r, 900));
+    await page.screenshot({ path: path.join(out, `shot-${shot}.png`) });
+  } else if (shot === 'drmc-approach' || shot === 'drmc-interior' || shot === 'drmc-roads') {
+    await page.evaluate((view) => {
+      const g = window.__banglarTesla;
+      g.debugStartMode('free'); g.debugSetPhase('golden', 'sunny');
+      g.ui.show(null); g.debugFreeCamera = true;
+      const views = {
+        'drmc-approach': [[28, 2.6, -48], [40, 2.8, -62]],
+        'drmc-interior': [[55, 2.8, -85], [84, 1.8, -105]],
+        'drmc-roads': [[89, 3.2, -83], [100, 2, -114]],
+      };
+      const [eye, target] = views[view];
+      g.camera.position.set(...eye); g.camera.lookAt(...target);
+      g.camera.fov = 57; g.camera.updateProjectionMatrix();
+    }, shot);
+    await new Promise((r) => setTimeout(r, 900));
+    await page.screenshot({ path: path.join(out, `shot-${shot}.png`) });
   } else if (shot === 'garage') {
     await page.evaluate(() => window.__banglarTesla.debugOpenGarageForTest());
     await new Promise((r) => setTimeout(r, 1500));

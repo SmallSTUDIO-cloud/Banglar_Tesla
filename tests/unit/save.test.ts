@@ -132,6 +132,43 @@ describe('settings', () => {
     expect(reloaded.get().music).toBeCloseTo(0.2);
   });
 
+  it('defaults old preferences to Auto and persists every weather choice without altering progress', () => {
+    storage.setItem('banglar-tesla.settings.v1', JSON.stringify({ language: 'en', quality: 'high' }));
+    const store = new SettingsStore(storage);
+    expect(store.get().weatherPreference).toBe('auto');
+    const progress = createDefaultProgress(100);
+    progress.balance = 888;
+    new SaveStore(storage).save(progress, 100);
+    for (const weatherPreference of ['sunny', 'overcast', 'rain', 'windy', 'storm', 'auto'] as const) {
+      store.set({ weatherPreference });
+      expect(new SettingsStore(storage).get().weatherPreference).toBe(weatherPreference);
+      expect(new SaveStore(storage).load().progress?.balance).toBe(888);
+    }
+    storage.setItem('banglar-tesla.settings.v1', JSON.stringify({ weatherPreference: 'hurricane' }));
+    expect(new SettingsStore(storage).get().weatherPreference).toBe('auto');
+  });
+
+  it('migrates old quality and rejects invalid graphics fields without changing weather/audio', () => {
+    storage.setItem('banglar-tesla.settings.v1', JSON.stringify({ quality: 'high', weatherPreference: 'storm', master: 0.2 }));
+    const old = new SettingsStore(storage);
+    expect(old.get().graphicsProfile).toBe('high');
+    expect(old.get().rainMode).toBe('normal');
+    old.set({ graphicsProfile: 'custom', rainMode: 'dynamic', rainDensity: 'high', wetRoad: false });
+    const reloaded = new SettingsStore(storage);
+    expect(reloaded.get().graphicsProfile).toBe('custom');
+    expect(reloaded.get().rainMode).toBe('dynamic');
+    expect(reloaded.get().rainDensity).toBe('high');
+    expect(reloaded.get().wetRoad).toBe(false);
+    expect(reloaded.get().weatherPreference).toBe('storm');
+    expect(reloaded.get().master).toBe(0.2);
+    storage.setItem('banglar-tesla.settings.v1', JSON.stringify({ graphicsProfile: 'ultra', rainMode: 'wet', rainDensity: null, renderScale: NaN }));
+    const invalid = new SettingsStore(storage).get();
+    expect(invalid.graphicsProfile).toBe('balanced');
+    expect(invalid.rainMode).toBe('normal');
+    expect(invalid.rainDensity).toBe('medium');
+    expect(Number.isFinite(invalid.renderScale)).toBe(true);
+  });
+
   it('clamps out-of-range values', () => {
     const store = new SettingsStore(storage);
     store.set({ music: 5, renderScale: -2, deadzone: 99 });

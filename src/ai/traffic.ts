@@ -29,7 +29,40 @@ import {
   type TrafficType,
 } from './vehicles';
 
+/** Signed forward corridor: rear and side approaches cannot trigger a stop. */
+export function forwardPlayerGap(
+  npcX: number, npcZ: number, yaw: number, halfWidth: number, halfLength: number,
+  playerX: number, playerZ: number,
+): number | null {
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const dx = playerX - npcX, dz = playerZ - npcZ;
+  const forward = dx * fx + dz * fz;
+  const lateral = Math.abs(dx * fz - dz * fx);
+  if (forward <= 0.4 || forward >= 18 || lateral >= halfWidth + 1.05) return null;
+  return forward - (halfLength + 1.35);
+}
+
+/** Smooth quiet-hours population: no hard cut at midnight or 07:00. */
+export function quietTrafficFactor(minutes: number): number {
+  const m = ((minutes % 1440) + 1440) % 1440;
+  if (m < 210) return 0.9 - (m / 210) * 0.45;
+  if (m < 300) return 0.45;
+  if (m < 420) return 0.45 + ((m - 300) / 120) * 0.55;
+  if (m < 1320) return 1;
+  return 1 - ((m - 1320) / 120) * 0.1;
+}
+
 export type VehicleKind = TrafficType;
+
+/** Suspension response varies with wheelbase/mass, bounded so no AI launches. */
+export function npcPotholeResponse(kind: VehicleKind, speed: number, depth: number): number {
+  const multiplier: Record<VehicleKind, number> = {
+    motorbike: 1.1, rickshaw: 1, easybike: 0.85, cng: 0.78,
+    car: 0.72, van: 0.65, truck: 0.5, bus: 0.42,
+  };
+  return Math.min(0.075, Math.max(0, depth) * Math.min(1.3, Math.abs(speed) / 6) * multiplier[kind]);
+}
+
 
 export interface TrafficObstacle {
   x: number;
@@ -56,6 +89,11 @@ interface ActiveTrafficAgent extends InstancedVehicleState {
   stuckTimer: number;
   honkTimer: number;
   farAccum: number;
+  /** Damp lateral discontinuity at lane junctions without jumping the vehicle. */
+  turnOffsetX: number;
+  turnOffsetZ: number;
+  potholeDepth: number;
+  bumpOffset: number;
   roadRageHold: number;
   rageImmuneTimer: number;
 }
@@ -93,7 +131,11 @@ export class TrafficSystem {
   private playerX = 0;
   private playerZ = 0;
   private viewDistSq = 185 * 185;
+  private baseTrafficCount = 32;
+  private quietFactor = 1;
+  private populationTick = 0;
   private heightAt: (x: number, z: number) => number = () => 0.014;
+  private potholeAt: (x: number, z: number) => number = () => 0;
   congestionEpoch = 1;
 
   onHorn?: (x: number, z: number, kind: VehicleKind) => void;
@@ -121,6 +163,10 @@ export class TrafficSystem {
     this.fleet.withPrewarmState(run);
   }
 
+  setPotholeSampler(fn: (x: number, z: number) => number): void {
+    this.potholeAt = fn;
+  }
+
   setHeightSampler(fn: (x: number, z: number) => number): void {
     this.heightAt = fn;
   }
@@ -133,7 +179,8 @@ export class TrafficSystem {
   setQuality(quality: QualitySettings): void {
     const visR = Math.max(120, quality.viewDistance + 15);
     this.viewDistSq = visR * visR;
-    const target = Math.max(8, quality.trafficCount);
+    this.baseTrafficCount = quality.trafficCount;
+    const target = Math.max(8, Math.round(quality.trafficCount * this.quietFactor));
     while (this.agents.length > target) {
       this.agents.pop();
     }
@@ -143,12 +190,37 @@ export class TrafficSystem {
     this.fleet.sync(this.agents);
   }
 
+  setTimeMinutes(minutes: number): void {
+    this.quietFactor = quietTrafficFactor(minutes);
+  }
+
+  private adjustPopulation(dt: number): void {
+    this.populationTick += dt;
+    if (this.populationTick < 2) return;
+    this.populationTick = 0;
+    const target = Math.max(8, Math.round(this.baseTrafficCount * this.quietFactor));
+    if (this.agents.length < target) {
+      this.agents.push(this.spawnAgent(this.agents.length));
+    } else if (this.agents.length > target) {
+      const last = this.agents[this.agents.length - 1];
+      // Keep near traffic in place, especially during a player collision or race.
+      if (Math.hypot(last.x - this.playerX, last.z - this.playerZ) > 75) this.agents.pop();
+    }
+  }
+
   private pickVehicleSpec(narrowLane: boolean): (typeof FLEET_DISTRIBUTION)[number] {
     let r = this.rng();
     for (let i = 0; i < FLEET_DISTRIBUTION.length; i++) {
       const item = FLEET_DISTRIBUTION[i];
       if (narrowLane && (item.kind === 'bus' || item.kind === 'truck')) continue;
-      if (r <= item.weight) return item;
+      if (r <= item.weight) {
+        // CNGs are less frequent in the quiet hours; existing nearby vehicles
+        // are never swapped out merely because the clock ticked.
+        if (item.kind === 'cng' && this.quietFactor < 0.75 && this.rng() > this.quietFactor) {
+          return FLEET_DISTRIBUTION[0];
+        }
+        return item;
+      }
       r -= item.weight;
     }
     return FLEET_DISTRIBUTION[0];
@@ -196,6 +268,10 @@ export class TrafficSystem {
       stuckTimer: 0,
       honkTimer: 1 + this.rng() * 5,
       farAccum: (index % 5) * 0.016,
+      turnOffsetX: 0,
+      turnOffsetZ: 0,
+      potholeDepth: 0,
+      bumpOffset: 0,
       roadRageHold: 0,
       rageImmuneTimer: 0,
     };
@@ -332,6 +408,7 @@ export class TrafficSystem {
   update(dt: number): void {
     if (this.debugSimFrozen) return;
     this.clock += dt;
+    this.adjustPopulation(dt);
     this.hornCooldown = Math.max(0, this.hornCooldown - dt);
 
     for (const list of this.laneOccupancy.values()) list.length = 0;
@@ -450,17 +527,10 @@ export class TrafficSystem {
         }
       }
 
-      if (distSqToPlayer < 18 * 18) {
-        const fx = Math.sin(a.yaw);
-        const fz = Math.cos(a.yaw);
-        const dx = this.playerX - a.x;
-        const dz = this.playerZ - a.z;
-        const aheadDot = dx * fx + dz * fz;
-        const latDot = Math.abs(dx * fz - dz * fx);
-        if (aheadDot > 0.4 && latDot < a.arch.halfWidth + 1.05) {
-          minGap = Math.min(minGap, aheadDot - (a.arch.halfLength + 1.35));
-        }
-      }
+      const playerGap = distSqToPlayer < 18 * 18
+        ? forwardPlayerGap(a.x, a.z, a.yaw, a.arch.halfWidth, a.arch.halfLength, this.playerX, this.playerZ)
+        : null;
+      if (playerGap !== null) minGap = Math.min(minGap, playerGap);
 
       const redSignal =
         a.stuckTimer < 8.5 &&
@@ -494,19 +564,36 @@ export class TrafficSystem {
       if (minGap < 15) {
         desiredSpeed = Math.min(desiredSpeed, Math.max(0, minGap * 0.72));
       }
-      if (a.stuckTimer > 8.5) {
+      // A stationary player is not a traffic jam to drive through.
+      if (a.stuckTimer > 8.5 && playerGap === null) {
         desiredSpeed = Math.max(desiredSpeed, 1.35);
         if (a.stuckTimer > 13.5) a.stuckTimer = 0;
       }
 
       const accel = clamp(desiredSpeed - a.speed, -6.8, 2.8);
       a.speed = clamp(a.speed + accel * stepDt, 0, a.cruise + 0.8);
+      // Long vehicles need to slow before a real turn; never stop abruptly at a straight link.
+      if (distToNode < 8 && a.lane.nextLaneIds.length > 0 &&
+          !a.lane.nextLaneIds.some((id) => {
+            const next = this.graph.byId.get(id);
+            return next && a.lane.ux * next.ux + a.lane.uz * next.uz > 0.9;
+          })) {
+        a.speed = Math.min(a.speed, a.kind === 'bus' || a.kind === 'truck' ? 3.4 : 4.3);
+      }
       a.s += a.speed * stepDt;
 
       if (a.s >= a.lane.length) {
         const over = a.s - a.lane.length;
+        const previousX = a.x, previousZ = a.z;
         a.lane = this.chooseNextLane(a);
         a.s = Math.min(over, a.lane.length * 0.4);
+        sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
+        // Bridge only small lane-center discontinuities, not disconnected graph errors.
+        const jumpX = previousX - this.tmpPt.x, jumpZ = previousZ - this.tmpPt.z;
+        if (jumpX * jumpX + jumpZ * jumpZ < 36) {
+          a.turnOffsetX = jumpX;
+          a.turnOffsetZ = jumpZ;
+        }
       }
 
       if (a.speed < a.cruise * 0.42) {
@@ -522,14 +609,28 @@ export class TrafficSystem {
       }
 
       sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
-      a.x = this.tmpPt.x;
-      a.z = this.tmpPt.z;
-      a.yaw += angleDelta(a.yaw, this.tmpPt.yaw) * (1 - Math.exp(-9 * stepDt));
+      const prevX = a.x, prevZ = a.z;
+      a.turnOffsetX *= Math.exp(-3.2 * stepDt);
+      a.turnOffsetZ *= Math.exp(-3.2 * stepDt);
+      a.x = this.tmpPt.x + a.turnOffsetX;
+      a.z = this.tmpPt.z + a.turnOffsetZ;
+      // Orient to actual motion during the junction, limited for wide vehicles.
+      const moved = Math.hypot(a.x - prevX, a.z - prevZ);
+      const heading = moved > 0.025 && (Math.abs(a.turnOffsetX) + Math.abs(a.turnOffsetZ) > 0.02)
+        ? Math.atan2(a.x - prevX, a.z - prevZ) : this.tmpPt.yaw;
+      const maxYaw = (a.kind === 'bus' || a.kind === 'truck' ? 1.0 : 1.7) * stepDt;
+      a.yaw += clamp(angleDelta(a.yaw, heading), -maxYaw, maxYaw);
 
       if (a.visible) {
         // Only sample heightAt when moving or near bumps; stationary vehicles keep cached ground Y!
-        if (a.speed > 0.05 || a.y === 0) {
-          a.y = this.heightAt(a.x, a.z);
+        const depth = this.potholeAt(a.x, a.z);
+        if (depth > 0.014 && a.potholeDepth <= 0.014) {
+          a.bumpOffset = npcPotholeResponse(a.kind, a.speed, depth);
+        }
+        a.potholeDepth = depth;
+        a.bumpOffset *= Math.exp(-stepDt * (a.kind === 'truck' || a.kind === 'bus' ? 5 : 9));
+        if (a.speed > 0.05 || a.y === 0 || a.bumpOffset > 0.001) {
+          a.y = this.heightAt(a.x, a.z) + a.bumpOffset;
         }
         if (a.nearLod && a.speed > 0.02) {
           a.wheelSpin += (a.speed * stepDt) / a.arch.wheelRadius;
@@ -574,6 +675,8 @@ export class TrafficSystem {
       const d = Math.hypot(mx - this.playerX, mz - this.playerZ);
       if (d > 82 && d < 162) {
         a.lane = cand;
+        a.turnOffsetX = a.turnOffsetZ = 0;
+        a.potholeDepth = a.bumpOffset = 0;
         a.s = this.rng() * cand.length * 0.8;
         sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
         a.x = this.tmpPt.x;
@@ -650,6 +753,8 @@ export class TrafficSystem {
       }
     }
     a.lane = bestLane;
+    a.turnOffsetX = a.turnOffsetZ = 0;
+    a.potholeDepth = a.bumpOffset = 0;
     a.s = bestS;
     a.lateralOffset = 0;
     a.targetLateral = 0;

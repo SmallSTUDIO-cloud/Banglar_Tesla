@@ -36,6 +36,8 @@ import { Scrapbook } from './career/scrapbook';
 import { EventDirector, type SpawnedEvent } from './events/eventDirector';
 import { ScoreSystem, type StuntEvent } from './gameplay/scoreSystem';
 import { GameTimeSystem } from './world/timeSystem';
+import { DriverMirrors } from './vehicle/driverMirrors';
+import { WheelSplashes } from './world/wheelSplashes';
 import { ArcadeVfxSystem, classifyCrashTier } from './world/arcadeVfx';
 import { DevColliderDebugView } from './world/colliderDebug';
 import { Showroom } from './world/showroom';
@@ -107,6 +109,7 @@ export class Game implements UIBridge {
   readonly gameTime: GameTimeSystem;
   private weatherDirector: WeatherDirector;
   private weatherBlendAccum = 0;
+  private appliedWeatherPreference: WeatherKind | 'auto' = 'auto';
   private sunGlareAccum = 0;
   private stormToastAt = -999;
   readonly scrapbook: Scrapbook;
@@ -130,6 +133,8 @@ export class Game implements UIBridge {
   private traffic: TrafficSystem;
   private peds: PedestrianSystem;
   private player: RickshawVisual;
+  private driverMirrors: DriverMirrors;
+  private wheelSplashes: WheelSplashes;
   private controller: RickshawController;
   private chase: ChaseCamera;
   private missions: MissionSystem;
@@ -140,10 +145,12 @@ export class Game implements UIBridge {
   private paused = false;
   private accumulator = 0;
   private lastTime = 0;
+  private frameIntervalAccum = 0;
   private running = false;
   private menuTime = 0;
   private simClockSec = 0;
   private nearMissCooldown = 0;
+  private roadBumpSoundCooldown = 0;
   private lastEventId: string | null = null;
   private pendingBlacklistFrom: 'menu' | 'hud' | 'pause' = 'menu';
   private activeBlacklistEscapeRank: number | null = null;
@@ -217,7 +224,7 @@ export class Game implements UIBridge {
     this.weatherDirector.onWeatherChange = (w) => {
       this.env.setWeather(w);
       this.state.progress.weather = w;
-      this.ui.setRainDrops(w === 'rain' || w === 'storm');
+      this.ui.setRainDrops(this.settings.get().rainMode === 'dynamic' && (w === 'rain' || w === 'storm'));
       if (w === 'storm' && this.simClockSec - this.stormToastAt > 120) {
         this.stormToastAt = this.simClockSec;
         this.speakLine('weather.storm.1', 3);
@@ -240,7 +247,7 @@ export class Game implements UIBridge {
     });
     this.eventDirector.onSpawn = (ev) => this.realizeDirectorEvent(ev);
     this.eventDirector.onWeatherNudge = (suggestStorm) => {
-      if (suggestStorm) this.weatherDirector.setWeatherImmediate('storm');
+      if (suggestStorm && this.settings.get().weatherPreference === 'auto') this.weatherDirector.setWeatherImmediate('storm');
     };
     this.score.onStunt = (ev) => this.handleStunt(ev);
     this.state.onTransaction = (kind, id, level) => {
@@ -255,6 +262,7 @@ export class Game implements UIBridge {
     };
     this.env.onWetnessChange = (wet) => this.city.setWetness(wet);
     this.env.onPhaseChange = (phase) => this.city.setNight(phase === 'night' || phase === 'blue');
+    this.env.setClockMinutes(this.gameTime.minutesOfDay);
     this.env.setPhase(this.gameTime.phase);
 
     this.colliderDebug = new DevColliderDebugView(this.scene);
@@ -309,6 +317,7 @@ export class Game implements UIBridge {
 
     this.traffic = new TrafficSystem(initialQuality, (x, z) => this.city.heightAt(x, z));
     this.scene.add(this.traffic.group);
+    this.traffic.setPotholeSampler((x, z) => this.city.potholeDepthAt(x, z));
     this.traffic.onHorn = (x, z, kind) =>
       this.audio.trafficHorn(x - this.controller.x, z - this.controller.z, kind);
 
@@ -319,6 +328,7 @@ export class Game implements UIBridge {
       this.city.colliders,
       (x, z) => this.city.heightAt(x, z),
       (x, z) => surfaceAtWorld(x, z),
+      (x, z) => this.city.potholeDepthAt(x, z),
     );
     this.controller.stamina = this.state.progress.stamina;
     this.controller.turboCharge = this.state.turboCharge;
@@ -386,7 +396,10 @@ export class Game implements UIBridge {
 
     this.player = new RickshawVisual(this.state.vehicle(), this.currentLook());
     this.scene.add(this.player.root);
+    this.driverMirrors = new DriverMirrors(this.renderer, this.scene);
     this.arcadeVfx = new ArcadeVfxSystem(this.player.root, this.scene);
+    this.wheelSplashes = new WheelSplashes();
+    this.scene.add(this.wheelSplashes.group);
 
     // Pooled dynamic Roadblocks, 5-Heat Police Pursuit, Rival Race & Cinematic systems (v0.5.0)
     this.roadblocks = new RoadblockSystem((x, z) => this.city.heightAt(x, z));
@@ -765,16 +778,17 @@ export class Game implements UIBridge {
   }
 
   private frame(time: number): void {
-    const rawDt = (time - this.lastTime) / 1000;
+    const rawDt = Math.max(0, (time - this.lastTime) / 1000);
     this.lastTime = time;
-    const dt = clamp(rawDt, 0, 0.1);
-    this.frameCount++;
-
+    // Browsers do not expose VSync control; skip *both* render and simulation
+    // callbacks until the requested interval, preserving elapsed time for the
+    // fixed-step physics accumulator. Clamp tab-resume stalls as before.
+    this.frameIntervalAccum += rawDt;
     const frameBudget = 1 / this.settings.get().fpsTarget;
-    if (this.settings.get().fpsTarget === 30 && rawDt < frameBudget * 0.82) {
-      this.render();
-      return;
-    }
+    if (this.frameIntervalAccum < frameBudget * 0.88 && this.frameIntervalAccum < 0.1) return;
+    const dt = clamp(this.frameIntervalAccum, 0, 0.1);
+    this.frameIntervalAccum = 0;
+    this.frameCount++;
 
     if (!this.paused) this.update(dt);
     else {
@@ -797,7 +811,15 @@ export class Game implements UIBridge {
       this.renderer.render(this.showroom.scene, this.showroom.camera);
       this.renderer.toneMappingExposure = prevExp;
     } else {
-      this.renderer.render(this.scene, this.camera);
+      const mirrorsActive = this.settings.get().cameraMode === 'cockpit' &&
+        this.mode !== 'menu' && !this.paused && !this.debugFreeCamera && this.ui.currentScreen === 'hud';
+      if (this.driverMirrors.update(performance.now(), mirrorsActive, this.controller.x, this.controller.y,
+        this.controller.z, this.controller.yaw, this.player.root)) {
+        this.renderer.render(this.scene, this.camera);
+        this.driverMirrors.draw(this.camera.aspect);
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
     }
     this.devPerf.endGpuSample(this.renderer);
   }
@@ -849,7 +871,7 @@ export class Game implements UIBridge {
         this.raceSystem.isActive &&
         this.raceSystem.hudSnap.checkpointTotal > 0 &&
         this.raceSystem.hudSnap.checkpointIndex / this.raceSystem.hudSnap.checkpointTotal > 0.65,
-      eventOverride: this.raceSystem.isActive && !!this.raceSystem.currentEvent?.weatherOverride,
+      eventOverride: settings.weatherPreference !== 'auto' || (this.raceSystem.isActive && !!this.raceSystem.currentEvent?.weatherOverride),
       reduceEffects: settings.reduceEffects,
       lowFlash: settings.lowFlash,
     });
@@ -871,7 +893,9 @@ export class Game implements UIBridge {
       settings.shadows && q.shadows,
     );
     this.traffic.setPlayer(this.controller.x, this.controller.z, this.controller.speed);
+    this.traffic.setTimeMinutes(this.gameTime.minutesOfDay);
     this.traffic.update(dt);
+    this.peds.setTimeMinutes(this.gameTime.minutesOfDay);
     this.peds.update(dt, this.controller.x, this.controller.z, this.controller.speed, this.controller.yaw);
 
     if (this.mode === 'menu') {
@@ -890,6 +914,7 @@ export class Game implements UIBridge {
     // Advance Dynamic In-Game Clock only during active unpaused gameplay!
     this.simClockSec += dt;
     this.gameTime.update(dt);
+    if (!this.phaseLockedForDebug) this.env.setClockMinutes(this.gameTime.minutesOfDay);
     this.state.setClockMinutes(this.gameTime.minutesOfDay);
 
     const sampled = this.input.sample();
@@ -923,6 +948,7 @@ export class Game implements UIBridge {
       steerRateMultiplier: derived.steerRateMultiplier,
       grip: derived.grip,
       roughSurfaceKeep: derived.roughSurfaceKeep,
+      suspensionSmoothing: derived.suspensionSmoothing,
       rollingDragScale: derived.rollingDragScale,
       isElectric: derived.isElectric,
       batteryDrainMultiplier: derived.batteryDrainMultiplier,
@@ -942,6 +968,7 @@ export class Game implements UIBridge {
     let lastImpactZ = 0;
     let steppedDistance = 0;
     let onSidewalk = false;
+    this.roadBumpSoundCooldown = Math.max(0, this.roadBumpSoundCooldown - dt);
     while (this.accumulator >= stepSize && steps < 4) {
       const events = this.controller.step(
         stepSize,
@@ -959,6 +986,11 @@ export class Game implements UIBridge {
         totalImpact = Math.max(totalImpact, events.impact);
         lastImpactX = events.impactX;
         lastImpactZ = events.impactZ;
+      }
+      if (events.roughBump > 0.24 && this.roadBumpSoundCooldown === 0) {
+        this.audio.bump(Math.min(0.7, events.roughBump * 0.45));
+        this.chase.addTrauma(Math.min(0.07, events.roughBump * 0.03));
+        this.roadBumpSoundCooldown = 0.22;
       }
       steppedDistance += events.distance;
       onSidewalk = events.onSidewalk;
@@ -1093,6 +1125,10 @@ export class Game implements UIBridge {
       this.tanWindLines.visible = false;
     }
 
+    this.wheelSplashes.update(dt, this.controller.x, this.controller.y, this.controller.z,
+      this.controller.yaw, this.controller.speed, wetness,
+      settings.rainMode === 'dynamic' && !settings.reduceEffects, this.camera.quaternion,
+      this.env.getWindStrength());
     this.arcadeVfx.setReduceEffects(settings.reduceEffects);
     this.arcadeVfx.update(
       dt,
@@ -1353,12 +1389,13 @@ export class Game implements UIBridge {
       const seed = dailySeed(new Date());
       weather = seed % 2 === 0 ? 'rain' : 'overcast';
     }
+    if (this.settings.get().weatherPreference !== 'auto') weather = this.settings.get().weatherPreference as WeatherKind;
     const phase = this.gameTime.phase;
     this.env.setPhase(phase);
     this.weatherDirector.setWeatherImmediate(weather);
     this.env.setWeather(weather);
     const wNow = this.env.getWeather();
-    this.ui.setRainDrops(wNow === 'rain' || wNow === 'storm');
+    this.ui.setRainDrops(this.settings.get().rainMode === 'dynamic' && (wNow === 'rain' || wNow === 'storm'));
     this.state.progress.dayPhase = phase;
     this.state.progress.weather = weather;
   }
@@ -2088,7 +2125,7 @@ export class Game implements UIBridge {
     this.paused = false;
     this.ui.show(null);
     const prevPhase = this.env.getPhase();
-    this.env.setPhase('blue');
+    this.env.setPhase('blue', true);
     this.cinematic.start(
       {
         x: this.controller.x,
@@ -2098,6 +2135,7 @@ export class Game implements UIBridge {
       },
       () => {
         if (!this.phaseLockedForDebug) {
+          this.env.setClockMinutes(this.gameTime.minutesOfDay);
           this.env.setPhase(this.mode === 'menu' ? prevPhase : this.gameTime.phase);
         }
         if (this.pendingBlacklistFrom === 'hud' && this.mode !== 'menu') {
@@ -2117,7 +2155,7 @@ export class Game implements UIBridge {
     this.paused = false;
     this.ui.show(null);
     const prevPhase = this.env.getPhase();
-    this.env.setPhase('golden');
+    this.env.setPhase('golden', true);
     this.cinematic.startRivalIntro(
       rival,
       {
@@ -2128,6 +2166,7 @@ export class Game implements UIBridge {
       },
       () => {
         if (!this.phaseLockedForDebug) {
+          this.env.setClockMinutes(this.gameTime.minutesOfDay);
           this.env.setPhase(this.mode === 'menu' ? prevPhase : this.gameTime.phase);
         }
         if (launchRaceAfter) {
@@ -2330,11 +2369,11 @@ export class Game implements UIBridge {
     this.paused = false;
     this.audio.setSceneMode('driving');
 
-    if (ev.weatherOverride) {
+    if (ev.weatherOverride && this.settings.get().weatherPreference === 'auto') {
       this.weatherDirector.setWeatherImmediate(ev.weatherOverride);
       this.env.setWeather(ev.weatherOverride);
       const wEv = this.env.getWeather();
-      this.ui.setRainDrops(wEv === 'rain' || wEv === 'storm');
+      this.ui.setRainDrops(this.settings.get().rainMode === 'dynamic' && (wEv === 'rain' || wEv === 'storm'));
     }
 
     const grid = this.raceSystem.startEvent(ev, rival, this.controller.hits);
@@ -2916,8 +2955,15 @@ export class Game implements UIBridge {
     const s = this.settings.get();
     const quality = QUALITY[s.quality as QualityPreset];
     setLocale(s.language);
+    if (s.weatherPreference !== this.appliedWeatherPreference) {
+      this.appliedWeatherPreference = s.weatherPreference;
+      if (s.weatherPreference !== 'auto') this.weatherDirector.setWeatherImmediate(s.weatherPreference);
+      // Auto resumes the current live weather; do not reset a mission or its clock.
+    }
     this.renderer.shadowMap.enabled = s.shadows && quality.shadows;
     this.env.setQuality({ ...quality, shadows: s.shadows && quality.shadows });
+    this.env.setRainGraphics(s.rainMode, s.rainDensity, s.wetRoad, s.lightningEffects);
+    this.ui.setRainDrops(s.rainMode === 'dynamic' && ['rain', 'storm'].includes(this.env.getWeather()));
     this.traffic.setQuality(quality);
     this.peds.setQuality(quality);
     this.audio.setVolumes({
@@ -3060,6 +3106,8 @@ export class Game implements UIBridge {
       activeVfxParticles: this.arcadeVfx.getActiveParticleCount(),
       vehicleId: this.state.selectedVehicleId,
       cameraMode: this.settings.get().cameraMode,
+      mirrorRenders: this.driverMirrors.renderCount,
+      splashParticles: this.wheelSplashes.activeCount,
       missionState: this.missions.state,
       balance: this.state.balance,
       rides: this.state.progress.rides,
@@ -3195,6 +3243,7 @@ export class Game implements UIBridge {
 
   debugSetPhase(phase: DayPhase, weather: WeatherKind): void {
     this.phaseLockedForDebug = true;
+    this.env.setClockMinutes(null);
     this.env.setPhase(phase);
     this.env.setWeather(weather);
   }
@@ -3203,6 +3252,7 @@ export class Game implements UIBridge {
     this.phaseLockedForDebug = false;
     this.gameTime.setMinutes(hour24 * 60 + minute);
     this.state.setClockMinutes(this.gameTime.minutesOfDay);
+    this.env.setClockMinutes(this.gameTime.minutesOfDay);
     this.env.setPhase(this.gameTime.phase);
     this.hudTick = 1;
     this.updateHud(this.state.vehicle().kind === 'electric');
