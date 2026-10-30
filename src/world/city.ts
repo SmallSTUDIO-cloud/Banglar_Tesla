@@ -184,7 +184,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     roughness: 0.24,
     metalness: 0.28,
     transparent: true,
-    opacity: 0.72,
+    opacity: 0,
     depthWrite: false,
   });
   const signMat = new THREE.MeshLambertMaterial({
@@ -225,8 +225,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
   // ---------------- 1. JUNCTION DISCS & CONNECTED ROAD RIBBONS (Section 16)
   for (const node of GRAPH_NODES) {
-    // Outer sidewalk apron disc at junction (below road asphalt y so road cleanly sits flush/overlaps)
-    bWalk.cylinder({ x: node.x, y: 0.04, z: node.z }, node.outerRadius, 0.08, '#958d7e');
+    // Annular pedestrian apron, NOT a solid raised disc. A full sidewalk disc
+    // covered the asphalt at junctions by 6 cm and made buses look as though
+    // they were crossing a tiled plaza despite following the real road graph.
+    const apron = new THREE.RingGeometry(node.radius + 0.03, node.outerRadius, 32);
+    bWalk.add(apron, { x: node.x, y: 0.065, z: node.z },
+      { x: 1, y: 1, z: 1 }, '#958d7e', { x: -Math.PI / 2 });
+    apron.dispose();
     // Circular asphalt junction pad at y = 0.014 (connects every angle cleanly without gaps!)
     bRoad.cylinder({ x: node.x, y: 0.008, z: node.z }, node.radius, 0.016, '#84888e');
     if (node.deadEnd) {
@@ -1184,7 +1189,11 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     group.add(m);
     registerCasterMesh(m);
   }
-  for (const m of bPuddle.buildChunked(3, 280, { cast: false, receive: false })) group.add(m);
+  const puddleMeshes = bPuddle.buildChunked(3, 280, { cast: false, receive: false });
+  for (const m of puddleMeshes) {
+    m.visible = false; // no white/blue puddle circles on a bone-dry road
+    group.add(m);
+  }
 
   for (let i = 0; i < SECTOR_COUNT; i++) {
     // 3D architectural mass, awnings/trees & boundary walls cast crisp shadows;
@@ -1355,7 +1364,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     roadMat.color.copy(dryColor).lerp(wetColor, w * 0.8);
     roadMat.roughness = 0.9 - 0.17 * w;
     roadMat.metalness = 0.05 + 0.08 * w;
-    puddleMat.opacity = 0.30 + 0.35 * w;
+    puddleMat.opacity = 0.08 + 0.46 * w;
+    const puddlesVisible = w > 0.03;
+    for (const mesh of puddleMeshes) mesh.visible = puddlesVisible;
   };
 
   const setNight = (intensity: number): void => {

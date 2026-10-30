@@ -173,15 +173,15 @@ export function asphaltTexture(): { map: THREE.Texture; rough: THREE.Texture } {
     128,
     (ctx, w, h) => {
       const rng = mulberry32(202);
-      ctx.fillStyle = '#c4c4c4';
+      ctx.fillStyle = '#e9e9e9';
       ctx.fillRect(0, 0, w, h);
       for (let i = 0; i < 1600; i++) {
-        const g = 135 + Math.floor(rng() * 105);
+        const g = 205 + Math.floor(rng() * 50);
         ctx.fillStyle = `rgb(${g},${g},${g})`;
         ctx.fillRect(rng() * w, rng() * h, 2, 2);
       }
       for (let i = 0; i < 7; i++) {
-        ctx.fillStyle = 'rgba(55,55,55,0.5)';
+        ctx.fillStyle = 'rgba(176,176,176,0.18)';
         ctx.beginPath();
         ctx.ellipse(rng() * w, rng() * h, 8 + rng() * 20, 6 + rng() * 14, 0, 0, Math.PI * 2);
         ctx.fill();

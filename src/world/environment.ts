@@ -572,7 +572,10 @@ export class EnvironmentSystem {
   update(dt: number, focus: THREE.Vector3): void {
     const previousWet = this.wetness;
     this.wetness = damp(this.wetness, this.wetRoadEnabled ? this.targetWetness : 0, 0.8, dt);
-    if (Math.abs(this.wetness - previousWet) > 0.0008) this.onWetnessChange?.(this.wetness);
+    // Do not skip the final visibility threshold when drying slows below the
+    // usual material-update epsilon: otherwise puddles linger in clear sun.
+    if (Math.abs(this.wetness - previousWet) > 0.0008 ||
+      (previousWet > 0.03 && this.wetness <= 0.03)) this.onWetnessChange?.(this.wetness);
 
     // Lightning flash decay (brief, bounded) + throttled blend application (~8 Hz max)
     if (this.lightningFlash > 0) {

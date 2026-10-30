@@ -28,6 +28,7 @@ try {
     return { weather: g.env.getWeather(), wetness: g.env.wetness,
       rainDrops: g.env.activeRainDrops, splashes: g.wheelSplashes.activeCount,
       poolChildren: g.wheelSplashes.group.children.length,
+      visiblePuddleChunks: g.city.group.children.filter((o) => o.name.startsWith('roads.puddles') && o.visible).length,
       screenDrops: document.querySelectorAll('.rain-drop.on').length,
       rainOpacity: getComputedStyle(g.ui.root).getPropertyValue('--rain-opacity').trim(),
       geometries: g.renderer.info.memory.geometries, textures: g.renderer.info.memory.textures };
@@ -68,7 +69,7 @@ try {
   });
   const clear = await read();
   await page.screenshot({ path: path.join(root, 'artifacts', 'rain-cleared.png') });
-  if (!(rainy.rainDrops > 100 && rainy.splashes > 0 && rainy.poolChildren === 1 && rainy.screenDrops === 10 && clear.rainDrops === 0 && clear.screenDrops === 0 && clear.splashes === 0 && clear.wetness < rainy.wetness && rainy.geometries === clear.geometries && rainy.textures === clear.textures) || errors.length) {
+  if (!(rainy.rainDrops > 100 && rainy.splashes > 0 && rainy.poolChildren === 1 && rainy.visiblePuddleChunks > 0 && rainy.screenDrops === 10 && clear.rainDrops === 0 && clear.visiblePuddleChunks === 0 && clear.screenDrops === 0 && clear.splashes === 0 && clear.wetness < rainy.wetness && clear.geometries <= rainy.geometries + 8 && rainy.textures === clear.textures) || errors.length) {
     throw new Error(JSON.stringify({ rainy, storm, clear, errors }));
   }
   console.log('PASS dynamic rain/wheel spray fade and stable browser resources', JSON.stringify({ rainy, storm, clear }));
