@@ -332,6 +332,7 @@ export const STRINGS: Record<string, Entry> = {
   'd.happy': { bn: 'বাহ, দারুণ চালান!', en: 'Wow, you drive well!' },
   'd.neutral': { bn: 'ঠিক আছে, ধীরে চালান।', en: 'Okay, easy does it.' },
   'd.annoyed': { bn: 'ভাই, একটু সাবধানে!', en: 'Careful, bhai!' },
+  'd.rough': { bn: 'রাস্তা ভাঙা, একটু আস্তে চালান!', en: 'The road is broken here. Please slow down!' },
   'd.thanks': { bn: 'ধন্যবাদ মামা!', en: 'Thanks, mama!' },
   'd.midroute': { bn: 'একটু দ্রুত করলে ভালো হয়।', en: 'A bit quicker would be nice.' },
   'd.pickup': { bn: 'এই যে মামা, খালি যাবে?', en: 'Hey mama, are you free?' },

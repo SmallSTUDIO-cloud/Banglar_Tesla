@@ -42,6 +42,7 @@ export interface PedestrianReactionEvent {
   z: number;
   textKey: string;
   kind: 'nearmiss' | 'bump';
+  pedestrianId?: number;
 }
 
 function buildSidewalkPaths(): PedPath[] {
@@ -118,9 +119,18 @@ const REACTION_KEYS = [
 
 function buildPedBodyGeo(mat: THREE.Material): THREE.BufferGeometry {
   const b = new Bucket('ped.body', mat);
-  // Chest & lower tunic/kurta hem
-  b.box({ x: 0, y: 1.08, z: 0 }, { x: 0.33, y: 0.44, z: 0.20 }, '#ffffff');
-  b.box({ x: 0, y: 0.80, z: 0 }, { x: 0.35, y: 0.20, z: 0.22 }, '#f5f5f5');
+  // Tapered cotton torso instead of a toy-like rectangular block. Keep the
+  // shoulder/hip pivots used by the existing animation and nine-mesh fleet.
+  const tunic = new THREE.CylinderGeometry(0.185, 0.145, 0.46, 7);
+  b.add(tunic, { x: 0, y: 1.08, z: 0 }, { x: 1, y: 1, z: 0.64 }, '#ffffff');
+  tunic.dispose();
+  // Bridge the hip pivot at 0.54 m: the old short waist left a visible
+  // floating gap between tunic and trousers in close-up street views.
+  b.box({ x: 0, y: 0.725, z: 0 }, { x: 0.30, y: 0.35, z: 0.20 }, '#e8e6e0');
+  // Neck placket, open collar and hem seam add readable clothing structure
+  // without a texture, skinning palette, extra material or extra draw call.
+  b.box({ x: 0, y: 1.28, z: 0.113 }, { x: 0.07, y: 0.09, z: 0.015 }, '#d7d6cd');
+  b.box({ x: 0, y: 0.74, z: 0.113 }, { x: 0.31, y: 0.025, z: 0.018 }, '#bdc0b9');
   // Collar neckline + short-sleeve shoulder caps so attached arms emerge cleanly from sleeves
   b.cylinder({ x: 0, y: 1.31, z: 0 }, 0.085, 0.06, '#e8e8e8');
   b.box({ x: -0.205, y: 1.22, z: 0 }, { x: 0.11, y: 0.16, z: 0.14 }, '#ffffff', { z: 0.14 });
@@ -137,15 +147,15 @@ function buildPedHeadGeo(mat: THREE.Material): THREE.BufferGeometry {
   sphere.dispose();
 
   // Ears + nose bridge (`+Z` is forward walking direction)
-  b.box({ x: -0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ebd8cf');
-  b.box({ x: 0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ebd8cf');
-  b.box({ x: 0, y: 1.485, z: 0.108 }, { x: 0.026, y: 0.044, z: 0.030 }, '#f5e6de');
+  b.box({ x: -0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ffffff');
+  b.box({ x: 0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ffffff');
+  b.box({ x: 0, y: 1.482, z: 0.106 }, { x: 0.022, y: 0.035, z: 0.025 }, '#ffffff');
 
   // Visible facial features: eyebrows, eye sclera, dark pupils, and mouth expression!
   for (const sx of [-1, 1]) {
-    b.box({ x: sx * 0.040, y: 1.530, z: 0.102 }, { x: 0.034, y: 0.011, z: 0.014 }, '#1c1513');
-    b.box({ x: sx * 0.039, y: 1.506, z: 0.104 }, { x: 0.030, y: 0.018, z: 0.012 }, '#ffffff');
-    b.box({ x: sx * 0.039, y: 1.505, z: 0.110 }, { x: 0.014, y: 0.014, z: 0.008 }, '#120e0d');
+    b.box({ x: sx * 0.040, y: 1.531, z: 0.102 }, { x: 0.032, y: 0.008, z: 0.011 }, '#2e211b');
+    b.box({ x: sx * 0.039, y: 1.507, z: 0.106 }, { x: 0.024, y: 0.013, z: 0.010 }, '#e9ded0');
+    b.box({ x: sx * 0.039, y: 1.506, z: 0.113 }, { x: 0.011, y: 0.012, z: 0.007 }, '#1e1816');
   }
   b.box({ x: 0, y: 1.444, z: 0.102 }, { x: 0.044, y: 0.013, z: 0.012 }, '#542422');
   return b.build({ cast: false, receive: false })!.geometry;
@@ -180,7 +190,9 @@ function buildPedArmGeo(mat: THREE.Material): THREE.BufferGeometry {
 function buildPedLegGeo(mat: THREE.Material): THREE.BufferGeometry {
   const b = new Bucket('ped.leg', mat);
   // Pivots at hip `(0, 0, 0)`: trouser leg + ankle + visible South Asian sandal/shoe!
-  b.box({ x: 0, y: -0.23, z: 0 }, { x: 0.108, y: 0.44, z: 0.125 }, '#ffffff');
+  const trouser = new THREE.CylinderGeometry(0.068, 0.051, 0.44, 7);
+  b.add(trouser, { x: 0, y: -0.23, z: 0 }, { x: 1, y: 1, z: 0.92 }, '#ffffff');
+  trouser.dispose();
   b.cylinder({ x: 0, y: -0.47, z: 0 }, 0.040, 0.08, '#9e6b49');
   // Sandal sole + forefoot strap (`+Z` forward toe)
   b.box({ x: 0, y: -0.522, z: 0.034 }, { x: 0.106, y: 0.034, z: 0.195 }, '#231915');
@@ -190,8 +202,11 @@ function buildPedLegGeo(mat: THREE.Material): THREE.BufferGeometry {
 
 function buildPedSkirtGeo(mat: THREE.Material): THREE.BufferGeometry {
   const b = new Bucket('ped.skirt', mat);
-  b.cone({ x: 0, y: 0.56, z: 0 }, 0.25, 0.68, '#ffffff');
-  b.cylinder({ x: 0, y: 0.24, z: 0 }, 0.245, 0.045, '#e8dfd1');
+  const drape = new THREE.CylinderGeometry(0.14, 0.255, 0.68, 8);
+  b.add(drape, { x: 0, y: 0.56, z: 0 }, { x: 1, y: 1, z: 0.91 }, '#ffffff');
+  drape.dispose();
+  b.cylinder({ x: 0, y: 0.24, z: 0 }, 0.238, 0.04, '#dedbd2');
+  b.box({ x: -0.105, y: 0.57, z: 0.177 }, { x: 0.055, y: 0.48, z: 0.02 }, '#e5dfd7', { z: -0.18 });
   return b.build({ cast: false, receive: false })!.geometry;
 }
 
@@ -681,7 +696,7 @@ export class PedestrianSystem {
             ped.reactCooldown = 7.5;
             this.globalReactCooldown = 1.6;
             const key = REACTION_KEYS[Math.floor(this.rng() * REACTION_KEYS.length)];
-            this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'bump' });
+            this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'bump', pedestrianId: i });
           }
         } else if (
           dClosest < 2.45 &&
@@ -693,7 +708,7 @@ export class PedestrianSystem {
           this.globalReactCooldown = 2.6;
           ped.pause = Math.max(ped.pause, 0.95);
           const key = REACTION_KEYS[Math.floor(this.rng() * REACTION_KEYS.length)];
-          this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'nearmiss' });
+          this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'nearmiss', pedestrianId: i });
         }
       }
 
@@ -701,6 +716,7 @@ export class PedestrianSystem {
       let moving = false;
       if (ped.pause > 0) {
         ped.pause -= stepDt;
+        if (distSq < 58 * 58) ped.phase += stepDt * .9;
       } else if (!approachingDanger || dClosest > 2.6) {
         moving = true;
         ped.t += ((ped.speed * stepDt) / path.length) * ped.dir;
@@ -785,7 +801,11 @@ export class PedestrianSystem {
 
       // Left arm swings opposite to left leg (or raises slightly in alarm when evading!)
       const evadeRaise = ped.evadeAmount > 0.25 ? -0.45 * ped.evadeAmount : 0;
-      const armSwingL = swing !== 0 ? -swing * 0.82 : evadeRaise;
+      // A few waiting pedestrians gesture or adjust a bag. Near-LOD only,
+      // using existing arm instances rather than new actors/skin rigs.
+      const idleGesture = ped.pause > 0 && nearLod && ped.pathIdx % 5 === 0
+        ? -.25 - Math.sin(ped.phase) * .12 : 0;
+      const armSwingL = swing !== 0 ? -swing * 0.82 : evadeRaise || idleGesture;
       if (armSwingL !== 0) {
         this.euler.set(armSwingL, yaw, 0.05, 'YXZ');
         this.quat.setFromEuler(this.euler);

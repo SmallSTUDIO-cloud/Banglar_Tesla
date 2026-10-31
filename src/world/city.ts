@@ -22,6 +22,8 @@ import { clamp, mulberry32 } from '../core/mathx';
 import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
+import { PosterAtlas } from './posterAtlas';
+import { DAMAGE_ZONES, roadDamageAt } from './roadDamage';
 import {
   GRAPH_NODES,
   PLACES,
@@ -95,6 +97,7 @@ export interface CityResult {
   humps: SpeedHump[];
   potholes: readonly AuthoredPothole[];
   potholeDepthAt: (x: number, z: number) => number;
+  roadDamageAt: (x: number, z: number) => number;
   heightAt: (x: number, z: number) => number;
   lampPositions: THREE.Vector3[];
   signAnchors: THREE.Vector3[];
@@ -104,6 +107,8 @@ export interface CityResult {
   setNight: (intensity: number) => void;
   litterCount: number;
   infillCount: number;
+  posterCount: number;
+  billboardCount: number;
   treeCount: number;
   treeSites: readonly { x: number; z: number }[];
   interiorCount: number;
@@ -189,6 +194,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const humps: SpeedHump[] = [];
   const microBumps: SurfaceBump[] = [];
   const potholes: AuthoredPothole[] = [];
+  let regularPotholeCount = 0;
   const lampPositions: THREE.Vector3[] = [];
   const signAnchors: THREE.Vector3[] = [];
   const placeAnchors = new Map<string, THREE.Vector3>();
@@ -237,6 +243,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const signMat = new THREE.MeshLambertMaterial({
     map: signAtlas.texture,
   });
+  const posterAtlas = new PosterAtlas();
+  const posterMat = new THREE.MeshLambertMaterial({ map: posterAtlas.texture });
   const glowMat = new THREE.MeshBasicMaterial({
     vertexColors: true,
     transparent: true,
@@ -275,6 +283,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const sectorShutters = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.shutter`, shutterMat, true));
   const sectorBricks = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.brick`, brickMat, true));
   const sectorSigns = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.signs`, signMat));
+  const sectorPosters = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.posters`, posterMat));
+  let posterCount = 0, billboardCount = 0;
   const sectorWindowLights = Array.from({ length: SECTOR_COUNT }, (_, i) =>
     new Bucket(`sec.${i}.windowLights`, windowLightMat));
   const litWindow = (sec: number, x: number, y: number, z: number,
@@ -575,9 +585,45 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       }
     }
 
+    // Four fictional worn stretches, authored against real *road topology*, not
+    // asserted as observations of real current road condition. Broken paving,
+    // tar seams and two physical wheel contacts per stretch share existing
+    // road/sidewalk buckets; no new material or object per crack.
+    const damage = DAMAGE_ZONES.find((zone) => zone.segment === seg);
+    if (damage) {
+      const span = damage.end - damage.begin;
+      for (let k = 0; k < 7; k++) {
+        const along = damage.begin + span * (k + .5) / 7;
+        const off = (k % 3 - 1) * seg.halfWidth * .38;
+        const x = seg.ax + seg.ux * along + seg.leftX * off;
+        const z = seg.az + seg.uz * along + seg.leftZ * off;
+        bRoad.box({ x, y: .0155, z }, { x: 1.7, y: .003, z: 2.5 },
+          k % 2 ? '#646266' : '#595b60', { y: yaw + (k % 2 ? .13 : -.09) });
+        for (let seam = 0; seam < 3; seam++) {
+          bRoad.box({ x: x + seg.leftX * (seam - 1) * .48, y: .018, z: z + seg.leftZ * (seam - 1) * .48 },
+            { x: .035, y: .002, z: 1.0 }, '#25272b', { y: yaw + (seam % 2 ? .35 : -.32) });
+        }
+      }
+      for (const fraction of [.36, .67]) {
+        const along = damage.begin + span * fraction;
+        const off = fraction < .5 ? -.9 : .9;
+        const x = seg.ax + seg.ux * along + seg.leftX * off;
+        const z = seg.az + seg.uz * along + seg.leftZ * off;
+        if (PLACES.some((place) => Math.hypot(place.x - x, place.z - z) < 12)) continue;
+        const radius = .63, depth = .055;
+        const basin = potholeSurface(radius, potholes.length + 37, false);
+        const lip = potholeSurface(radius, potholes.length + 37, true);
+        bRoad.add(basin, { x, y: 0, z }, { x: 1, y: 1, z: 1 }, '#383735');
+        bWalk.add(lip, { x, y: 0, z }, { x: 1, y: 1, z: 1 }, '#85766b');
+        basin.dispose(); lip.dispose();
+        potholes.push({ x, z, radius, depth, roadId: seg.id });
+        microBumps.push({ x, z, radius, deltaY: -depth });
+      }
+    }
+
     // Curated rough-road contact zones: away from junctions, destinations,
     // spawn and other hazards. Their exact polygon is shared with physics.
-    if (potholes.length < 8 && seg.kind !== 'gali' && seg.length > 58) {
+    if (regularPotholeCount < 8 && seg.kind !== 'gali' && seg.length > 58) {
       const d = seg.length * 0.56;
       const off = Math.min(1.15, seg.halfWidth * 0.32);
       const px = seg.ax + seg.ux * d + seg.leftX * off;
@@ -589,13 +635,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         // A broken irregular lip slopes into a smaller gravel-dark basin;
         // no circular concrete decal or raised collision lip. Different seed
         // per authored site, with exactly the existing eight physical centers.
-        const seed = potholes.length + 1;
+        const seed = regularPotholeCount + 1;
         const basin = potholeSurface(radius, seed, false);
         const lip = potholeSurface(radius, seed, true);
         bRoad.add(basin, { x: px, y: 0, z: pz }, { x: 1, y: 1, z: 1 }, '#44423e');
         bWalk.add(lip, { x: px, y: 0, z: pz }, { x: 1, y: 1, z: 1 }, '#877664');
         basin.dispose(); lip.dispose();
         potholes.push({ x: px, z: pz, radius, depth: 0.065, roadId: seg.id });
+        regularPotholeCount++;
         microBumps.push({ x: px, z: pz, radius, deltaY: -0.065 });
       }
     }
@@ -677,6 +724,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           wirePairs.push([prevPole, curPole]);
         }
         prevPole = curPole;
+        // Occasional pasted teaching/community notice, tightly flush to the
+        // pole. No separate collider, transparent foliage or runtime update.
+        if (lampBreakId % 7 === 1 && posterCount < 90) {
+          const faceX = -seg.leftX * poleSide, faceZ = -seg.leftZ * poleSide;
+          const posterYaw = Math.atan2(faceX, faceZ);
+          sectorPosters[sectorIndex(ex, ez)].quad(
+            { x: ex + faceX * 0.128, y: 2.12, z: ez + faceZ * 0.128 },
+            0.38, 0.54, '#ffffff', { y: posterYaw }, posterAtlas.poster(lampBreakId % 3));
+          posterCount++;
+        }
       }
 
       // Keep the existing roadside positions and RNG draw count. Defer the
@@ -754,7 +811,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       x: cx, z: cz, halfX: width / 2, halfZ: depth / 2, yaw,
       radius: Math.hypot(width, depth) / 2,
     };
-    return placedBuildings.every((other) => footprintSeparated(candidate, other, 1.15));
+    // A 28 cm service joint is too narrow for a rickshaw, but still leaves
+    // separate facades/rooflines. Public lanes, sidewalks, POIs and junctions
+    // remain protected by the independent corridor and anchor checks above.
+    return placedBuildings.every((other) => footprintSeparated(candidate, other, 0.28));
   };
 
   let signCursor = 0;
@@ -792,6 +852,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           const bShut = sectorShutters[secIdx];
           const bBrk = sectorBricks[secIdx];
           const bSgn = sectorSigns[secIdx];
+          const bPoster = sectorPosters[secIdx];
 
           const tint = PLASTER_TINTS[Math.floor(rng() * PLASTER_TINTS.length)];
           const useBrick = rng() < 0.18;
@@ -865,6 +926,17 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 { x: 0.84, y: 0.45, z: 0.08 }, '#41525a', { y: sideFace });
               bDet.cylinder({ x: sideX + fx * 2.2, y: height * 0.46,
                 z: sideZ + fz * 2.2 }, 0.035, height * 0.89, '#5c6260');
+              if (sideDir === 1 && frontageStyle === 0 && posterCount < 90) {
+                const posterX = sideX - fx * 2.7 + seg.ux * 0.045;
+                const posterZ = sideZ - fz * 2.7 + seg.uz * 0.045;
+                const design = Math.abs(Math.round(cx * 7 + cz * 11));
+                // One in eleven printed notices is non-partisan civic/election
+                // information; most are education, markets and cleanliness.
+                bPoster.quad({ x: posterX, y: 1.68, z: posterZ },
+                  0.72, 1.05, '#ffffff', { y: sideYawL },
+                  posterAtlas.poster(design % 11 === 0 ? 3 : design % 3));
+                posterCount++;
+              }
             }
           }
 
@@ -890,11 +962,39 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             );
           }
 
+          // A few framed rooftop boards: no roadside poles in traffic, no
+          // floating sign planes. All hardware is merged into sector details.
+          if (floors >= 3 && billboardCount < 8 &&
+              Math.abs(Math.round(cx * 3 + cz * 2)) % 31 === 0) {
+            const bx = cx + fx * (bDepth * 0.5 - 1.05);
+            const bz = cz + fz * (bDepth * 0.5 - 1.05);
+            bDet.box({ x: bx, y: height + 2.03, z: bz },
+              { x: 4.08, y: 1.82, z: 0.09 }, '#36454a', { y: faceYaw });
+            bPoster.quad({ x: bx + fx * 0.055, y: height + 2.03, z: bz + fz * 0.055 },
+              3.84, 1.60, '#ffffff', { y: faceYaw }, posterAtlas.billboard(billboardCount));
+            for (const side of [-1, 1]) {
+              bDet.box({ x: bx + seg.ux * side * 1.42 - fx * 0.06,
+                y: height + 0.85, z: bz + seg.uz * side * 1.42 - fz * 0.06 },
+                { x: 0.10, y: 1.55, z: 0.11 }, '#525652', { y: faceYaw });
+            }
+            billboardCount++;
+          }
+
           // Street-facing facade details: ground-floor Dokan shutters + pilasters, striped awning, Bangla signboard & upper balconies!
           const frontX = cx + fx * (bDepth * 0.5 + 0.04);
           const frontZ = cz + fz * (bDepth * 0.5 + 0.04);
 
           const isCommercial = seg.kind !== 'gali' || rng() < 0.45;
+          // A few occupied shops stay warm at dusk; the pane and small ground
+          // spill join the existing sector light mesh (zero real-time lights).
+          if (isCommercial && frontageStyle === 0 && bWidth > 9) {
+            sectorWindowLights[secIdx].quad(
+              { x: frontX + fx * .105, y: 1.56, z: frontZ + fz * .105 },
+              1.32, 1.28, '#e3a96c', { y: faceYaw });
+            sectorWindowLights[secIdx].quad(
+              { x: frontX + fx * .58, y: .102, z: frontZ + fz * .58 },
+              1.45, .95, '#8b6744', { x: -Math.PI / 2, y: faceYaw });
+          }
           if (isCommercial) {
             const shopBays = Math.max(1, Math.floor(bWidth / 3.8));
             for (let sb = 0; sb < shopBays; sb++) {
@@ -1043,14 +1143,36 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 y: by + 1.15, z: frontZ + seg.uz * (bWidth * 0.43) + fz * 0.075 },
                 { x: 0.18, y: 0.92, z: 0.016 }, '#aca596', { y: faceYaw });
             }
-            // White split-AC condenser box mounted beside balcony
+            // Wall-mounted outdoor split AC: painted casing, inset dark fan
+            // grille, radial blades, louvers, bracket and copper drain line.
+            // Everything joins the existing sector detail mesh (no new pass).
             if ((fl + secIdx) % 2 === 0) {
-              bDet.box(
-                { x: frontX + seg.ux * (bWidth * 0.38) + fx * 0.22, y: by + 0.9, z: frontX * 0 + frontZ + seg.uz * (bWidth * 0.38) + fz * 0.22 },
-                { x: 0.78, y: 0.54, z: 0.34 },
-                '#e6e9ec',
-                { y: faceYaw },
-              );
+              const ax = frontX + seg.ux * (bWidth * 0.38) + fx * 0.22;
+              const az = frontZ + seg.uz * (bWidth * 0.38) + fz * 0.22;
+              const ay = by + 0.9;
+              bDet.box({ x: ax, y: ay, z: az }, { x: 0.78, y: 0.54, z: 0.34 }, '#d8dedb', { y: faceYaw });
+              bDet.box({ x: ax + fx * 0.177, y: ay, z: az + fz * 0.177 },
+                { x: 0.62, y: 0.39, z: 0.013 }, '#3a4b4f', { y: faceYaw });
+              // Alternating louvers read as a real condenser even at chase FOV.
+              for (let vent = -2; vent <= 2; vent++) {
+                bDet.box({ x: ax + fx * 0.188, y: ay + vent * 0.063, z: az + fz * 0.188 },
+                  { x: 0.58, y: 0.017, z: 0.012 }, '#a8b4ad', { y: faceYaw });
+              }
+              bDet.cylinder({ x: ax + fx * 0.199, y: ay, z: az + fz * 0.199 },
+                0.115, 0.012, '#293b3d', { x: Math.PI / 2, y: faceYaw });
+              for (let blade = 0; blade < 3; blade++) {
+                bDet.box({ x: ax + fx * 0.213, y: ay, z: az + fz * 0.213 },
+                  { x: 0.20, y: 0.024, z: 0.014 }, '#bdc8bf',
+                  { y: faceYaw, z: blade * Math.PI / 3 });
+              }
+              for (const side of [-1, 1]) {
+                bDet.box({ x: ax + seg.ux * side * 0.26 - fx * 0.035,
+                  y: ay - 0.31, z: az + seg.uz * side * 0.26 - fz * 0.035 },
+                  { x: 0.08, y: 0.09, z: 0.24 }, '#687675', { y: faceYaw });
+              }
+              bDet.box({ x: ax + seg.ux * 0.43 - fx * 0.16, y: ay - 0.22,
+                z: az + seg.uz * 0.43 - fz * 0.16 },
+                { x: 0.035, y: 0.44, z: 0.035 }, '#997657');
             }
           }
 
@@ -1077,7 +1199,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             yaw,
           });
 
-          along += bWidth + 1.6 + rng() * 2.2;
+          // Shop-house row: mostly narrow 0.3–0.7 m seams, occasional wider
+          // utility break. Preserve the single RNG draw and the street graph.
+          along += bWidth + (rng() < 0.88 ? 0.32 : 0.72);
         } else {
           along += 4.5;
         }
@@ -1420,7 +1544,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         registerCasterMesh(m);
       }
     }
-    for (const decalBucket of [sectorShutters[i], sectorSigns[i]]) {
+    for (const decalBucket of [sectorShutters[i], sectorSigns[i], sectorPosters[i]]) {
       const m = decalBucket.build({ cast: false, receive: true });
       if (m) group.add(m);
     }
@@ -1729,6 +1853,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     humps,
     potholes,
     potholeDepthAt,
+    roadDamageAt,
     heightAt,
     lampPositions,
     signAnchors,
@@ -1738,6 +1863,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     setNight,
     litterCount: litterItems.length,
     infillCount,
+    posterCount,
+    billboardCount,
     treeCount: treeSites.length,
     treeSites,
     interiorCount,

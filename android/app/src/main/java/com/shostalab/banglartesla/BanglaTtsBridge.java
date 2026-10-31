@@ -7,6 +7,10 @@ import android.speech.tts.Voice;
 import android.webkit.JavascriptInterface;
 import java.util.Locale;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -23,6 +27,8 @@ public final class BanglaTtsBridge implements TextToSpeech.OnInitListener {
     private volatile TextToSpeech tts;
     private volatile boolean bengaliReady = false;
     private volatile boolean shutDown = false;
+    private volatile Voice defaultBengaliVoice;
+    private volatile List<Voice> bengaliVoices = Collections.emptyList();
 
     public BanglaTtsBridge(Context context) {
         try {
@@ -50,9 +56,24 @@ public final class BanglaTtsBridge implements TextToSpeech.OnInitListener {
                 return false;
             }
             Set<String> features = v.getFeatures();
-            if (features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) {
+            if (v.isNetworkConnectionRequired() ||
+                (features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED))) {
                 return false;
             }
+            defaultBengaliVoice = v;
+            List<Voice> voices = new ArrayList<>();
+            Set<Voice> installed = engine.getVoices();
+            if (installed != null) for (Voice voice : installed) {
+                Locale locale = voice.getLocale();
+                Set<String> installedFeatures = voice.getFeatures();
+                if (locale != null && ("bn".equalsIgnoreCase(locale.getLanguage()) || "ben".equalsIgnoreCase(locale.getLanguage())) &&
+                    !voice.isNetworkConnectionRequired() &&
+                    (installedFeatures == null || !installedFeatures.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED))) {
+                    voices.add(voice);
+                }
+            }
+            Collections.sort(voices, Comparator.comparing(Voice::getName));
+            bengaliVoices = voices;
             return true;
         } catch (Throwable ignored) {
             return false;
@@ -89,21 +110,33 @@ public final class BanglaTtsBridge implements TextToSpeech.OnInitListener {
 
     @JavascriptInterface
     public boolean speak(String text, float pitch, float rate, float volume) {
+        return speakCharacter(text, pitch, rate, volume, "default");
+    }
+
+    /** Select distinct *installed offline Bengali* voices when available.
+     * If the device has only one voice, per-character prosody still applies;
+     * never promise that pitch changes manufacture different human actors. */
+    @JavascriptInterface
+    public boolean speakCharacter(String text, float pitch, float rate, float volume, String character) {
         TextToSpeech engine = this.tts;
-        if (shutDown || !bengaliReady || engine == null || text == null || text.isEmpty()) {
-            return false;
-        }
+        if (shutDown || !bengaliReady || engine == null || text == null || text.isEmpty()) return false;
         float safePitch = Math.max(0.6f, Math.min(1.5f, pitch));
         float safeRate = Math.max(0.7f, Math.min(1.4f, rate));
         float safeVol = Math.max(0.0f, Math.min(1.0f, volume));
         try {
+            List<Voice> bengali = bengaliVoices;
+            if (!bengali.isEmpty()) {
+                int index = Math.floorMod(character == null ? 0 : character.hashCode(), bengali.size());
+                if (engine.setVoice(bengali.get(index)) != TextToSpeech.SUCCESS) {
+                    if (defaultBengaliVoice != null) engine.setVoice(defaultBengaliVoice);
+                }
+            } else if (defaultBengaliVoice != null) engine.setVoice(defaultBengaliVoice);
             engine.setPitch(safePitch);
             engine.setSpeechRate(safeRate);
             Bundle params = new Bundle();
             params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, safeVol);
             String utteranceId = String.valueOf(utteranceSeq.incrementAndGet());
-            int res = engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
-            return res == TextToSpeech.SUCCESS;
+            return engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId) == TextToSpeech.SUCCESS;
         } catch (Throwable ignored) {
             return false;
         }

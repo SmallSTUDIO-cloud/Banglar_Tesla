@@ -176,6 +176,8 @@ export class RoadRageSystem {
     this.cb.onSubtitle('roadrage.speaker.driver', driverText);
     this.speech.speak({
       speaker: 'driver',
+      characterId: 'sedan_driver',
+      emotion: 'angry',
       text: driverText,
       locale: loc,
       priority: 3,
@@ -190,6 +192,8 @@ export class RoadRageSystem {
         this.cb.onSubtitle('roadrage.speaker.player', pLine);
         this.speech.speak({
           speaker: 'player',
+          characterId: 'player',
+          emotion: 'calm',
           text: pLine,
           locale: loc2,
           priority: 3,

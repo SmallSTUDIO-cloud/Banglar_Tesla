@@ -26,6 +26,7 @@ import { BanglaSpeechService } from './audio/speech';
 import { dialogueLine, dialogueText, ttsPitchRate } from './audio/dialogueManifest';
 
 import { buildCity, type CityResult } from './world/city';
+import { streetMoodAt } from './world/streetMood';
 import { buildProps, type VendorSpot } from './world/props';
 import { DestructionSystem } from './world/destruction';
 import { EnvironmentSystem } from './world/environment';
@@ -149,6 +150,8 @@ export class Game implements UIBridge {
   private simClockSec = 0;
   private nearMissCooldown = 0;
   private roadBumpSoundCooldown = 0;
+  private streetMoodTick = 0;
+  private passengerRoadCooldown = 0;
   private lastEventId: string | null = null;
   private pendingBlacklistFrom: 'menu' | 'hud' | 'pause' = 'menu';
   private activeBlacklistEscapeRank: number | null = null;
@@ -424,6 +427,8 @@ export class Game implements UIBridge {
         const lineText = t(lineKey);
         this.speech.speak({
           speaker: 'police',
+          characterId: 'police_dispatch',
+          emotion: 'command',
           text: lineText,
           locale: loc,
           priority: 2,
@@ -593,7 +598,7 @@ export class Game implements UIBridge {
         this.ui.showPedestrianCallout(sx, sy, ev.textKey);
       }
       this.audio.pedestrianShout();
-      this.speakLine(ev.textKey, 1);
+      this.speakLine(ev.textKey, 1, ev.pedestrianId === undefined ? undefined : `pedestrian-${ev.pedestrianId}`);
       if (ev.kind === 'bump') {
         this.controller.speed *= 0.68;
         this.chase.addTrauma(0.14);
@@ -625,7 +630,7 @@ export class Game implements UIBridge {
     });
     this.missions.on('dialogue', (d) => {
       this.ui.showDialogue(d.who, d.key);
-      this.audio.setVolumes({ dialogue: this.settings.get().dialogue });
+      this.speakPassenger(d.key, d.who);
     });
     this.missions.on('hint', () => undefined);
     this.missions.on('mood', () => undefined);
@@ -865,6 +870,11 @@ export class Game implements UIBridge {
 
     const q = QUALITY[settings.quality];
     this.audio.setSceneMode(this.mode === 'menu' ? 'menu' : 'driving');
+    this.streetMoodTick -= dt;
+    if (this.streetMoodTick <= 0) {
+      this.streetMoodTick = .25;
+      this.audio.setStreetCharacter(streetMoodAt(this.controller.x, this.controller.z, this.gameTime.minutesOfDay));
+    }
     this.audio.update(dt, this.controller.x, this.controller.z);
     this.tmpPlayerVec.set(this.controller.x, 0, this.controller.z);
     // vNext §4 dynamic weather director — bounded transitions, gradual blends
@@ -978,6 +988,7 @@ export class Game implements UIBridge {
     let steppedDistance = 0;
     let onSidewalk = false;
     this.roadBumpSoundCooldown = Math.max(0, this.roadBumpSoundCooldown - dt);
+    this.passengerRoadCooldown = Math.max(0, this.passengerRoadCooldown - dt);
     while (this.accumulator >= stepSize && steps < 4) {
       const events = this.controller.step(
         stepSize,
@@ -1005,6 +1016,22 @@ export class Game implements UIBridge {
       onSidewalk = onSidewalk || events.onSidewalk;
       this.accumulator -= stepSize;
       steps++;
+    }
+    // Broken road patches give speed- and distance-dependent feedback, not a
+    // constant vibrating camera at a standstill. Existing suspension/pothole
+    // contacts remain the physical truth; reduced-effects disables this shake.
+    const roadDamage = this.city.roadDamageAt(this.controller.x, this.controller.z);
+    if (roadDamage > .08 && steppedDistance > .015 && Math.abs(this.controller.speed) > 2 &&
+        this.roadBumpSoundCooldown === 0 && Math.sin(this.controller.distanceDriven * 5.5) > .72) {
+      if (!settings.reduceEffects) this.chase.addTrauma(Math.min(.055, roadDamage * Math.abs(this.controller.speed) * .006));
+      this.audio.bump(.22 + roadDamage * .18);
+      this.roadBumpSoundCooldown = .28;
+      if (this.missions.state === 'toDropoff' && this.currentOffer && this.passengerRoadCooldown === 0) {
+        this.passengerRoadCooldown = 26;
+        const who = archetypeById(this.currentOffer.archetype).whoKey;
+        this.ui.showDialogue(who, 'd.rough');
+        this.speakPassenger('d.rough', who);
+      }
     }
     if (lockedByRage || lockedByStart) {
       this.controller.speed = 0;
@@ -1087,6 +1114,7 @@ export class Game implements UIBridge {
       this.traffic.obstacles(),
       this.roadblocks.getActiveObbs(),
     );
+    this.audio.setActionMusic(raceSnap.active || this.police.isActive);
     if (
       raceSnap.active &&
       (Math.abs(raceSnap.targetX - this.lastRaceTargetX) > 1.5 ||
@@ -1386,6 +1414,7 @@ export class Game implements UIBridge {
     this.cinematic.stop(false);
     this.raceSystem.cancel();
     this.police.stopPursuit(true);
+    this.audio.setActionMusic(false);
     this.roadblocks.clearAll();
     this.roadRage.cancel();
     if (this.showroomVisible) this.showroomVisible = false;
@@ -1728,6 +1757,7 @@ export class Game implements UIBridge {
     this.cinematic.stop(false);
     this.raceSystem.cancel();
     this.police.stopPursuit(true);
+    this.audio.setActionMusic(false);
     this.roadblocks.clearAll();
     this.roadRage.cancel();
     this.input.clearAllHolds();
@@ -2747,7 +2777,22 @@ export class Game implements UIBridge {
   }
 
   /** Speak one exact manifest dialogue line with per-character voice identity. */
-  private speakLine(lineId: string, priority: 1 | 2 | 3 = 2): void {
+  private speakPassenger(key: string, who: string): void {
+    const settings = this.settings.get();
+    this.audio.setVolumes({ dialogue: settings.dialogue });
+    // Exact dynamic text only: synthetic role WAVs cannot stand in for these
+    // words. Matching installed voices speak them; subtitles always remain.
+    this.speech.speak({
+      speaker: 'driver', characterId: `passenger:${who}`,
+      emotion: key === 'd.annoyed' || key === 'd.rough' ? 'warning' : key === 'd.thanks' ? 'friendly' : 'calm',
+      text: t(key), locale: getLocale(), priority: 1,
+      volume: settings.dialogue * settings.master,
+      muted: settings.muted || !settings.sfxEnabled,
+      exactAudioOnly: true,
+    });
+  }
+
+  private speakLine(lineId: string, priority: 1 | 2 | 3 = 2, characterId?: string): void {
     const line = dialogueLine(lineId);
     if (!line) return;
     const loc = getLocale();
@@ -2762,6 +2807,8 @@ export class Game implements UIBridge {
       volume: s.dialogue * s.master,
       muted: s.muted || !s.sfxEnabled,
       lineId,
+      characterId: characterId ?? line.character,
+      emotion: line.emotion,
       voicePitch: tr.pitch,
       voiceRate: tr.rate,
     });

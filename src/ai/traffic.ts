@@ -657,7 +657,16 @@ export class TrafficSystem {
         a.lane.kind === 'main' &&
         (a.kind === 'rickshaw' || a.kind === 'motorbike')
       ) {
-        a.targetLateral = blockerLateral >= 0 ? -0.85 : 0.75;
+        const proposed = blockerLateral >= 0 ? -0.85 : 0.75;
+        // Only edge around a stopped leader if adjacent space is genuinely
+        // free; the old unconditional offset could side-swipe a passing bike.
+        let free = Math.abs(proposed) + a.arch.halfWidth < a.lane.halfRoadWidth - .3;
+        for (let k = 0; k < sameLane.length && free; k++) {
+          const other = sameLane[k];
+          if (other !== a && Math.abs(other.s - a.s) < a.arch.halfLength + other.arch.halfLength + .2 &&
+              Math.abs(other.lateralOffset - proposed) < a.arch.halfWidth + other.arch.halfWidth + .35) free = false;
+        }
+        if (free) a.targetLateral = proposed;
       } else if (a.dwellTimer <= 0 && minGap > 10) {
         a.targetLateral = damp(a.targetLateral, 0, 0.8, stepDt);
       }
