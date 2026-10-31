@@ -14,9 +14,11 @@
  *   - pure scheduling logic (no rendering) — unit-testable with injected rng
  */
 
-import { isInsideDrmcCampus } from '../world/drmcGeo';
+import { isDrmcKeepClear, isInsideDrmcCampus } from '../world/drmcGeo';
+import { ROAD_SEGMENTS } from '../world/layout';
 
 export type DirectorEventKind =
+  | 'market_slowdown'
   | 'traffic_accident'
   | 'broken_vehicle'
   | 'construction'
@@ -41,6 +43,11 @@ export interface EventContext {
   cinematicActive: boolean;
   paused: boolean;
   reduceEffects: boolean;
+  /** Explicit auto-weather preference; manual weather must never be overridden. */
+  autoWeather?: boolean;
+  /** Player forward unit vector, needed for visible roadside construction. */
+  headingX?: number;
+  headingZ?: number;
 }
 
 export interface SpawnedEvent {
@@ -48,6 +55,8 @@ export interface SpawnedEvent {
   kind: DirectorEventKind;
   x: number;
   z: number;
+  /** Public graph segment; event props must belong to this exact road. */
+  segmentId?: string;
   createdAt: number;
   ttl: number;
   /** Cleanup hook provided by the game layer (roadblock pool, banners, etc.). */
@@ -55,17 +64,25 @@ export interface SpawnedEvent {
 }
 
 export const MAX_CONCURRENT_EVENTS = 2;
-export const MAJOR_COOLDOWN_S = 46; // bounded; allows ≤2 concurrent zones with guaranteed spacing
+export const MAJOR_COOLDOWN_S = 90; // quiet opening; optional events are not constant interruptions
 export const MIN_ZONE_SPACING = 38;
+
+// Authored road midpoints only. Do not place events at arbitrary polar offsets,
+// dead ends, restricted gates, or unverified pedestrian-only shortcuts.
+const EVENT_SITES = ROAD_SEGMENTS.filter((s) =>
+  s.kind !== 'gali' && s.length >= 38 && !s.deadEnd &&
+  !isDrmcKeepClear((s.ax + s.bx) / 2, (s.az + s.bz) / 2, 12),
+).map((s) => ({ x: (s.ax + s.bx) / 2, z: (s.az + s.bz) / 2, segmentId: s.id, market: s.jamProne, width: s.width }));
 
 export class EventDirector {
   private active: SpawnedEvent[] = [];
-  private lastMajorAt = -999;
+  private lastMajorAt = 0;
   private lastKindAt = new Map<DirectorEventKind, number>();
   private eventCounter = 0;
 
   /** Fired when the director wants the game layer to realize an event. */
-  onSpawn?: (ev: SpawnedEvent) => void;
+  /** Returning false rejects a failed physical spawn without announcing it. */
+  onSpawn?: (ev: SpawnedEvent) => unknown;
   /** Fired when an event's TTL ends (game must run its cleanup hook). */
   onDespawn?: (ev: SpawnedEvent) => void;
   /** The director nudges the weather system (never forces extreme states). */
@@ -81,28 +98,30 @@ export class EventDirector {
 
   private pickKind(ctx: EventContext, rng: () => number): DirectorEventKind | null {
     const pool: Array<{ kind: DirectorEventKind; w: number }> = [
-      { kind: 'broken_vehicle', w: 1.0 },
-      { kind: 'traffic_accident', w: ctx.trafficDensity > 0.4 ? 1.1 : 0.4 },
-      { kind: 'construction', w: 0.75 },
-      { kind: 'vendor_blockage', w: 0.7 },
-      { kind: 'police_checkpoint', w: ctx.heat >= 1 ? 0.55 : 0.22 },
-      { kind: 'weather_shift', w: 0.6 },
-      { kind: 'street_challenge', w: 0.65 },
-      { kind: 'rare_photo', w: 0.16 },
+      // Illustrative game quiet-hours envelope, not a claim about real shop hours.
+      { kind: 'market_slowdown', w: ctx.timeMinutes >= 6 * 60 && ctx.timeMinutes < 22 * 60
+        ? (ctx.trafficDensity > 0.4 ? 1.1 : 0.55) : 0 },
+      { kind: 'construction', w: ctx.headingX !== undefined && ctx.headingZ !== undefined &&
+        ctx.timeMinutes >= 8 * 60 && ctx.timeMinutes < 17 * 60 && !ctx.raining && ctx.heat < 1 ? 0.3 : 0 },
+      { kind: 'police_checkpoint', w: ctx.headingX !== undefined && ctx.headingZ !== undefined &&
+        ctx.timeMinutes >= 7 * 60 && ctx.timeMinutes < 21 * 60 && ctx.heat >= 1 ? 0.22 : 0 },
+      // Roadworks only where the pre-pooled barrier has a safe owned slot and
+      // a forward, wide public-road site; never in wet or quiet-hour traffic.
+      { kind: 'weather_shift', w: ctx.autoWeather === false || ctx.raining ? 0 : 0.55 },
+      // Rare photo is not scheduled: no shutter or user photo action exists.
+      // Preserve its type for old callers, but do not award a fake capture.
     ];
-    const now = performance.now?.() ?? Date.now();
-    void now;
     let total = 0;
     for (const item of pool) {
       const last = this.lastKindAt.get(item.kind) ?? -999;
-      if (this.eventClock - last < 28) continue; // per-kind cooldown
+      if (item.w <= 0 || this.eventClock - last < 120) continue; // per-kind cooldown
       total += item.w;
     }
     if (total <= 0) return null;
     let r = rng() * total;
     for (const item of pool) {
       const last = this.lastKindAt.get(item.kind) ?? -999;
-      if (this.eventClock - last < 28) continue;
+      if (item.w <= 0 || this.eventClock - last < 120) continue;
       r -= item.w;
       if (r <= 0) return item.kind;
     }
@@ -117,6 +136,7 @@ export class EventDirector {
    * when the TTL expires — `update` guarantees the request happens exactly once.
    */
   update(dt: number, ctx: EventContext, rng: () => number = Math.random): SpawnedEvent | null {
+    if (!Number.isFinite(dt) || dt < 0) return null;
     this.eventClock += dt;
     // TTL expiry with guaranteed cleanup requests
     for (let i = this.active.length - 1; i >= 0; i--) {
@@ -145,11 +165,19 @@ export class EventDirector {
     if (!kind) return null;
 
     // Keep zones apart — never pack multiple disasters into one tiny area
-    const angle = rng() * Math.PI * 2;
-    const radius = 26 + rng() * 42;
-    const x = ctx.x + Math.sin(angle) * radius;
-    const z = ctx.z + Math.cos(angle) * radius;
-    if (isInsideDrmcCampus(x, z, 4)) return null;
+    const candidates = EVENT_SITES.filter((site) => {
+      const dx = site.x - ctx.x, dz = site.z - ctx.z;
+      const d = Math.hypot(dx, dz);
+      return d >= (kind === 'construction' || kind === 'police_checkpoint' ? 50 : 32) && d <= 90 &&
+        ((kind !== 'construction' && kind !== 'police_checkpoint') || (site.width >= 7.2 &&
+          (dx * ctx.headingX! + dz * ctx.headingZ!) / d >= 0.38)) &&
+        // A jam only belongs on a mixed-use connector, not a quiet housing lane.
+        (kind !== 'market_slowdown' || site.market) &&
+        this.active.every((ev) => Math.hypot(ev.x - site.x, ev.z - site.z) >= MIN_ZONE_SPACING);
+    });
+    if (!candidates.length) return null;
+    const site = candidates[Math.min(candidates.length - 1, Math.floor(rng() * candidates.length))];
+    const { x, z } = site;
     for (const ev of this.active) {
       if (Math.hypot(ev.x - x, ev.z - z) < MIN_ZONE_SPACING) return null;
     }
@@ -159,16 +187,19 @@ export class EventDirector {
       kind,
       x,
       z,
+      segmentId: site.segmentId,
       createdAt: this.eventClock,
-      ttl: kind === 'rare_photo' ? 22 : 42 + rng() * 30,
+      ttl: kind === 'market_slowdown' ? 9 : 42 + rng() * 30,
     };
     this.active.push(ev);
+    if (this.onSpawn?.(ev) === false) {
+      this.active.pop();
+      ev.cleanup?.();
+      return null;
+    }
     this.lastMajorAt = this.eventClock;
     this.lastKindAt.set(kind, this.eventClock);
-    if (kind === 'weather_shift') {
-      this.onWeatherNudge?.(ctx.raining ? false : rng() < 0.18);
-    }
-    this.onSpawn?.(ev);
+    if (kind === 'weather_shift') this.onWeatherNudge?.(true);
     return ev;
   }
 

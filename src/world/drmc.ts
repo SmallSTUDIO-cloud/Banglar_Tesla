@@ -179,11 +179,21 @@ export function buildDrmcCampus(heightAt: (x: number, z: number) => number): Drm
 
   // Connected internal circulation. These are walk/drive surfaces, not traffic
   // lanes: ambient agents never route through this private site.
-  path({ x: 41, z: -66 }, { x: 57, z: -88 }, 5.2);
+  // The forecourts are connected to the circulation itself. Previously the
+  // second entrance ended short of the field-side lane, leaving a visible
+  // grass break between the two drivable approaches.
+  const insideGate = (gate: GamePoint, road: GamePoint, distance: number): GamePoint => {
+    const dx = gate.x - road.x, dz = gate.z - road.z;
+    const len = Math.hypot(dx, dz);
+    return { x: gate.x + dx / len * distance, z: gate.z + dz / len * distance };
+  };
+  path(insideGate(DRMC_GATE, DRMC_GATE_ROAD_POINT, 6.8), { x: 57, z: -88 }, 5.2);
+  path(insideGate(DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT, 6.8), { x: 95, z: -114 }, 3.0);
   path({ x: 57, z: -88 }, { x: 43, z: -126 }, 4.0);
   path({ x: 43, z: -126 }, { x: 43, z: -151 }, 3.2);
   path({ x: 57, z: -88 }, { x: 90, z: -75 }, 3.0);
   path({ x: 95, z: -114 }, { x: 92, z: -91 }, 3.0);
+  path({ x: 92, z: -91 }, { x: 90, z: -75 }, 3.0);
 
   /** White low-rise academic façades with red plinth and a shaded colonnade. */
   const block = (centre: GamePoint, width: number, length: number, height: number, yaw: number, columnCount: number): void => {

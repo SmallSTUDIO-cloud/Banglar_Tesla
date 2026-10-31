@@ -20,7 +20,6 @@ android {
         }
         release {
             minifyEnabled false
-            signingConfig signingConfigs.debug
         }
     }
 
@@ -30,9 +29,16 @@ android {
     }
 }
 
-tasks.register('syncWebDist', Copy) {
-    from '../../dist'
+// Offline WebView assets are the exact current Vite bundle. Sync removes stale
+// hashed JS/CSS files from a previous build rather than accumulating them.
+tasks.register('syncWebDist', Sync) {
+    from rootProject.file('../dist')
     into 'src/main/assets/public'
+    doFirst {
+        if (!rootProject.file('../dist/index.html').isFile()) {
+            throw new GradleException('Missing dist/index.html — run npm run build first')
+        }
+    }
 }
 
-preBuild.dependsOn(syncWebDist)
+tasks.named('preBuild').configure { dependsOn tasks.named('syncWebDist') }

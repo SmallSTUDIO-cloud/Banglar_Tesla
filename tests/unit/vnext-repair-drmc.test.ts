@@ -3,7 +3,7 @@ import { getLaneGraph } from '../../src/ai/routes';
 import { PED_PATHS } from '../../src/ai/pedestrians';
 import { EventDirector, type EventContext } from '../../src/events/eventDirector';
 import { buildDrmcCampus } from '../../src/world/drmc';
-import { crossesDrmcCampus, DRMC_GATE, DRMC_GATE_ROAD_POINT, DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT, isInsideDrmcCampus } from '../../src/world/drmcGeo';
+import { crossesDrmcCampus, DRMC_GATE, DRMC_GATE_ROAD_POINT, DRMC_SPORTS_GROUND, DRMC_SIDE_GATE, DRMC_SIDE_GATE_ROAD_POINT, isInsideDrmcCampus } from '../../src/world/drmcGeo';
 import { findRoute, placeById, ROAD_SEGMENTS } from '../../src/world/layout';
 import type { Collider } from '../../src/world/city';
 
@@ -16,6 +16,14 @@ function blocksPoint(c: Collider, x: number, z: number, radius = 0): boolean {
 }
 
 describe('DRMC road integration and ambient exclusion', () => {
+  it('approaches the main gate from the connected road, not the farther junction behind it', () => {
+    const route = findRoute(-126, -136, DRMC_GATE_ROAD_POINT.x, DRMC_GATE_ROAD_POINT.z, undefined, true);
+    expect(route.points.at(-2)).toEqual({ x: -12, z: -112 });
+    expect(route.points.at(-1)).toEqual(DRMC_GATE_ROAD_POINT);
+    const last = route.points.at(-2)!;
+    expect(Math.hypot(last.x - DRMC_GATE_ROAD_POINT.x, last.z - DRMC_GATE_ROAD_POINT.z)).toBeLessThan(75);
+  });
+
   it('leaves every existing road centerline outside the private boundary', () => {
     expect(ROAD_SEGMENTS.filter((s) => crossesDrmcCampus(s.ax, s.az, s.bx, s.bz))).toEqual([]);
   });
@@ -71,14 +79,37 @@ describe('DRMC road integration and ambient exclusion', () => {
       }
     }
   });
+  it('keeps the side-gate field-edge lane off the marked playing surface', () => {
+    const edge = DRMC_SPORTS_GROUND.x + 33 / 2;
+    // Both road segments share the corner at (95,-114) and run east of
+    // the football pitch; allow the 1.5-unit road half-width and a verge.
+    const gateIn = (() => {
+      const dx = DRMC_SIDE_GATE.x - DRMC_SIDE_GATE_ROAD_POINT.x;
+      const dz = DRMC_SIDE_GATE.z - DRMC_SIDE_GATE_ROAD_POINT.z;
+      const len = Math.hypot(dx, dz);
+      return { x: DRMC_SIDE_GATE.x + dx / len * 6.8, z: DRMC_SIDE_GATE.z + dz / len * 6.8 };
+    })();
+    for (const segment of [[gateIn, { x: 95, z: -114 }], [{ x: 95, z: -114 }, { x: 92, z: -91 }]] as const) {
+      for (let i = 0; i <= 20; i++) {
+        const x = segment[0].x + (segment[1].x - segment[0].x) * i / 20;
+        expect(x - 1.5, 'lane must not cut through the football pitch').toBeGreaterThanOrEqual(edge);
+      }
+    }
+  });
   it('does not schedule random events from or into the grounds', () => {
     const ctx: EventContext = { x: 80, z: -105, timeMinutes: 720, heat: 0, trafficDensity: 0.5, raining: false,
       inMission: false, inRace: false, policeActive: false, roadRageActive: false, cinematicActive: false, paused: false, reduceEffects: false };
     const director = new EventDirector();
     expect(director.update(50, ctx, () => 0)).toBeNull();
     const values = [0, 0, 0.5, 0.4];
-    expect(director.update(50, { ...ctx, x: 80, z: -10 }, () => values.shift() ?? 0)).toBeNull();
-    expect(director.activeCount).toBe(0);
+    const ev = director.update(50, { ...ctx, x: 80, z: -10 }, () => values.shift() ?? 0);
+    // A public-road event near campus is permitted; its site must never be
+    // inside the grounds or gate apron. The older test assumed polar offsets.
+    if (ev) {
+      expect(isInsideDrmcCampus(ev.x, ev.z, 12)).toBe(false);
+      expect(ROAD_SEGMENTS.some((s) => Math.hypot(ev.x - (s.ax + s.bx) / 2, ev.z - (s.az + s.bz) / 2) < 0.01)).toBe(true);
+    }
+    expect(director.activeCount).toBe(ev ? 1 : 0);
   });
 });
 

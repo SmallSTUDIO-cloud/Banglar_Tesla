@@ -11,6 +11,7 @@
  *     per-frame heap allocations and 100% preserved crowd density!
  */
 
+import { quietTrafficFactor } from './traffic';
 import { crossesDrmcCampus, isInsideDrmcCampus } from '../world/drmcGeo';
 import * as THREE from 'three';
 import { QUALITY, type QualitySettings } from '../core/config';
@@ -256,6 +257,9 @@ export class PedestrianSystem {
   private bag: THREE.InstancedMesh;
   private maxCapacity: number;
   private activeCount = 0;
+  private baseCount = 68;
+  private quietFactor = 1;
+  private populationTick = 0;
 
   private rng = mulberry32(73319);
   private matrix = new THREE.Matrix4();
@@ -381,7 +385,8 @@ export class PedestrianSystem {
   }
 
   setQuality(quality: QualitySettings): void {
-    this.activeCount = clamp(quality.pedestrians, 8, this.maxCapacity);
+    this.baseCount = clamp(quality.pedestrians, 8, this.maxCapacity);
+    this.activeCount = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
     for (const mesh of [
       this.body,
       this.head,
@@ -397,6 +402,42 @@ export class PedestrianSystem {
     }
     // Only torso casts into shadow map (cuts 8/9ths of pedestrian shadow draw calls!)
     this.body.castShadow = quality.shadows;
+  }
+
+  setTimeMinutes(minutes: number): void {
+    this.quietFactor = quietTrafficFactor(minutes);
+  }
+
+  private adjustPopulation(dt: number, playerX: number, playerZ: number): void {
+    this.populationTick += dt;
+    if (this.populationTick < 1.25) return;
+    this.populationTick = 0;
+    const desired = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
+    if (this.activeCount < desired) this.activeCount++;
+    else if (this.activeCount > desired) {
+      const tail = this.peds[this.activeCount - 1];
+      // Do not erase someone walking beside the player or a mission caller.
+      if (tail && !tail.roadsideReserved) {
+        if (Math.hypot(tail.worldX - playerX, tail.worldZ - playerZ) > 50) {
+          this.activeCount--;
+        } else {
+          // The last instance may be right beside the rider for hours. Keep
+          // that walker visible: retire a distant, unreserved walker instead.
+          // Reserved mission callers keep their stable index throughout.
+          for (let i = this.activeCount - 2; i >= 0; i--) {
+            const candidate = this.peds[i];
+            if (candidate.roadsideReserved || Math.hypot(candidate.worldX - playerX, candidate.worldZ - playerZ) <= 50) continue;
+            this.peds[i] = tail;
+            this.peds[this.activeCount - 1] = candidate;
+            this.activeCount--;
+            break;
+          }
+        }
+      }
+    }
+    for (const mesh of [this.body, this.head, this.hair, this.armL, this.armR, this.legL, this.legR, this.skirt, this.bag]) {
+      mesh.count = this.activeCount;
+    }
   }
 
   private pickPathIndex(preferBusy: boolean): number {
@@ -525,6 +566,20 @@ export class PedestrianSystem {
     ped.pause = 0.25; ped.farAccum = 0; ped.roadsideReserved = false;
   }
 
+  /** A few existing sidewalk walkers briefly pause for a REAL roadside loading
+   * stop. No new pedestrians, displacement, road crossing or campus activity. */
+  noticeRoadsideLoading(x: number, z: number): number {
+    let noticed = 0;
+    for (let i = 0; i < this.activeCount && noticed < 3; i++) {
+      const ped = this.peds[i];
+      if (ped.roadsideReserved || isInsideDrmcCampus(ped.worldX, ped.worldZ, 0) ||
+          Math.hypot(ped.worldX - x, ped.worldZ - z) > 8) continue;
+      ped.pause = Math.max(ped.pause, 0.85);
+      noticed++;
+    }
+    return noticed;
+  }
+
   /** Ringing the rickshaw bell alerts nearby walkers politely before near-miss distance! */
   alertBell(px: number, pz: number): void {
     for (let i = 0; i < this.activeCount; i++) {
@@ -547,6 +602,7 @@ export class PedestrianSystem {
     playerYaw = 0,
   ): void {
     if (PED_PATHS.length === 0) return;
+    this.adjustPopulation(dt, playerX, playerZ);
     this.globalReactCooldown = Math.max(0, this.globalReactCooldown - dt);
 
     const absSpeed = Math.abs(playerSpeed);

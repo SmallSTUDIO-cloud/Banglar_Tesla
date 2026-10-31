@@ -8,158 +8,62 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publish APK to GitHub Release v0.6.0'
-        required: false
-        default: 'true'
+        description: 'Publish this verified baseline as a separate GitHub Release'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 jobs:
   build-apk:
-    name: Build Debug Android APK (v0.6.0)
+    name: Verify baseline and assemble debug APK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies, typecheck, test, and build web bundle
+          cache: npm
+      - name: Install and verify source
         run: |
           npm ci
-          npm run typecheck
-          npm test
           npm run build
-
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
+          npm test
+          npm run test:android-pipeline
+      - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
-
-      - name: Build & sign Android APK with Android SDK tools
+      - uses: android-actions/setup-android@v3
+      - name: Install official SDK Platform 34 and Build Tools 34.0.0
+        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+      - name: Check toolchain and assemble through the checked-in Gradle pipeline
+        run: |
+          python3 scripts/build-apk.py --check
+          python3 scripts/build-apk.py
+          mkdir -p artifacts
+          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/banglar-tesla-v0.6.0-baseline-debug.apk
+          sha256sum artifacts/banglar-tesla-v0.6.0-baseline-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: banglar-tesla-v0.6.0-baseline-debug-apk
+          path: artifacts/banglar-tesla-v0.6.0-baseline-debug.apk
+          if-no-files-found: error
+      - name: Publish separate baseline release (never overwrite v0.6.0)
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          BUILD_TOOLS="$(ls -d "$SDK_ROOT"/build-tools/* | sort -V | tail -n 1)"
-          PLATFORM_JAR="$(ls "$SDK_ROOT"/platforms/android-*/android.jar | sort -V | tail -n 1)"
-          echo "Using BUILD_TOOLS=$BUILD_TOOLS"
-          echo "Using PLATFORM_JAR=$PLATFORM_JAR"
-
-          WORK_DIR="$(mktemp -d)"
-          mkdir -p "$WORK_DIR/classes" "$WORK_DIR/dex" android/app/src/main/assets/public artifacts
-          rm -rf android/app/src/main/assets/public/*
-          cp -r dist/* android/app/src/main/assets/public/
-          find android/app/src/main/assets/public -name ".*" -type f -delete
-
-          # 1. Compile resources & link manifest + offline web & audio assets
-          "$BUILD_TOOLS/aapt2" compile --dir android/app/src/main/res -o "$WORK_DIR/res.zip"
-          "$BUILD_TOOLS/aapt2" link \
-            -o "$WORK_DIR/unaligned.apk" \
-            -I "$PLATFORM_JAR" \
-            --manifest android/app/src/main/AndroidManifest.xml \
-            -A android/app/src/main/assets \
-            --java "$WORK_DIR/gen" \
-            --min-sdk-version 24 \
-            --target-sdk-version 34 \
-            --version-code 7 \
-            --version-name 0.6.0 \
-            -0 .ttf -0 .png -0 .jpg -0 .webp -0 .mp3 -0 .ogg -0 .wav \
-            --auto-add-overlay \
-            "$WORK_DIR/res.zip"
-
-          # 2. Compile Java sources (including BanglaTtsBridge) -> DEX
-          find android/app/src/main/java "$WORK_DIR/gen" -name "*.java" > "$WORK_DIR/sources.txt"
-          javac --release 11 -classpath "$PLATFORM_JAR" -d "$WORK_DIR/classes" @"$WORK_DIR/sources.txt"
-          find "$WORK_DIR/classes" -name "*.class" > "$WORK_DIR/classes.txt"
-          "$BUILD_TOOLS/d8" --min-api 24 --lib "$PLATFORM_JAR" --output "$WORK_DIR/dex" @"$WORK_DIR/classes.txt"
-
-          # 3. Package classes.dex, zipalign (4-byte), and debug-sign (v1+v2+v3)
-          cp "$WORK_DIR/dex/classes.dex" "$WORK_DIR/classes.dex"
-          (cd "$WORK_DIR" && zip -q -9 unaligned.apk classes.dex)
-          "$BUILD_TOOLS/zipalign" -f -p 4 "$WORK_DIR/unaligned.apk" "$WORK_DIR/aligned.apk"
-
-          KEYSTORE="$WORK_DIR/debug.keystore"
-          keytool -genkeypair -keystore "$KEYSTORE" -storepass android -alias androiddebugkey \
-            -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
-            -dname "CN=Android Debug,O=Android,C=US"
-
-          OUT_APK="artifacts/banglar-tesla-v0.6.0-debug.apk"
-          STABLE_APK="artifacts/Banglar-Tesla.apk"
-          "$BUILD_TOOLS/apksigner" sign \
-            --ks "$KEYSTORE" \
-            --ks-key-alias androiddebugkey \
-            --ks-pass pass:android \
-            --key-pass pass:android \
-            --v1-signing-enabled true \
-            --v2-signing-enabled true \
-            --v3-signing-enabled true \
-            --out "$OUT_APK" \
-            "$WORK_DIR/aligned.apk"
-
-          cp "$OUT_APK" "$STABLE_APK"
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$OUT_APK"
-          "$BUILD_TOOLS/aapt2" dump badging "$OUT_APK"
-          ls -lh "$OUT_APK" "$STABLE_APK"
-
-      - name: Upload APK build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: banglar-tesla-v0.6.0-android-apk
-          path: |
-            artifacts/banglar-tesla-v0.6.0-debug.apk
-            artifacts/Banglar-Tesla.apk
-          if-no-files-found: error
-
-      - name: Publish APK assets to GitHub Release v0.6.0
-        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-v0.6.0]')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="v0.6.0"
-          APK="artifacts/banglar-tesla-v0.6.0-debug.apk"
-          STABLE="artifacts/Banglar-Tesla.apk"
+          TAG=v0.6.0-baseline-20261031
+          APK=artifacts/banglar-tesla-v0.6.0-baseline-debug.apk
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release $TAG" >&2
+            exit 1
+          fi
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
           SIZE="$(stat -c%s "$APK")"
-          NOTES=$(cat <<EOF
-          ## Banglar Tesla — বাংলার টেসলা (\`v0.6.0\`)
-
-          **Master Upgrade vNext** — the Bangla-voice release: every intended Blacklist line now plays with per-character Bengali voices and distinct original music stings, plus the five-state dynamic weather system, the map-accurate **Dhaka Residential Model College (DRMC)** landmark, the permanent career scrapbook, a bounded Dhaka-life event director, rival recognition, stunt/combos, and full NPC/character rig integrity — on top of every \`v0.5.x\` system.
-
-          ### What's New in \`v0.6.0\`
-          - **Bangla Voice Overhaul (release gate):** complete dialogue manifest (`src/audio/dialogueManifest.json`) with stable IDs — 39 Bangla + 32 English clips synthesized offline via libespeak-ng with manual hasant/ZWNJ Bengali shaping and a distinct pitch/rate identity per character. All **10 Blacklist intros** play sequenced voice (intro + taunt + matching subtitles) under a **distinct original music sting per rival**, skippable with clean audio/camera/rig cleanup. Honest QA status: synthesized speech requires human/device listening sign-off.
-          - **Five-State Dynamic Weather:** Sunny / Overcast / Rainy / Windy / Thunderstorm event-driven director with gradual blends (never instant swaps), camera sun-glare on sunny approaches, camera-anchored rain droplets, wind-driven litter sway, lightning + delayed thunder with a **low-flash comfort setting**, wet-road handling sync, race-finish protection and full save migration (\`clear\` → \`sunny\`).
-          - **DRMC on the Map (accuracy-gated):** OSM way 1008314351 campus boundary + way 1386522766 gate placed via a 10-control-point validated geographic fit (RMS 46 m characterized stylization) anchored to the real Shahjahan-Road boundary; bilingual gate signage, perimeter wall, white academic blocks, sports grounds, trees; route guidance reaches the gate from 3 districts; DEV accuracy overlay + keep-clear guarantees (no road ever blocked).
-          - **Career Scrapbook:** permanent deduplicated history (race wins/losses, Blacklist milestones, rival encounters, framed victory photo thumbnails, police escapes/Heat, near misses/stunts/combos, weather moments, purchases/upgrades, landmark visits) with write-once stable IDs, bounded storage (≤240 records, ≤8 photo thumbs), full save migration and a reopenable framed-photo UI.
-          - **Character & NPC Rig Integrity:** every driver now has exactly two contiguous arms and two hands wrapped on one handlebar (fixed the duplicated-hand misalignment at root-cause level with shared, unit-tested limb-chain math), plus passenger lap hands, CNG steering-wheel grip, EasyBike cabin grip, visible eyes/expressive faces and 10 rival hair/headwear identities.
-          - **Dhaka Life & Stunts:** bounded event director (traffic accident/jam, broken vehicle, construction, vendor blockage, police checkpoint, weather shift, rival challenge, rare photo moments) with hard caps, spacing rules and guaranteed cleanup; rival recognition cards in free roam; tilt/drift/speed/impact stunt combos with bounded HUD feedback; brief cinematic crash slow-mo + impact zoom (reduced-motion aware).
-
-          All \`v0.5.x\` systems are included: calibrated physics (20 / 39 / ~60 km/h), tight OBB hitboxes, 5-Heat police pursuit, roadblocks, Dynamic In-Game Clock, টান/টার্বো, REP + টাকা economy, and \`v0.4.0\`+ save migration.
-
-          ### APK Details
-          - **Direct Download (Stable Latest URL):** \`Banglar-Tesla.apk\` (\`$SIZE\` bytes)
-          - **Versioned Asset:** \`banglar-tesla-v0.6.0-debug.apk\` (\`$SIZE\` bytes)
-          - **App Name:** \`Banglar Tesla\`
-          - **Application ID:** \`com.shostalab.banglartesla\`
-          - **Version:** \`0.6.0\` (\`versionCode: 7\`)
-          - **Android Compatibility:** Android 7.0+ (\`minSdkVersion 24\`, \`targetSdkVersion 34\`)
-          - **Permissions Requested:** None (\`0\` \`<uses-permission>\` entries; runs 100% offline)
-          - **Signing:** Android debug signature (\`APK Signature Scheme v1 + v2 + v3\`)
-          - **SHA-256:** \`$SHA\`
-          EOF
-          )
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" "$STABLE" --clobber
-            gh release edit "$TAG" --latest --title "Banglar Tesla v0.6.0 — Bangla Voice Release, Dynamic Weather & DRMC" --notes "$NOTES"
-          else
-            gh release create "$TAG" "$APK" "$STABLE" \
-              --latest \
-              --target "${{ github.sha }}" \
-              --title "Banglar Tesla v0.6.0 — Bangla Voice Release, Dynamic Weather & DRMC" \
-              --notes "$NOTES"
-          fi
+          gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --latest \
+            --title 'Banglar Tesla v0.6.0 — progress baseline (debug APK)' \
+            --notes "Debug-signed APK from commit $GITHUB_SHA. Package com.shostalab.banglartesla; versionCode 7; versionName 0.6.0; minSdk 24. File size: $SIZE bytes. SHA-256: $SHA. Built with the repository Gradle 8.7 / AGP 8.5.2 pipeline on JDK 17 and official Android SDK 34 / Build Tools 34.0.0. The build script verifies zip alignment, signing, APK identity/version and the bundled web assets. Gameplay progress is PARTIAL (see docs/DHAKA_FIRST_CONTINUATION_REPORT.md). No installation or physical-device validation has been performed. This is a test APK, not a production-signed update; it may not install over a differently signed copy."

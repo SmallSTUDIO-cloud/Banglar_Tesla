@@ -16,6 +16,7 @@ import { nearestSafeSidewalk } from './roadside';
 import { releaseScratchCanvas } from '../world/textures';
 import { PassengerActor, archetypeById } from './actors';
 import type { MissionOffer } from './mission';
+import { contextualCareBonus } from '../gameplay/roadDecisions';
 
 export type MissionState = 'none' | 'toPickup' | 'boarding' | 'toDropoff' | 'arrived' | 'complete';
 
@@ -79,6 +80,8 @@ export class MissionSystem extends Emitter<MissionEvents> {
   boardedAt = 0;
   distance = 0;
   detourBonusEarned = false;
+  private rideImpacts = 0;
+  private rideHardBrakes = 0;
 
   private host: MissionHost;
   private pickup: PlaceDef | null = null;
@@ -175,6 +178,7 @@ export class MissionSystem extends Emitter<MissionEvents> {
     this.distance = 0;
     this.boardingTimer = 0;
     this.detourBonusEarned = false;
+    this.rideImpacts = this.rideHardBrakes = 0;
 
     if (this.pickup) {
       const waitSpot = this.safeSidewalkSpotNear(this.pickup);
@@ -237,9 +241,12 @@ export class MissionSystem extends Emitter<MissionEvents> {
     this.lastHint = null;
   }
 
+  setWeatherWet(wet: boolean): void { this.host.wet = wet; }
+
   registerImpact(strength: number): void {
     if (this.state !== 'toDropoff' && this.state !== 'toPickup') return;
     if (strength < 0.5) return;
+    if (this.state === 'toDropoff') this.rideImpacts = Math.min(3, this.rideImpacts + 1);
     const penalty = MISSION.moodCollisionHit * clamp(strength / 2.2, 0.4, 1.6);
     this.mood = clamp(this.mood - penalty, 0, 100);
     this.emit('mood', this.mood);
@@ -254,6 +261,7 @@ export class MissionSystem extends Emitter<MissionEvents> {
 
   registerHardBrake(): void {
     if (this.state !== 'toDropoff') return;
+    this.rideHardBrakes = Math.min(3, this.rideHardBrakes + 1);
     this.mood = clamp(this.mood - MISSION.moodHardBrake, 0, 100);
     this.emit('mood', this.mood);
   }
@@ -360,14 +368,16 @@ export class MissionSystem extends Emitter<MissionEvents> {
   private completeRide(): void {
     if (!this.offer || !this.drop) return;
     const t = this.elapsed - this.boardedAt;
+    const careful = this.mood >= 75 && this.rideImpacts === 0;
     const trafficBonus =
-      (this.detourBonusEarned ? 20 : 0) + (this.offer.kind === 'market' ? 15 : 0);
+      (this.detourBonusEarned ? 20 : 0) + (this.offer.kind === 'market' && careful ? 15 : 0) +
+      contextualCareBonus(this.offer.optional, this.host.wet, this.mood, this.rideImpacts, this.rideHardBrakes);
     const fare = computeFare({
       distance: this.offer.distance,
       timeTaken: t,
       targetTime: this.offer.targetTime,
       mood: this.mood,
-      damage: 0,
+      damage: this.rideImpacts,
       fareMultiplier: this.offer.multiplier,
       trafficBonus,
     });

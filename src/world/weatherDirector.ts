@@ -53,7 +53,7 @@ const TARGETS: Record<WeatherKind, WeatherBlend> = {
   overcast: { overcast: 0.55, wet: 0.12, wind: 0.38, rain: 0, lightning: 0 },
   rain: { overcast: 0.72, wet: 1, wind: 0.82, rain: 1, lightning: 0 },
   windy: { overcast: 0.18, wet: 0, wind: 1.0, rain: 0, lightning: 0 },
-  storm: { overcast: 1, wet: 1, wind: 1.35, rain: 0.88, lightning: 1 },
+  storm: { overcast: 1, wet: 1, wind: 1.35, rain: 1, lightning: 1 },
 };
 
 /** Blend targets reachable from a state (bounded transition graph). */

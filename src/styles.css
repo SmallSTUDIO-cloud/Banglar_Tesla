@@ -642,6 +642,20 @@ button .icon svg {
   height: 100%;
   display: block;
 }
+/* Free-ride destination is accessible without obscuring the 84px map. */
+.minimap-nav {
+  position: absolute;
+  bottom: 3px;
+  left: 3px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid #e8b25a;
+  background: rgba(9, 21, 18, 0.9);
+  color: #fff1ca;
+  font: 600 9px system-ui, sans-serif;
+  cursor: pointer;
+}
+.minimap-nav[aria-pressed="true"] { background: #825b25; }
 .hud-dialogue {
   position: absolute;
   left: 50%;
@@ -908,6 +922,7 @@ button .icon svg {
 }
 .seg {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.3rem;
   padding: 0.22rem;
   border-radius: 12px;
@@ -915,7 +930,8 @@ button .icon svg {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 .seg button {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: max-content;
   min-height: 38px;
   border: 0;
   border-radius: 9px;
@@ -2542,7 +2558,7 @@ input[type='range']::-moz-range-thumb {
   inset: 0;
   pointer-events: none;
   z-index: 6;
-  background: linear-gradient(180deg, rgba(232, 240, 255, 0.95), rgba(198, 216, 255, 0.7));
+  background: linear-gradient(180deg, rgba(170, 195, 225, 0.36), rgba(140, 170, 210, 0.07));
   opacity: 0;
   transition: opacity 0.42s ease-out;
 }
@@ -2556,6 +2572,8 @@ input[type='range']::-moz-range-thumb {
   pointer-events: none;
   z-index: 5;
   opacity: 0;
+  transition: opacity 1.25s ease-out;
+  box-shadow: inset 1px 0 2px rgba(241, 250, 255, 0.15), 0 1px 1px rgba(9, 28, 37, 0.18);
 }
 .rain-drop.on {
   opacity: 1;
@@ -2564,10 +2582,10 @@ input[type='range']::-moz-range-thumb {
   animation-timing-function: linear;
 }
 @keyframes rain-drip {
-  0% { transform: translateY(0) scaleY(0.9); opacity: 0; }
-  12% { opacity: 0.85; }
-  88% { opacity: 0.55; }
-  100% { transform: translateY(112vh) scaleY(1.25); opacity: 0; }
+  0% { transform: translate3d(0, 0, 0) scaleY(0.85); opacity: 0; }
+  17% { opacity: calc(0.42 * var(--rain-opacity, 1)); }
+  62% { opacity: calc(0.32 * var(--rain-opacity, 1)); }
+  100% { transform: translate3d(var(--drift), var(--trail), 0) scaleY(1.3); opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .rain-drop.on { animation-duration: 6s !important; }

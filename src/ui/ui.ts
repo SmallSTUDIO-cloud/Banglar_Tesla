@@ -61,6 +61,7 @@ export interface HudState {
   tanActive?: boolean;
   teaAvailable?: boolean;
   routePoints?: { x: number; z: number }[] | null;
+  drmcNavigation?: boolean;
   jammedSegments?: string[];
   detourActive?: boolean;
   // v0.5.0 Dynamic Time, Turbo, REP, Condition, Police & Rival Race
@@ -106,6 +107,7 @@ export interface UIBridge {
   returnToMenu(): void;
   nextJob(): void;
   enterFreeRide(): void;
+  toggleDrmcNavigation(): void;
   openGarage(from: 'menu' | 'pause' | 'result'): void;
   closeGarage(): void;
   openShowroomFromMenu?(): void;
@@ -154,6 +156,7 @@ export class AppUI {
   private garageEl: HTMLElement | null = null;
   private storeEl: HTMLElement | null = null;
   private settingsEl: HTMLElement | null = null;
+  private graphicsEl: HTMLElement | null = null;
   private creditsEl: HTMLElement | null = null;
   private tutorialEl: HTMLElement | null = null;
   private blacklistEl: HTMLElement | null = null;
@@ -274,6 +277,9 @@ export class AppUI {
       case 'raceResult':
         this.bridge.exitRaceToFreeRide();
         return true;
+      case 'graphics':
+        this.closeGraphics();
+        return true;
       case 'settings':
         this.closeSettings();
         return true;
@@ -311,7 +317,7 @@ export class AppUI {
     this.current = name;
     if (name) this.screens.get(name)?.classList.remove('hidden');
     if (name === 'menu') this.refreshMenuChrome();
-    if (name === 'garage' || name === 'store' || name === 'settings') {
+    if (name === 'garage' || name === 'store' || name === 'settings' || name === 'graphics') {
       this.bridge.setShowroomVisible(name === 'garage' || name === 'store');
     }
   }
@@ -600,7 +606,13 @@ export class AppUI {
     this.hudClockTextEl = clockTextEl;
     const mini = h('div', { class: 'minimap' });
     this.miniCanvas = h('canvas', { attrs: { width: 208, height: 208 } });
-    mini.append(this.miniCanvas, clockChip);
+    const drmcNav = h('button', {
+      class: 'minimap-nav',
+      attrs: { id: 'hud-drmc-nav', type: 'button', 'aria-label': 'Navigate to DRMC', 'aria-pressed': 'false' },
+      text: 'DRMC ↗',
+      on: { click: () => this.bridge.toggleDrmcNavigation() },
+    });
+    mini.append(this.miniCanvas, clockChip, drmcNav);
 
     const repCondSpan = h('span', { text: `${t('hud.rep')} 0 · ${t('hud.condition')} 100%` });
     const repCondPill = h('div', { class: 'rep-cond-pill', attrs: { id: 'hud-rep-cond' } }, repCondSpan);
@@ -1276,7 +1288,13 @@ export class AppUI {
       this.hudRecoverBtn = null;
     }
 
+    const navButton = this.hud.querySelector('#hud-drmc-nav');
+    navButton?.setAttribute('aria-pressed', String(!!state.drmcNavigation));
     this.drawMinimap(state);
+  }
+
+  setDrmcNavigationActive(active: boolean): void {
+    this.hud.querySelector('#hud-drmc-nav')?.setAttribute('aria-pressed', String(active));
   }
 
   private ensureMinimapBase(scale: number): HTMLCanvasElement {
@@ -1885,6 +1903,7 @@ export class AppUI {
     const level = this.state.upgradeLevel(id);
     const price = this.state.nextUpgradePrice(id);
     const maxed = level >= up.maxLevel;
+    const locked = this.state.progress.rides < (up.ridesRequired ?? 0);
     return h('button', {
       class: `item-card${maxed ? ' owned' : ''}`,
       attrs: { type: 'button', 'data-upgrade-id': id },
@@ -1892,6 +1911,7 @@ export class AppUI {
         click: () => {
           if (this.busy) return;
           if (maxed || price === null) return;
+          if (locked) { this.bridge.audio.uiError(); this.toast(t('common.locked'), 'bad'); return; }
           if (this.state.balance < price) {
             this.bridge.audio.uiError();
             this.toast(t('store.notEnough', { n: formatTaka(price - this.state.balance) }), 'bad');
@@ -1919,7 +1939,9 @@ export class AppUI {
         ),
       ),
       h('div', { class: 'ic-price' },
-        maxed ? h('span', { class: 'pill green', text: t('common.max') }) : h('span', { class: 'taka', text: formatTaka(price ?? 0) }),
+        maxed ? h('span', { class: 'pill green', text: t('common.max') }) :
+          locked ? h('span', { class: 'taka', text: `🔒 ${up.ridesRequired} ${t('up.rides')}` }) :
+            h('span', { class: 'taka', text: formatTaka(price ?? 0) }),
       ),
     );
   }
@@ -2165,42 +2187,19 @@ export class AppUI {
       this.bridge.applySettings();
     };
 
-    // graphics
-    body.append(h('h3', { text: t('settings.graphics') }));
-    body.append(segmented<QualityPreset>({
-      label: t('settings.quality'),
-      value: s.quality,
-      options: [
-        { value: 'low', label: t('quality.low') },
-        { value: 'balanced', label: t('quality.balanced') },
-        { value: 'high', label: t('quality.high') },
-        { value: 'pc_high', label: t('quality.pc_high') },
-      ],
-      onChange: (v) => {
-        patch({ quality: v, shadows: QUALITY[v].shadows });
-        this.buildSettings();
-        this.show('settings');
-      },
+    // Graphics is a separate, scrollable screen; weather choice is independent.
+    body.append(button(t('settings.graphicsOpen'), {
+      variant: 'primary', wide: true, attrs: { 'data-action': 'open-graphics' },
+      onClick: () => this.openGraphics(),
     }));
-    body.append(h('div', { class: 'tiny muted', text: t('settings.qualityNote') }));
-    body.append(slider({
-      label: t('settings.renderScale'),
-      value: s.renderScale,
-      min: 0.6,
-      max: 1.2,
-      step: 0.05,
-      onInput: (v) => patch({ renderScale: v }),
-      display: (v) => `${Math.round(v * 100)}%`,
-    }));
-    body.append(toggle({ label: t('settings.shadows'), value: s.shadows, onChange: (v) => patch({ shadows: v }) }));
-    body.append(segmented<'30' | '60'>({
-      label: t('settings.fps'),
-      value: s.fpsTarget === 30 ? '30' : '60',
-      options: [
-        { value: '30', label: t('settings.fps30') },
-        { value: '60', label: t('settings.fps60') },
-      ],
-      onChange: (v) => patch({ fpsTarget: v === '30' ? 30 : 60 }),
+
+    body.append(segmented<Settings['weatherPreference']>({
+      label: t('settings.weather'),
+      value: s.weatherPreference,
+      options: (['auto', 'sunny', 'overcast', 'rain', 'windy', 'storm'] as const).map((value) => ({
+        value, label: t(`weather.${value}`),
+      })),
+      onChange: (v) => patch({ weatherPreference: v }),
     }));
 
     // audio
@@ -2352,7 +2351,104 @@ export class AppUI {
     this.register('settings', this.settingsEl);
   }
 
+  private openGraphics(): void {
+    this.buildGraphics();
+    this.show('graphics');
+  }
+
+  private buildGraphics(): void {
+    this.graphicsEl?.remove();
+    this.screens.delete('graphics');
+    const s = this.settingsStore.get();
+    const { wrap, body } = sheet(t('settings.graphics'), { onClose: () => this.closeGraphics() });
+    const patch = (p: Partial<Settings>, rebuild = true): void => {
+      this.settingsStore.set({ ...p, graphicsProfile: 'custom' });
+      this.bridge.applySettings();
+      if (rebuild) { this.buildGraphics(); this.show('graphics'); }
+    };
+    body.append(h('h3', { text: t('settings.graphicsGeneral') }));
+    body.append(segmented<Settings['graphicsProfile']>({
+      label: t('settings.quality'), value: s.graphicsProfile,
+      options: [
+        { value: 'performance', label: t('quality.low') },
+        { value: 'balanced', label: t('quality.balanced') },
+        { value: 'high', label: t('quality.high') },
+        { value: 'custom', label: t('settings.graphicsCustom') },
+      ],
+      onChange: (v) => {
+        if (v === 'custom') return;
+        const quality: QualityPreset = v === 'performance' ? 'low' : v;
+        this.settingsStore.set({
+          graphicsProfile: v, quality, shadows: QUALITY[quality].shadows,
+          renderScale: v === 'performance' ? 0.8 : 1,
+          fpsTarget: v === 'performance' ? 30 : 60,
+          rainMode: v === 'high' ? 'dynamic' : 'normal',
+          rainDensity: v === 'performance' ? 'low' : v === 'high' ? 'high' : 'medium',
+          wetRoad: v !== 'performance', lightningEffects: v !== 'performance',
+        });
+        this.bridge.applySettings();
+        this.buildGraphics(); this.show('graphics');
+      },
+    }));
+    body.append(h('div', { class: 'tiny muted', text: t('settings.qualityNote') }));
+    body.append(h('h3', { text: t('settings.graphicsDisplay') }));
+    body.append(slider({
+      label: t('settings.renderScale'), value: s.renderScale, min: 0.6, max: 1.2, step: 0.05,
+      display: (v) => `${Math.round(v * 100)}%`, onInput: (v) => {
+        patch({ renderScale: v }, false);
+        // Do not rebuild the sheet during an active pointer drag; still reflect Custom immediately.
+        const qualityField = [...(this.graphicsEl?.querySelectorAll('.field') ?? [])]
+          .find((field) => field.querySelector('label')?.textContent === t('settings.quality'));
+        qualityField?.querySelectorAll('button').forEach((btn) =>
+          btn.classList.toggle('on', btn.textContent === t('settings.graphicsCustom')));
+      },
+    }));
+    body.append(segmented<'30' | '60'>({
+      label: t('settings.fps'), value: s.fpsTarget === 30 ? '30' : '60',
+      options: [{ value: '30', label: t('settings.fps30') }, { value: '60', label: t('settings.fps60') }],
+      onChange: (v) => patch({ fpsTarget: v === '30' ? 30 : 60 }),
+    }));
+    body.append(h('h3', { text: t('settings.graphicsLighting') }));
+    body.append(toggle({ label: t('settings.shadows'), value: s.shadows, onChange: (v) => patch({ shadows: v }) }));
+    body.append(h('h3', { text: t('settings.graphicsWeather') }));
+    body.append(segmented<Settings['rainMode']>({
+      label: t('settings.rainMode'), value: s.rainMode,
+      options: [{ value: 'normal', label: t('settings.rainNormal') }, { value: 'dynamic', label: t('settings.rainDynamic') }],
+      onChange: (v) => patch({ rainMode: v }),
+    }));
+    body.append(segmented<Settings['rainDensity']>({
+      label: t('settings.rainDensity'), value: s.rainDensity,
+      options: [
+        { value: 'low', label: t('settings.levelLow') },
+        { value: 'medium', label: t('settings.levelMedium') },
+        { value: 'high', label: t('settings.levelHigh') },
+      ],
+      onChange: (v) => patch({ rainDensity: v }),
+    }));
+    body.append(toggle({ label: t('settings.wetRoad'), value: s.wetRoad, onChange: (v) => patch({ wetRoad: v }) }));
+    body.append(toggle({ label: t('settings.lightningEffects'), value: s.lightningEffects, onChange: (v) => patch({ lightningEffects: v }) }));
+    body.append(h('div', { class: 'tiny muted', text: t('settings.graphicsNote') }));
+    body.append(button(t('settings.graphicsReset'), { variant: 'ghost', wide: true, onClick: () => {
+      this.settingsStore.set({
+        graphicsProfile: 'balanced', quality: 'balanced', renderScale: 1, fpsTarget: 60,
+        shadows: true, rainMode: 'normal', rainDensity: 'medium', wetRoad: true, lightningEffects: true,
+      });
+      this.bridge.applySettings(); this.buildGraphics(); this.show('graphics');
+    } }));
+    body.append(button(t('common.back'), { variant: 'primary', wide: true, onClick: () => this.closeGraphics() }));
+    this.graphicsEl = this.register('graphics', h('div', { class: 'screen' }, wrap));
+  }
+
+  private closeGraphics(): void {
+    this.graphicsEl?.remove();
+    this.graphicsEl = null;
+    this.screens.delete('graphics');
+    this.buildSettings();
+    this.show('settings');
+  }
+
   closeSettings(): void {
+    this.graphicsEl?.remove(); this.graphicsEl = null; this.screens.delete('graphics');
     if (this.settingsEl) {
       this.settingsEl.remove();
       this.screens.delete('settings');
@@ -2840,13 +2936,17 @@ export class AppUI {
     this.sunGlareEl = h('div', { class: 'sun-glare', attrs: { 'aria-hidden': 'true' } });
     this.lightningEl = h('div', { class: 'lightning-flash', attrs: { 'aria-hidden': 'true' } });
     this.root.append(this.sunGlareEl, this.lightningEl);
-    // 10 pooled screen droplets with compositor-driven CSS drip animation
+    // 10 pooled, differently sized beads: short gravity trails on the glass,
+    // not identical streaks crossing the entire screen like a generic overlay.
     for (let i = 0; i < 10; i++) {
       const drop = h('div', {
         class: 'rain-drop',
         attrs: {
           'aria-hidden': 'true',
-          style: `left:${(i * 9.7 + 5) % 96}%;top:${-6 - (i % 4) * 5}%;animation-delay:${(i * 0.47).toFixed(2)}s;animation-duration:${(2.1 + (i % 3) * 0.7).toFixed(2)}s`,
+          style: `left:${(i * 31 + 13) % 94}%;top:${(i * 37 + 8) % 78}%;` +
+            `width:${4 + i % 4}px;height:${10 + i % 5 * 3}px;` +
+            `--drift:${i % 2 ? -9 - i : 7 + i}px;--trail:${30 + i * 7}px;` +
+            `animation-delay:${(-i * 0.71).toFixed(2)}s;animation-duration:${(4.1 + (i % 4) * 1.25).toFixed(2)}s`,
         },
       });
       this.rainDropEls.push(drop);
@@ -2870,11 +2970,20 @@ export class AppUI {
   /** Lightning flash overlay — one style write per strike, CSS handles the fade. */
   triggerLightningFlash(strength: number, flashAllowed: boolean): void {
     if (!this.lightningEl) return;
-    const s = flashAllowed ? Math.max(0.12, Math.min(0.55, strength)) : Math.min(0.12, strength * 0.2);
+    const s = flashAllowed ? Math.min(0.14, strength * 0.2) : Math.min(0.025, strength * 0.12);
     this.lightningEl.style.opacity = String(s);
     // Force style flush so the CSS fade transition retriggers per strike
     void this.lightningEl.getBoundingClientRect();
     this.lightningEl.style.opacity = '0';
+  }
+
+  /** Adjust screen-water visibility at the same low rate as weather blending. */
+  private rainIntensityKey = -1;
+  setRainIntensity(intensity: number): void {
+    const key = Math.round(Math.max(0, Math.min(1, intensity)) * 20);
+    if (key === this.rainIntensityKey) return;
+    this.rainIntensityKey = key;
+    this.root.style.setProperty('--rain-opacity', (key / 20).toFixed(2));
   }
 
   /** Toggle the pooled rain droplets (event-driven, zero per-frame cost). */
