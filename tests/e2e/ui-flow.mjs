@@ -173,6 +173,96 @@ const englishScreen = await page.evaluate(() => ({
   hasEnglish: [...document.querySelectorAll('.screen')].some((s) => !s.classList.contains('hidden') && s.textContent.includes('Settings')),
 }));
 check('language switches through the real control', langSwitched && englishScreen.hasEnglish, JSON.stringify(englishScreen));
+// Use the actual Settings controls; validate each selection and persistent reload.
+const weatherLabels = [['Sunny', 'sunny'], ['Cloudy', 'overcast'], ['Rainy', 'rain'], ['Windy', 'windy'], ['Thunderstorm', 'storm'], ['Auto', 'auto']];
+const weatherStates = [];
+for (const [label, expected] of weatherLabels) {
+  const state = await page.evaluate(({ label }) => {
+    const field = [...document.querySelectorAll('.field')].find((n) => n.querySelector('label')?.textContent === 'Weather');
+    const btn = [...(field?.querySelectorAll('button') ?? [])].find((n) => n.textContent === label);
+    btn?.click();
+    return { clicked: !!btn, active: btn?.classList.contains('on'), preference: window.__banglarTesla.settings.get().weatherPreference,
+      weather: window.__banglarTesla.debugSnapshot().weather };
+  }, { label });
+  weatherStates.push(state);
+  check(`Settings weather ${label}`, state.clicked && state.active && state.preference === expected &&
+    (expected === 'auto' || state.weather === expected), JSON.stringify(state));
+}
+await page.setViewport({ width: 412, height: 915, deviceScaleFactor: 1 });
+const weatherMobile = await page.evaluate(() => {
+  const field = [...document.querySelectorAll('.field')].find((n) => n.querySelector('label')?.textContent === 'Weather');
+  const bounds = [...field.querySelectorAll('button')].map((btn) => btn.getBoundingClientRect());
+  return { count: bounds.length, noHorizontalClipping: bounds.every((r) => r.left >= 0 && r.right <= innerWidth),
+    noDocumentOverflow: document.documentElement.scrollWidth <= innerWidth };
+});
+check('six weather controls fit portrait viewport', weatherMobile.count === 6 && weatherMobile.noHorizontalClipping && weatherMobile.noDocumentOverflow, JSON.stringify(weatherMobile));
+await page.screenshot({ path: path.join(root, 'artifacts', 'settings-weather-portrait.png') });
+await page.evaluate(() => {
+  const field = [...document.querySelectorAll('.field')].find((n) => n.querySelector('label')?.textContent === 'Weather');
+  [...field.querySelectorAll('button')].find((n) => n.textContent === 'Rainy')?.click();
+});
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForFunction('Boolean(window.__banglarTesla)', { timeout: 60000 });
+await page.evaluate(() => document.getElementById('boot-skip')?.click());
+await new Promise((r) => setTimeout(r, 650));
+const weatherReload = await page.evaluate(() => window.__banglarTesla.settings.get().weatherPreference);
+check('weather preference survives full reload', weatherReload === 'rain', weatherReload);
+await clickText(page, 'Settings');
+await page.evaluate(() => {
+  const field = [...document.querySelectorAll('.field')].find((n) => n.querySelector('label')?.textContent === 'Weather');
+  [...field.querySelectorAll('button')].find((n) => n.textContent === 'Auto')?.click();
+});
+check('Auto resumes after reload', await page.evaluate(() => window.__banglarTesla.settings.get().weatherPreference === 'auto'));
+// Dedicated Graphics screen: real DOM controls, profile -> Custom -> reload -> reset.
+check('Graphics entry opens its own screen', await page.evaluate(() => {
+  document.querySelector('[data-action="open-graphics"]')?.click();
+  return window.__banglarTesla.ui.currentScreen === 'graphics';
+}));
+const graphicsSelect = async (label, value) => page.evaluate(({ label, value }) => {
+  const field = [...document.querySelectorAll('.screen:not(.hidden) .field')]
+    .find((n) => n.querySelector('label')?.textContent === label);
+  const btn = [...(field?.querySelectorAll('button') ?? [])].find((n) => n.textContent === value);
+  btn?.click(); return !!btn;
+}, { label, value });
+check('Performance profile applies real render/population/weather-cost settings',
+  await graphicsSelect('Quality', 'Performance') && await page.evaluate(() => {
+    const s = window.__banglarTesla.settings.get();
+    return s.graphicsProfile === 'performance' && s.quality === 'low' && s.renderScale === 0.8 &&
+      s.rainMode === 'normal' && s.weatherPreference === 'auto';
+  }));
+check('High profile enables Dynamic without changing selected weather',
+  await graphicsSelect('Quality', 'High') && await page.evaluate(() => {
+    const s = window.__banglarTesla.settings.get();
+    return s.graphicsProfile === 'high' && s.quality === 'high' && s.rainMode === 'dynamic' && s.weatherPreference === 'auto';
+  }));
+check('Individual rain control enters persistent Custom profile',
+  await graphicsSelect('Rain effects', 'Normal') && await page.evaluate(() => {
+    const s = window.__banglarTesla.settings.get();
+    return s.graphicsProfile === 'custom' && s.rainMode === 'normal' && s.weatherPreference === 'auto';
+  }));
+await page.screenshot({ path: path.join(root, 'artifacts', 'graphics-custom-portrait.png') });
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForFunction('Boolean(window.__banglarTesla)', { timeout: 60000 });
+await page.evaluate(() => document.getElementById('boot-skip')?.click());
+await new Promise((r) => setTimeout(r, 600));
+check('Custom graphics survives reload', await page.evaluate(() => {
+  const s = window.__banglarTesla.settings.get();
+  return s.graphicsProfile === 'custom' && s.rainMode === 'normal' && s.weatherPreference === 'auto';
+}));
+await clickText(page, 'Settings');
+await page.evaluate(() => document.querySelector('[data-action="open-graphics"]')?.click());
+check('Reset Graphics leaves audio and weather untouched', await page.evaluate(() => {
+  const game = window.__banglarTesla;
+  game.settings.set({ master: 0.24, weatherPreference: 'windy' });
+  [...document.querySelectorAll('.screen:not(.hidden) button')].find((el) => el.textContent === 'Reset graphics only')?.click();
+  const s = game.settings.get();
+  return s.graphicsProfile === 'balanced' && s.quality === 'balanced' && s.master === 0.24 && s.weatherPreference === 'windy';
+}));
+check('Graphics Back returns to Settings', await page.evaluate(() => {
+  [...document.querySelectorAll('.screen:not(.hidden) button')].find((el) => el.textContent === 'Back')?.click();
+  return window.__banglarTesla.ui.currentScreen === 'settings';
+}));
+await page.evaluate(() => window.__banglarTesla.settings.set({ master: 0.85, weatherPreference: 'auto' }));
 await clickText(page, 'Back');
 await new Promise((r) => setTimeout(r, 600));
 const backToMenuEn = await page.evaluate(() => window.__banglarTesla.debugSnapshot());

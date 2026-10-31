@@ -29,7 +29,40 @@ import {
   type TrafficType,
 } from './vehicles';
 
+/** Signed forward corridor: rear and side approaches cannot trigger a stop. */
+export function forwardPlayerGap(
+  npcX: number, npcZ: number, yaw: number, halfWidth: number, halfLength: number,
+  playerX: number, playerZ: number, lookAhead = 18,
+): number | null {
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const dx = playerX - npcX, dz = playerZ - npcZ;
+  const forward = dx * fx + dz * fz;
+  const lateral = Math.abs(dx * fz - dz * fx);
+  if (forward <= 0.4 || forward >= lookAhead || lateral >= halfWidth + 1.05) return null;
+  return forward - (halfLength + 1.35);
+}
+
+/** Smooth quiet-hours population: no hard cut at midnight or 07:00. */
+export function quietTrafficFactor(minutes: number): number {
+  const m = ((minutes % 1440) + 1440) % 1440;
+  if (m < 210) return 0.9 - (m / 210) * 0.45;
+  if (m < 300) return 0.45;
+  if (m < 420) return 0.45 + ((m - 300) / 120) * 0.55;
+  if (m < 1320) return 1;
+  return 1 - ((m - 1320) / 120) * 0.1;
+}
+
 export type VehicleKind = TrafficType;
+
+/** Suspension response varies with wheelbase/mass, bounded so no AI launches. */
+export function npcPotholeResponse(kind: VehicleKind, speed: number, depth: number): number {
+  const multiplier: Record<VehicleKind, number> = {
+    motorbike: 1.1, rickshaw: 1, easybike: 0.85, cng: 0.78,
+    car: 0.72, van: 0.65, truck: 0.5, bus: 0.42,
+  };
+  return Math.min(0.075, Math.max(0, depth) * Math.min(1.3, Math.abs(speed) / 6) * multiplier[kind]);
+}
+
 
 export interface TrafficObstacle {
   x: number;
@@ -56,8 +89,62 @@ interface ActiveTrafficAgent extends InstancedVehicleState {
   stuckTimer: number;
   honkTimer: number;
   farAccum: number;
+  /** Chosen before reaching the junction; blocking and turn speed use this route. */
+  plannedLaneId: string | null;
+  /** Connector across a junction, entered before the source lane ends. */
+  turnLane: LaneEdge | null;
+  turnT: number;
+  turnLead: number;
+  /** Damp lateral discontinuity at lane junctions without jumping the vehicle. */
+  turnOffsetX: number;
+  turnOffsetZ: number;
+  potholeDepth: number;
+  bumpOffset: number;
+  /** Bounded, lane-aligned contact displacement; never changes route decisions. */
+  contactTravel: number;
+  contactSideTravel: number;
+  contactCooldown: number;
   roadRageHold: number;
   rageImmuneTimer: number;
+}
+
+/** Class-specific response limits; speeds still come from the existing fleet distribution. */
+const CONTACT_RESPONSE: Record<VehicleKind, number> = {
+  rickshaw: 0.8, cng: 0.7, easybike: 0.75, motorbike: 0.65,
+  car: 1, van: 0.48, bus: 0.12, truck: 0.15,
+};
+
+const HANDLING: Record<VehicleKind, { accel: number; brake: number; headway: number; turn: number; yaw: number }> = {
+  bus:       { accel: 1.35, brake: 4.0, headway: 1.9, turn: 2.65, yaw: 0.85 },
+  truck:     { accel: 1.5,  brake: 4.3, headway: 1.8, turn: 2.8,  yaw: 0.9 },
+  van:       { accel: 2.0,  brake: 5.2, headway: 1.45,turn: 3.5,  yaw: 1.25 },
+  car:       { accel: 2.65, brake: 6.2, headway: 1.2, turn: 4.2,  yaw: 1.55 },
+  cng:       { accel: 2.25, brake: 5.8, headway: 1.25,turn: 4.3,  yaw: 1.6 },
+  easybike:  { accel: 1.5,  brake: 4.7, headway: 1.35,turn: 3.5,  yaw: 1.5 },
+  rickshaw:  { accel: 1.1,  brake: 4.4, headway: 1.45,turn: 3.1,  yaw: 1.35 },
+  motorbike: { accel: 2.8,  brake: 6.4, headway: 1.05,turn: 5.0,  yaw: 1.85 },
+};
+
+/** Cubic connector with heading-continuous entrance and exit. Reuses caller scratch. */
+function sampleJunction(from: LaneEdge, to: LaneEdge, lead: number, lateral: number, t: number, out: LanePoint): number {
+  const sx = from.bx - from.ux * lead + from.uz * lateral;
+  const sz = from.bz - from.uz * lead - from.ux * lateral;
+  const ex = to.ax + to.ux * lead + to.uz * lateral;
+  const ez = to.az + to.uz * lead - to.ux * lateral;
+  const control = lead * 0.85;
+  const c1x = sx + from.ux * control, c1z = sz + from.uz * control;
+  const c2x = ex - to.ux * control, c2z = ez - to.uz * control;
+  const u = 1 - t, uu = u * u, tt = t * t;
+  out.x = uu * u * sx + 3 * uu * t * c1x + 3 * u * tt * c2x + tt * t * ex;
+  out.z = uu * u * sz + 3 * uu * t * c1z + 3 * u * tt * c2z + tt * t * ez;
+  const vx = 3 * uu * (c1x - sx) + 6 * u * t * (c2x - c1x) + 3 * tt * (ex - c2x);
+  const vz = 3 * uu * (c1z - sz) + 6 * u * t * (c2z - c1z) + 3 * tt * (ez - c2z);
+  out.yaw = Math.atan2(vx, vz);
+  return Math.max(0.3, Math.hypot(vx, vz));
+}
+
+function junctionLead(from: LaneEdge, to: LaneEdge, kind: VehicleKind): number {
+  return Math.min(kind === 'bus' || kind === 'truck' ? 8 : 5.5, from.length * 0.35, to.length * 0.35);
 }
 
 const FLEET_DISTRIBUTION: { kind: VehicleKind; weight: number; cruiseMin: number; cruiseMax: number }[] = [
@@ -79,6 +166,7 @@ export class TrafficSystem {
   private signalByNode = new Map<string, (typeof SIGNALS)[number]>();
   private agents: ActiveTrafficAgent[] = [];
   private laneOccupancy = new Map<string, ActiveTrafficAgent[]>();
+  private incomingByNode = new Map<string, LaneEdge[]>();
   private segmentCongestion = new Map<string, number>();
   private jammedListCache: string[] = [];
   private wideLaneScratch: LaneEdge[] = [];
@@ -92,8 +180,14 @@ export class TrafficSystem {
   private hornCooldown = 0;
   private playerX = 0;
   private playerZ = 0;
+  private playerSpeed = 0;
+  private playerYaw = 0;
   private viewDistSq = 185 * 185;
+  private baseTrafficCount = 32;
+  private quietFactor = 1;
+  private populationTick = 0;
   private heightAt: (x: number, z: number) => number = () => 0.014;
+  private potholeAt: (x: number, z: number) => number = () => 0;
   congestionEpoch = 1;
 
   onHorn?: (x: number, z: number, kind: VehicleKind) => void;
@@ -108,6 +202,12 @@ export class TrafficSystem {
     if (heightAt) this.heightAt = heightAt;
     for (const lane of this.graph.lanes) {
       this.laneOccupancy.set(lane.id, []);
+      let incoming = this.incomingByNode.get(lane.toNode);
+      if (!incoming) {
+        incoming = [];
+        this.incomingByNode.set(lane.toNode, incoming);
+      }
+      incoming.push(lane);
     }
     this.fleet = new InstancedTrafficFleet(this.group, 56);
     this.setQuality(quality);
@@ -121,19 +221,26 @@ export class TrafficSystem {
     this.fleet.withPrewarmState(run);
   }
 
+  setPotholeSampler(fn: (x: number, z: number) => number): void {
+    this.potholeAt = fn;
+  }
+
   setHeightSampler(fn: (x: number, z: number) => number): void {
     this.heightAt = fn;
   }
 
-  setPlayer(x: number, z: number, _speed: number): void {
+  setPlayer(x: number, z: number, speed: number, yaw = 0): void {
     this.playerX = x;
     this.playerZ = z;
+    this.playerSpeed = speed;
+    this.playerYaw = yaw;
   }
 
   setQuality(quality: QualitySettings): void {
     const visR = Math.max(120, quality.viewDistance + 15);
     this.viewDistSq = visR * visR;
-    const target = Math.max(8, quality.trafficCount);
+    this.baseTrafficCount = quality.trafficCount;
+    const target = Math.max(8, Math.round(quality.trafficCount * this.quietFactor));
     while (this.agents.length > target) {
       this.agents.pop();
     }
@@ -143,12 +250,37 @@ export class TrafficSystem {
     this.fleet.sync(this.agents);
   }
 
+  setTimeMinutes(minutes: number): void {
+    this.quietFactor = quietTrafficFactor(minutes);
+  }
+
+  private adjustPopulation(dt: number): void {
+    this.populationTick += dt;
+    if (this.populationTick < 2) return;
+    this.populationTick = 0;
+    const target = Math.max(8, Math.round(this.baseTrafficCount * this.quietFactor));
+    if (this.agents.length < target) {
+      this.agents.push(this.spawnAgent(this.agents.length));
+    } else if (this.agents.length > target) {
+      const last = this.agents[this.agents.length - 1];
+      // Keep near traffic in place, especially during a player collision or race.
+      if (Math.hypot(last.x - this.playerX, last.z - this.playerZ) > 75) this.agents.pop();
+    }
+  }
+
   private pickVehicleSpec(narrowLane: boolean): (typeof FLEET_DISTRIBUTION)[number] {
     let r = this.rng();
     for (let i = 0; i < FLEET_DISTRIBUTION.length; i++) {
       const item = FLEET_DISTRIBUTION[i];
       if (narrowLane && (item.kind === 'bus' || item.kind === 'truck')) continue;
-      if (r <= item.weight) return item;
+      if (r <= item.weight) {
+        // CNGs are less frequent in the quiet hours; existing nearby vehicles
+        // are never swapped out merely because the clock ticked.
+        if (item.kind === 'cng' && this.quietFactor < 0.75 && this.rng() > this.quietFactor) {
+          return FLEET_DISTRIBUTION[0];
+        }
+        return item;
+      }
       r -= item.weight;
     }
     return FLEET_DISTRIBUTION[0];
@@ -196,6 +328,17 @@ export class TrafficSystem {
       stuckTimer: 0,
       honkTimer: 1 + this.rng() * 5,
       farAccum: (index % 5) * 0.016,
+      plannedLaneId: null,
+      turnLane: null,
+      turnT: 0,
+      turnLead: 0,
+      turnOffsetX: 0,
+      turnOffsetZ: 0,
+      potholeDepth: 0,
+      bumpOffset: 0,
+      contactTravel: 0,
+      contactSideTravel: 0,
+      contactCooldown: 0,
       roadRageHold: 0,
       rageImmuneTimer: 0,
     };
@@ -312,6 +455,25 @@ export class TrafficSystem {
     this.debugSimFrozen = frozen;
   }
 
+  /** Ask an EXISTING roadside van/CNG/bus to pause briefly for loading.
+   * Never creates a vehicle, changes its route, or stops one inside a junction.
+   * The ordinary braking/headway logic handles the queue and its recovery. */
+  scheduleMarketLoading(segmentId: string, x: number, z: number, px: number, pz: number): boolean {
+    if (Math.hypot(px - x, pz - z) < 30) return false;
+    for (const a of this.agents) {
+      if (!a.visible || !a.lane.jamProne || a.lane.segmentId !== segmentId ||
+          a.turnLane || a.dwellTimer > 0 || a.dwellCooldown > 0 ||
+          a.s < 9 || a.s > a.lane.length - 12 ||
+          (a.kind !== 'van' && a.kind !== 'cng' && a.kind !== 'bus') ||
+          Math.hypot(a.x - x, a.z - z) > 22) continue;
+      a.dwellTimer = a.kind === 'bus' ? 6 : 4.5;
+      a.dwellCooldown = 60; // never create a repeating jam at one stop
+      a.targetLateral = clamp(a.lane.halfRoadWidth * 0.22, 0.2, 0.9);
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Induce a bounded slow zone / jam near (x, z) — used by the event director's
    * traffic-accident & broken-vehicle zones (vNext §7). Congestion decays
@@ -332,6 +494,7 @@ export class TrafficSystem {
   update(dt: number): void {
     if (this.debugSimFrozen) return;
     this.clock += dt;
+    this.adjustPopulation(dt);
     this.hornCooldown = Math.max(0, this.hornCooldown - dt);
 
     for (const list of this.laneOccupancy.values()) list.length = 0;
@@ -349,9 +512,11 @@ export class TrafficSystem {
     for (let i = 0; i < this.agents.length; i++) {
       const a = this.agents[i];
       if (a.rageImmuneTimer > 0) a.rageImmuneTimer = Math.max(0, a.rageImmuneTimer - dt);
+      a.contactCooldown = Math.max(0, a.contactCooldown - dt);
       const dxP = a.x - this.playerX;
       const dzP = a.z - this.playerZ;
       const distSqToPlayer = dxP * dxP + dzP * dzP;
+      if (distSqToPlayer > (a.arch.radius + 4) ** 2) a.contactTravel = a.contactSideTravel = 0;
 
       if (a.roadRageHold <= 0 && distSqToPlayer > 225 * 225) {
         this.relocateNearPlayer(a);
@@ -392,6 +557,7 @@ export class TrafficSystem {
           if (a.visible && a.speed > 0.05) {
             a.x += Math.sin(a.yaw) * a.speed * dt;
             a.z += Math.cos(a.yaw) * a.speed * dt;
+            a.wheelSpin += a.speed * dt / a.arch.wheelRadius;
           }
           continue;
         }
@@ -415,7 +581,9 @@ export class TrafficSystem {
         a.targetLateral = clamp(a.lane.halfRoadWidth * 0.22, 0.2, 0.9);
       }
 
+      const handling = HANDLING[a.kind];
       let minGap = 999;
+      let leaderSpeed = 0;
       let blockerLateral = 0;
       const sameLane = this.laneOccupancy.get(a.lane.id)!;
       for (let j = 0; j < sameLane.length; j++) {
@@ -429,6 +597,7 @@ export class TrafficSystem {
             const netGap = ahead - (other.arch.halfLength + a.arch.halfLength + 0.85);
             if (netGap < minGap) {
               minGap = netGap;
+              leaderSpeed = other.speed;
               blockerLateral = other.lateralOffset;
             }
           }
@@ -436,39 +605,50 @@ export class TrafficSystem {
       }
 
       const distToNode = a.lane.length - a.s;
-      if (distToNode < 14 && a.lane.nextLaneIds.length > 0) {
-        for (let k = 0; k < a.lane.nextLaneIds.length; k++) {
-          const nextOcc = this.laneOccupancy.get(a.lane.nextLaneIds[k]);
-          if (!nextOcc) continue;
-          for (let j = 0; j < nextOcc.length; j++) {
-            const other = nextOcc[j];
-            if (other.s < 9) {
-              const netGap = distToNode + other.s - (other.arch.halfLength + a.arch.halfLength + 0.9);
-              if (netGap < minGap) minGap = netGap;
+      if (distToNode < 20 && a.plannedLaneId === null && a.lane.nextLaneIds.length > 0) {
+        a.plannedLaneId = this.chooseNextLane(a).id;
+      }
+      const planned = a.turnLane ?? (a.plannedLaneId ? this.graph.byId.get(a.plannedLaneId) : null);
+      // Only a vehicle on our *selected* exit blocks this turn; traffic on
+      // unrelated arms of a junction must not produce a phantom stop.
+      if (distToNode < 15 && planned) {
+        const nextOcc = this.laneOccupancy.get(planned.id);
+        if (nextOcc) for (let j = 0; j < nextOcc.length; j++) {
+          const other = nextOcc[j];
+          if (other !== a && other.s < 12) {
+            const netGap = (a.turnLane ? (1 - a.turnT) * a.turnLead * 2 : distToNode) +
+              other.s - (other.arch.halfLength + a.arch.halfLength + 0.9);
+            if (netGap < minGap) {
+              minGap = netGap;
+              leaderSpeed = other.speed;
             }
           }
         }
       }
 
-      if (distSqToPlayer < 18 * 18) {
-        const fx = Math.sin(a.yaw);
-        const fz = Math.cos(a.yaw);
-        const dx = this.playerX - a.x;
-        const dz = this.playerZ - a.z;
-        const aheadDot = dx * fx + dz * fz;
-        const latDot = Math.abs(dx * fz - dz * fx);
-        if (aheadDot > 0.4 && latDot < a.arch.halfWidth + 1.05) {
-          minGap = Math.min(minGap, aheadDot - (a.arch.halfLength + 1.35));
-        }
+      // Closing velocity, not mere proximity, determines stopping horizon.
+      // The signed projection excludes a player behind or in the next lane.
+      const playerAlong = this.playerSpeed * Math.cos(this.playerYaw - a.yaw);
+      const closing = Math.max(0, a.speed - playerAlong);
+      const horizon = Math.min(38, 10 + closing * handling.headway + closing * closing / (2 * handling.brake));
+      const playerGap = distSqToPlayer < horizon * horizon
+        ? forwardPlayerGap(a.x, a.z, a.yaw, a.arch.halfWidth, a.arch.halfLength, this.playerX, this.playerZ, horizon)
+        : null;
+      if (playerGap !== null && playerGap < minGap) {
+        minGap = playerGap;
+        leaderSpeed = playerAlong;
       }
 
       const redSignal =
-        a.stuckTimer < 8.5 &&
-        distToNode > 1.8 &&
-        distToNode < 9.5 &&
+        distToNode > 0 &&
+        distToNode < 20 &&
         this.isSignalRedForLane(a.lane);
-      if (redSignal) {
-        minGap = Math.min(minGap, distToNode - 2.6);
+      if (redSignal && !a.turnLane) {
+        const stopGap = distToNode - (planned ? junctionLead(a.lane, planned, a.kind) + 0.8 : 3.1);
+        if (stopGap < minGap) {
+          minGap = stopGap;
+          leaderSpeed = 0;
+        }
       }
 
       if (
@@ -489,25 +669,122 @@ export class TrafficSystem {
         a.stuckTimer = Math.max(0, a.stuckTimer - stepDt * 1.5);
       }
 
+      // A short junction reservation for crossing approaches: yield to the
+      // vehicle already turning, otherwise the closer approach (stable lane-ID
+      // tiebreak). Do not wait for an unrelated arm at a red light.
+      if (planned && !a.turnLane && distToNode < 15) {
+        const approaches = this.incomingByNode.get(a.lane.toNode);
+        if (approaches) for (let k = 0; k < approaches.length; k++) {
+          const incoming = approaches[k];
+          if (incoming === a.lane) continue;
+          const cars = this.laneOccupancy.get(incoming.id)!;
+          for (let j = 0; j < cars.length; j++) {
+            const other = cars[j];
+            const otherDistance = incoming.length - other.s;
+            if (otherDistance > 12 || otherDistance < -1 ||
+                (!other.turnLane && (other.speed < 0.3 || this.isSignalRedForLane(incoming)))) continue;
+            if (other.turnLane || otherDistance + 1 < distToNode ||
+                (Math.abs(otherDistance - distToNode) <= 1 && incoming.id < a.lane.id)) {
+              minGap = Math.min(minGap, distToNode - junctionLead(a.lane, planned, a.kind) - 0.8);
+              leaderSpeed = 0;
+            }
+          }
+        }
+      }
+      // Do not enter a connector if its chosen exit has no receiving space.
+      // Other arms of the same junction do not block this route.
+      if (planned && !a.turnLane && distToNode < 15) {
+        const exit = this.laneOccupancy.get(planned.id);
+        if (exit) for (let j = 0; j < exit.length; j++) {
+          const other = exit[j];
+          const clearance = junctionLead(a.lane, planned, a.kind) + other.arch.halfLength + a.arch.halfLength + 1;
+          if (other.s < clearance) {
+            minGap = Math.min(minGap, distToNode - junctionLead(a.lane, planned, a.kind) - 0.8);
+            leaderSpeed = 0;
+          }
+        }
+      }
       let desiredSpeed = a.dwellTimer > 0 ? 0 : a.cruise;
       if (a.lane.jamProne) desiredSpeed *= 0.86;
-      if (minGap < 15) {
-        desiredSpeed = Math.min(desiredSpeed, Math.max(0, minGap * 0.72));
+      if (minGap < 28) {
+        // Deceleration envelope plus a time headway. A moving leader permits
+        // steady following; a stopped leader or oncoming player requires room.
+        const room = Math.max(0, minGap - 0.65);
+        const safe = Math.sqrt(Math.max(0, leaderSpeed) ** 2 + 2 * handling.brake * room) + Math.min(0, leaderSpeed);
+        desiredSpeed = Math.min(desiredSpeed, Math.max(0, safe), Math.max(0, leaderSpeed + room / handling.headway));
       }
-      if (a.stuckTimer > 8.5) {
-        desiredSpeed = Math.max(desiredSpeed, 1.35);
-        if (a.stuckTimer > 13.5) a.stuckTimer = 0;
+      // Commit to a real turn early. A straight option on another exit must
+      // not suppress braking for the turn this vehicle actually selected.
+      if (planned && a.lane.ux * planned.ux + a.lane.uz * planned.uz < 0.9) {
+        const turnSpeed = handling.turn;
+        const approach = clamp((distToNode - 5) / 15, 0, 1);
+        desiredSpeed = Math.min(desiredSpeed, turnSpeed + (a.cruise - turnSpeed) * approach);
       }
+      if (a.turnLane) {
+        const tangent = sampleJunction(a.lane, a.turnLane, a.turnLead, a.lateralOffset, a.turnT, this.tmpPt);
+        const yawNow = this.tmpPt.yaw;
+        const nextT = Math.min(1, a.turnT + 0.025);
+        sampleJunction(a.lane, a.turnLane, a.turnLead, a.lateralOffset, nextT, this.tmpPt);
+        const bend = Math.abs(angleDelta(yawNow, this.tmpPt.yaw));
+        if (bend > 0.001) desiredSpeed = Math.min(desiredSpeed, Math.max(0.8, handling.yaw * tangent * 0.025 / bend * 0.82));
+      }
+      if (a.lane.nextLaneIds.length === 0 && distToNode < 2) desiredSpeed = 0;
 
-      const accel = clamp(desiredSpeed - a.speed, -6.8, 2.8);
+      // Move toward the target with a real m/s² bound. Treating speed error
+      // itself as acceleration made cars creep into stopped players forever:
+      // when target reached zero, exponential easing still travelled metres.
+      const accel = clamp((desiredSpeed - a.speed) / Math.max(stepDt, 1e-4), -handling.brake, handling.accel);
       a.speed = clamp(a.speed + accel * stepDt, 0, a.cruise + 0.8);
-      a.s += a.speed * stepDt;
-
-      if (a.s >= a.lane.length) {
-        const over = a.s - a.lane.length;
-        a.lane = this.chooseNextLane(a);
-        a.s = Math.min(over, a.lane.length * 0.4);
+      // Travel along the existing lane, then the preselected smooth connector.
+      // Never jump from an incorrect exit centreline and spring back afterwards.
+      const prevX = a.x, prevZ = a.z;
+      if (a.turnLane) {
+        const tangent = sampleJunction(a.lane, a.turnLane, a.turnLead, a.lateralOffset, a.turnT, this.tmpPt);
+        a.turnT = Math.min(1, a.turnT + a.speed * stepDt / tangent);
+      } else {
+        a.s += a.speed * stepDt;
+        const next = planned ?? (a.s >= a.lane.length - 5 ? this.chooseNextLane(a) : null);
+        if (next && next !== a.lane) {
+          const lead = junctionLead(a.lane, next, a.kind);
+          if (a.s >= a.lane.length - lead && !redSignal && minGap > 0.3) {
+            // Carry the tiny overshoot into the connector instead of jumping.
+            const over = a.s - (a.lane.length - lead);
+            a.turnLane = next;
+            a.turnLead = lead;
+            a.turnT = Math.min(1, over / Math.max(0.3, lead * 2.55));
+            a.turnOffsetX = a.turnOffsetZ = 0;
+            a.s = a.lane.length - lead;
+          }
+        }
+        if (!a.turnLane && a.s >= a.lane.length) {
+          // Disconnected routes wait here and only relocate well off-screen.
+          a.s = a.lane.length - 0.1;
+          a.speed = 0;
+          a.stuckTimer += stepDt;
+          if (a.stuckTimer > 7 && distSqToPlayer > 105 * 105) this.relocateNearPlayer(a);
+        }
       }
+      if (a.turnLane) {
+        sampleJunction(a.lane, a.turnLane, a.turnLead, a.lateralOffset, a.turnT, this.tmpPt);
+        a.x = this.tmpPt.x;
+        a.z = this.tmpPt.z;
+        a.s = a.lane.length - a.turnLead * (1 - a.turnT);
+        if (a.turnT >= 1) {
+          a.lane = a.turnLane;
+          a.s = a.turnLead;
+          a.turnLane = null;
+          a.turnT = 0;
+          a.plannedLaneId = null;
+        }
+      } else {
+        sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
+        a.x = this.tmpPt.x;
+        a.z = this.tmpPt.z;
+      }
+      const moved = Math.hypot(a.x - prevX, a.z - prevZ);
+      const heading = moved > 0.012 ? Math.atan2(a.x - prevX, a.z - prevZ) : this.tmpPt.yaw;
+      const maxYaw = handling.yaw * stepDt;
+      a.yaw += clamp(angleDelta(a.yaw, heading), -maxYaw, maxYaw);
 
       if (a.speed < a.cruise * 0.42) {
         const prev = this.segmentCongestion.get(a.lane.segmentId) ?? 1.0;
@@ -521,18 +798,21 @@ export class TrafficSystem {
         this.onHorn?.(a.x, a.z, a.kind);
       }
 
-      sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
-      a.x = this.tmpPt.x;
-      a.z = this.tmpPt.z;
-      a.yaw += angleDelta(a.yaw, this.tmpPt.yaw) * (1 - Math.exp(-9 * stepDt));
-
       if (a.visible) {
         // Only sample heightAt when moving or near bumps; stationary vehicles keep cached ground Y!
-        if (a.speed > 0.05 || a.y === 0) {
-          a.y = this.heightAt(a.x, a.z);
+        const depth = this.potholeAt(a.x, a.z);
+        if (depth > 0.014 && a.potholeDepth <= 0.014) {
+          a.bumpOffset = npcPotholeResponse(a.kind, a.speed, depth);
         }
-        if (a.nearLod && a.speed > 0.02) {
-          a.wheelSpin += (a.speed * stepDt) / a.arch.wheelRadius;
+        a.potholeDepth = depth;
+        a.bumpOffset *= Math.exp(-stepDt * (a.kind === 'truck' || a.kind === 'bus' ? 5 : 9));
+        if (a.speed > 0.05 || a.y === 0 || a.bumpOffset > 0.001) {
+          a.y = this.heightAt(a.x, a.z) + a.bumpOffset;
+        }
+        // Keep the wheel phase continuous across near/far LOD. Far agents
+        // already spun on extrapolated frames, so count this frame only once.
+        if (a.speed > 0.02) {
+          a.wheelSpin += a.speed * (distSqToPlayer > 105 * 105 ? dt : stepDt) / a.arch.wheelRadius;
         }
         a.braking = a.speed < 0.45 || accel < -1.1;
       }
@@ -560,6 +840,10 @@ export class TrafficSystem {
       if (wideCount > 0) {
         return this.wideLaneScratch[Math.floor(this.rng() * wideCount)];
       }
+      const reverse = this.graph.bySegment.get(a.lane.segmentId)?.find(
+        (edge) => edge.fromNode === a.lane.toNode && edge.kind !== 'gali',
+      );
+      return reverse ?? a.lane;
     }
     const chosenId = ids[Math.floor(this.rng() * ids.length)];
     return this.graph.byId.get(chosenId) ?? a.lane;
@@ -574,6 +858,11 @@ export class TrafficSystem {
       const d = Math.hypot(mx - this.playerX, mz - this.playerZ);
       if (d > 82 && d < 162) {
         a.lane = cand;
+        a.plannedLaneId = null;
+        a.turnLane = null;
+        a.turnOffsetX = a.turnOffsetZ = 0;
+        a.potholeDepth = a.bumpOffset = 0;
+        a.contactTravel = a.contactSideTravel = a.contactCooldown = 0;
         a.s = this.rng() * cand.length * 0.8;
         sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
         a.x = this.tmpPt.x;
@@ -584,6 +873,50 @@ export class TrafficSystem {
         return;
       }
     }
+  }
+
+  /** A small, lane-aligned nudge at a real player/vehicle contact. Never changes
+   * route, target speed, lane choice or AI relevance; heavy vehicles barely move.
+   * The impulse is capped per encounter and rejected near junctions/other agents.
+   * Returns metres actually moved so callers can distinguish a blocked nudge. */
+  nudgeFromPlayer(agentIndex: number, relativeSpeed: number, awayX: number, awayZ: number): number {
+    const a = this.agents[agentIndex];
+    if (!a || !a.visible || !Number.isFinite(relativeSpeed) || relativeSpeed < 0.8 ||
+        a.contactCooldown > 0 || a.roadRageHold > 0 || a.turnLane || a.turnT > 0) return 0;
+    const forward = Math.max(0, awayX * a.lane.ux + awayZ * a.lane.uz);
+    const side = awayX * a.lane.uz - awayZ * a.lane.ux;
+    // Never push an oncoming vehicle backwards along its route. Side contact
+    // gets a much smaller lateral displacement that the existing lane tracker
+    // damps away; the lane centre and planned turn remain untouched.
+    const longitudinal = forward >= 0.22
+      ? Math.min(Math.min(0.18, relativeSpeed * 0.035) * CONTACT_RESPONSE[a.kind] * forward,
+          1.1 - a.contactTravel, a.lane.length - 2.5 - a.s) : 0;
+    const sideLimit = Math.max(0, Math.min(0.24, a.lane.halfRoadWidth * 0.45 - a.arch.halfWidth - 0.12));
+    const lateral = Math.abs(side) >= 0.45
+      ? clamp(side * relativeSpeed * 0.012 * CONTACT_RESPONSE[a.kind], -0.045, 0.045) : 0;
+    const sideStep = clamp(lateral,
+      Math.max(-0.24 + a.contactSideTravel, -sideLimit - a.lateralOffset),
+      Math.min(0.24 - a.contactSideTravel, sideLimit - a.lateralOffset));
+    if (longitudinal <= 0.002 && Math.abs(sideStep) <= 0.002) return 0;
+    const nx = a.x + a.lane.ux * longitudinal + a.lane.uz * sideStep;
+    const nz = a.z + a.lane.uz * longitudinal - a.lane.ux * sideStep;
+    for (let i = 0; i < this.agents.length; i++) {
+      const other = this.agents[i];
+      if (other === a) continue;
+      const dx = other.x - nx, dz = other.z - nz;
+      if (dx * dx + dz * dz < (a.arch.halfLength + other.arch.halfLength + 0.35) ** 2) return 0;
+    }
+    a.s += longitudinal;
+    a.lateralOffset += sideStep;
+    a.x = nx;
+    a.z = nz;
+    a.y = this.heightAt(nx, nz);
+    a.contactTravel += longitudinal;
+    a.contactSideTravel += Math.abs(sideStep);
+    a.contactCooldown = 0.065;
+    a.bumpOffset = Math.max(a.bumpOffset, Math.min(0.035, Math.hypot(longitudinal, sideStep) * 0.2));
+    this.fleet.sync(this.agents);
+    return Math.hypot(longitudinal, sideStep);
   }
 
   canTriggerRoadRage(agentIndex: number): boolean {
@@ -650,6 +983,11 @@ export class TrafficSystem {
       }
     }
     a.lane = bestLane;
+    a.plannedLaneId = null;
+    a.turnLane = null;
+    a.turnOffsetX = a.turnOffsetZ = 0;
+    a.potholeDepth = a.bumpOffset = 0;
+    a.contactTravel = a.contactSideTravel = a.contactCooldown = 0;
     a.s = bestS;
     a.lateralOffset = 0;
     a.targetLateral = 0;
@@ -688,6 +1026,8 @@ export class TrafficSystem {
         const midZ = (cand.az + cand.bz) * 0.5;
         if ((midX - x) * (midX - x) + (midZ - z) * (midZ - z) > (radius + 38) * (radius + 38)) {
           a.lane = cand;
+          a.plannedLaneId = null;
+          a.turnLane = null;
           a.s = cand.length * 0.5;
           sampleLane(cand, a.s, 0, this.tmpPt);
           a.x = this.tmpPt.x;

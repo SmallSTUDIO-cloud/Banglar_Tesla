@@ -10,12 +10,12 @@ import { Emitter } from '../core/events';
 import { clamp, clamp01 } from '../core/mathx';
 import { computeFare, type FareBreakdown } from '../economy/economy';
 import { placeById, type PlaceDef } from '../world/layout';
-import { isInsideDrmcCampus } from '../world/drmcGeo';
 import { PED_PATHS } from '../ai/pedestrians';
 import { nearestSafeSidewalk } from './roadside';
 import { releaseScratchCanvas } from '../world/textures';
 import { PassengerActor, archetypeById } from './actors';
 import type { MissionOffer } from './mission';
+import { contextualCareBonus } from '../gameplay/roadDecisions';
 
 export type MissionState = 'none' | 'toPickup' | 'boarding' | 'toDropoff' | 'arrived' | 'complete';
 
@@ -79,6 +79,8 @@ export class MissionSystem extends Emitter<MissionEvents> {
   boardedAt = 0;
   distance = 0;
   detourBonusEarned = false;
+  private rideImpacts = 0;
+  private rideHardBrakes = 0;
 
   private host: MissionHost;
   private pickup: PlaceDef | null = null;
@@ -157,8 +159,7 @@ export class MissionSystem extends Emitter<MissionEvents> {
   }
 
   private safeSidewalkSpotNear(place: PlaceDef): { x: number; z: number; yaw: number } {
-    // Existing pedestrian paths have already been clipped away from campus.
-    // Use them for mission actors too, including DRMC-adjacent destinations.
+    // Use the already validated public-sidewalk paths for mission actors.
     return nearestSafeSidewalk(PED_PATHS, place.x, place.z) ?? { x: place.x, z: place.z, yaw: 0 };
   }
 
@@ -175,6 +176,7 @@ export class MissionSystem extends Emitter<MissionEvents> {
     this.distance = 0;
     this.boardingTimer = 0;
     this.detourBonusEarned = false;
+    this.rideImpacts = this.rideHardBrakes = 0;
 
     if (this.pickup) {
       const waitSpot = this.safeSidewalkSpotNear(this.pickup);
@@ -237,9 +239,12 @@ export class MissionSystem extends Emitter<MissionEvents> {
     this.lastHint = null;
   }
 
+  setWeatherWet(wet: boolean): void { this.host.wet = wet; }
+
   registerImpact(strength: number): void {
     if (this.state !== 'toDropoff' && this.state !== 'toPickup') return;
     if (strength < 0.5) return;
+    if (this.state === 'toDropoff') this.rideImpacts = Math.min(3, this.rideImpacts + 1);
     const penalty = MISSION.moodCollisionHit * clamp(strength / 2.2, 0.4, 1.6);
     this.mood = clamp(this.mood - penalty, 0, 100);
     this.emit('mood', this.mood);
@@ -254,6 +259,7 @@ export class MissionSystem extends Emitter<MissionEvents> {
 
   registerHardBrake(): void {
     if (this.state !== 'toDropoff') return;
+    this.rideHardBrakes = Math.min(3, this.rideHardBrakes + 1);
     this.mood = clamp(this.mood - MISSION.moodHardBrake, 0, 100);
     this.emit('mood', this.mood);
   }
@@ -337,7 +343,7 @@ export class MissionSystem extends Emitter<MissionEvents> {
     } else if (this.state === 'toDropoff' && this.drop) {
       const dist = Math.hypot(px - this.drop.x, pz - this.drop.z);
       this.distance = Math.max(0, this.offer?.distance ?? this.distance);
-      if (dist < MISSION.dropRadius && Math.abs(speed) < MISSION.dropStopSpeed && !isInsideDrmcCampus(px, pz, 1.6)) {
+      if (dist < MISSION.dropRadius && Math.abs(speed) < MISSION.dropStopSpeed) {
         this.completeRide();
       }
       this.poseTimer += dt;
@@ -360,14 +366,16 @@ export class MissionSystem extends Emitter<MissionEvents> {
   private completeRide(): void {
     if (!this.offer || !this.drop) return;
     const t = this.elapsed - this.boardedAt;
+    const careful = this.mood >= 75 && this.rideImpacts === 0;
     const trafficBonus =
-      (this.detourBonusEarned ? 20 : 0) + (this.offer.kind === 'market' ? 15 : 0);
+      (this.detourBonusEarned ? 20 : 0) + (this.offer.kind === 'market' && careful ? 15 : 0) +
+      contextualCareBonus(this.offer.optional, this.host.wet, this.mood, this.rideImpacts, this.rideHardBrakes);
     const fare = computeFare({
       distance: this.offer.distance,
       timeTaken: t,
       targetTime: this.offer.targetTime,
       mood: this.mood,
-      damage: 0,
+      damage: this.rideImpacts,
       fareMultiplier: this.offer.multiplier,
       trafficBonus,
     });

@@ -362,8 +362,8 @@ export class RickshawRig {
       bSteerChrome.box({ x: 0, y: 1.215, z: -0.062 }, { x: 0.075, y: 0.022, z: 0.008 }, '#35f2c4', { x: -0.45 });
     }
 
-    // Side mirrors (always at least one classic left mirror; twin chrome mirrors when upgraded/electric!)
-    const mirrorSides = look.mirrorSet || this.isElectric ? [-1, 1] : [1];
+    // Both safety mirrors exist on every frame; equipped cosmetics change their finish.
+    const mirrorSides = [-1, 1];
     for (const side of mirrorSides) {
       bSteerChrome.cylinder(
         { x: side * 0.29, y: 1.255, z: -0.12 },
@@ -438,6 +438,16 @@ export class RickshawRig {
       bMetal.box({ x: side * 0.455, y: 0.88, z: -0.76 }, { x: 0.042, y: 0.34, z: 0.56 }, frameCol);
       // Decorative brass S-scroll trim & bolstered rexine armrest
       bChrome.box({ x: side * 0.478, y: 0.88, z: -0.74 }, { x: 0.01, y: 0.18, z: 0.44 }, trimCol);
+      // Small hand-painted side medallion echoes the existing rear lotus art.
+      // It shares the merged matte bucket/material: no extra draw or texture.
+      const plateX = side * 0.501;
+      bWood.cylinder({ x: plateX, y: 0.89, z: -0.75 }, 0.11, 0.012, look.artPrimary, { z: Math.PI / 2 });
+      for (const [dy, dz] of [[0.045, 0], [-0.045, 0], [0, 0.045], [0, -0.045]]) {
+        bWood.cylinder({ x: plateX + side * 0.009, y: 0.89 + dy, z: -0.75 + dz },
+          0.027, 0.008, look.artSecondary, { z: Math.PI / 2 });
+      }
+      bWood.cylinder({ x: plateX + side * 0.014, y: 0.89, z: -0.75 },
+        0.018, 0.008, trimCol, { z: Math.PI / 2 });
       bFabric.box({ x: side * 0.455, y: 1.07, z: -0.73 }, { x: 0.075, y: 0.065, z: 0.52 }, look.canopyColor);
       // Chrome grab handle at front of carriage
       bChrome.cylinder({ x: side * 0.46, y: 1.06, z: -0.45 }, 0.011, 0.18, '#dce3ea', { x: 0.25 });
@@ -873,14 +883,21 @@ export class RickshawRig {
         // Relaxed footrest stance on electric rickshaw
         ll.position.y = 0.71;
         rl.position.y = 0.71;
+        ll.position.z = rl.position.z = 0.05;
         ll.rotation.x = 0.32;
         rl.rotation.x = 0.32;
       } else {
-        const s = Math.sin(opts.pedalPhase);
-        ll.position.y = 0.72 + s * 0.075;
-        rl.position.y = 0.72 - s * 0.075;
-        ll.rotation.x = Math.cos(opts.pedalPhase) * 0.24;
-        rl.rotation.x = -Math.cos(opts.pedalPhase) * 0.24;
+        // Crank rotation is around X: pedal height follows cos(phase), while
+        // fore/aft travel follows sin(phase). Keep the compact leg rig bounded
+        // so thighs remain attached to the seated hips at the low pedal.
+        const up = Math.cos(opts.pedalPhase);
+        const forward = Math.sin(opts.pedalPhase);
+        ll.position.y = 0.72 + up * 0.075;
+        rl.position.y = 0.72 - up * 0.075;
+        ll.position.z = 0.05 + forward * 0.065;
+        rl.position.z = 0.05 - forward * 0.065;
+        ll.rotation.x = forward * 0.22;
+        rl.rotation.x = -forward * 0.22;
       }
     }
 

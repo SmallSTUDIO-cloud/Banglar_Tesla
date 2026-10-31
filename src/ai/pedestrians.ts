@@ -11,7 +11,7 @@
  *     per-frame heap allocations and 100% preserved crowd density!
  */
 
-import { crossesDrmcCampus, isInsideDrmcCampus } from '../world/drmcGeo';
+import { quietTrafficFactor } from './traffic';
 import * as THREE from 'three';
 import { QUALITY, type QualitySettings } from '../core/config';
 import { clamp, damp, mulberry32, TAU } from '../core/mathx';
@@ -59,7 +59,7 @@ function buildSidewalkPaths(): PedPath[] {
       const mz = (az + bz) * 0.5;
       if (!isClearOfRoads(mx, mz, 0.35)) continue;
       const len = Math.hypot(bx - ax, bz - az);
-      if (len < 6 || crossesDrmcCampus(ax, az, bx, bz, 1.6)) continue;
+      if (len < 6) continue;
       paths.push({
         segmentId: seg.id,
         ax,
@@ -256,6 +256,9 @@ export class PedestrianSystem {
   private bag: THREE.InstancedMesh;
   private maxCapacity: number;
   private activeCount = 0;
+  private baseCount = 68;
+  private quietFactor = 1;
+  private populationTick = 0;
 
   private rng = mulberry32(73319);
   private matrix = new THREE.Matrix4();
@@ -381,7 +384,8 @@ export class PedestrianSystem {
   }
 
   setQuality(quality: QualitySettings): void {
-    this.activeCount = clamp(quality.pedestrians, 8, this.maxCapacity);
+    this.baseCount = clamp(quality.pedestrians, 8, this.maxCapacity);
+    this.activeCount = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
     for (const mesh of [
       this.body,
       this.head,
@@ -397,6 +401,42 @@ export class PedestrianSystem {
     }
     // Only torso casts into shadow map (cuts 8/9ths of pedestrian shadow draw calls!)
     this.body.castShadow = quality.shadows;
+  }
+
+  setTimeMinutes(minutes: number): void {
+    this.quietFactor = quietTrafficFactor(minutes);
+  }
+
+  private adjustPopulation(dt: number, playerX: number, playerZ: number): void {
+    this.populationTick += dt;
+    if (this.populationTick < 1.25) return;
+    this.populationTick = 0;
+    const desired = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
+    if (this.activeCount < desired) this.activeCount++;
+    else if (this.activeCount > desired) {
+      const tail = this.peds[this.activeCount - 1];
+      // Do not erase someone walking beside the player or a mission caller.
+      if (tail && !tail.roadsideReserved) {
+        if (Math.hypot(tail.worldX - playerX, tail.worldZ - playerZ) > 50) {
+          this.activeCount--;
+        } else {
+          // The last instance may be right beside the rider for hours. Keep
+          // that walker visible: retire a distant, unreserved walker instead.
+          // Reserved mission callers keep their stable index throughout.
+          for (let i = this.activeCount - 2; i >= 0; i--) {
+            const candidate = this.peds[i];
+            if (candidate.roadsideReserved || Math.hypot(candidate.worldX - playerX, candidate.worldZ - playerZ) <= 50) continue;
+            this.peds[i] = tail;
+            this.peds[this.activeCount - 1] = candidate;
+            this.activeCount--;
+            break;
+          }
+        }
+      }
+    }
+    for (const mesh of [this.body, this.head, this.hair, this.armL, this.armR, this.legL, this.legR, this.skirt, this.bag]) {
+      mesh.count = this.activeCount;
+    }
   }
 
   private pickPathIndex(preferBusy: boolean): number {
@@ -457,7 +497,7 @@ export class PedestrianSystem {
       if (!seg) continue;
       const x = ped.worldX, z = ped.worldZ;
       const distance = Math.hypot(x - px, z - pz);
-      if (distance < 10 || distance > 35 || isInsideDrmcCampus(x, z, 2) || !isClearOfRoads(x, z, 0.15)) continue;
+      if (distance < 10 || distance > 35 || !isClearOfRoads(x, z, 0.15)) continue;
       const along = (x - seg.ax) * seg.ux + (z - seg.az) * seg.uz;
       const centerX = seg.ax + seg.ux * along, centerZ = seg.az + seg.uz * along;
       const side = Math.sign(path.safeX * seg.leftX + path.safeZ * seg.leftZ) || 1;
@@ -466,7 +506,6 @@ export class PedestrianSystem {
         z: centerZ + seg.leftZ * seg.halfWidth * 0.5 * side,
         segmentId: seg.id,
       };
-      if (isInsideDrmcCampus(pickup.x, pickup.z, 1.5)) continue;
       const delta = Math.min(4 / path.length, 0.35);
       const t1 = Math.max(0, ped.t - delta), t2 = Math.min(1, ped.t + delta);
       const a = { x: path.ax + (path.bx - path.ax) * t1, z: path.az + (path.bz - path.az) * t1 };
@@ -513,7 +552,7 @@ export class PedestrianSystem {
       const t = clamp(((x - path.ax) * dx + (z - path.az) * dz) / (dx * dx + dz * dz), 0, 1);
       const wx = path.ax + dx * t, wz = path.az + dz * t;
       const d = Math.hypot(wx - x, wz - z);
-      if (d < bestDistance && !isInsideDrmcCampus(wx, wz, 1.6) && isClearOfRoads(wx, wz, 0.15)) {
+      if (d < bestDistance && isClearOfRoads(wx, wz, 0.15)) {
         bestIdx = i; bestT = t; bestDistance = d;
       }
     }
@@ -523,6 +562,20 @@ export class PedestrianSystem {
     ped.worldZ = path.az + (path.bz - path.az) * bestT;
     ped.sideJitter = 0; ped.evadeAmount = 0; ped.stumbleTimer = 0;
     ped.pause = 0.25; ped.farAccum = 0; ped.roadsideReserved = false;
+  }
+
+  /** A few existing sidewalk walkers briefly pause for a REAL roadside loading
+   * stop. No new pedestrians, displacement or road crossing. */
+  noticeRoadsideLoading(x: number, z: number): number {
+    let noticed = 0;
+    for (let i = 0; i < this.activeCount && noticed < 3; i++) {
+      const ped = this.peds[i];
+      if (ped.roadsideReserved ||
+          Math.hypot(ped.worldX - x, ped.worldZ - z) > 8) continue;
+      ped.pause = Math.max(ped.pause, 0.85);
+      noticed++;
+    }
+    return noticed;
   }
 
   /** Ringing the rickshaw bell alerts nearby walkers politely before near-miss distance! */
@@ -547,6 +600,7 @@ export class PedestrianSystem {
     playerYaw = 0,
   ): void {
     if (PED_PATHS.length === 0) return;
+    this.adjustPopulation(dt, playerX, playerZ);
     this.globalReactCooldown = Math.max(0, this.globalReactCooldown - dt);
 
     const absSpeed = Math.abs(playerSpeed);

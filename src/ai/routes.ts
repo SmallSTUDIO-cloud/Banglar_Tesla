@@ -9,7 +9,6 @@
  */
 
 import { GRAPH_NODES, ROAD_SEGMENTS, nodeById, type RoadSegment } from '../world/layout';
-import { crossesDrmcCampus } from '../world/drmcGeo';
 
 export interface LanePoint {
   x: number;
@@ -83,9 +82,6 @@ export function getLaneGraph(): LaneGraph {
       const az = nFrom.z + lz * laneOffset;
       const bx = nTo.x + lx * laneOffset;
       const bz = nTo.z + lz * laneOffset;
-      // Keep the entire directed lane (including a small lane-change margin)
-      // outside the private campus, even if future map edits move a road.
-      if (crossesDrmcCampus(ax, az, bx, bz, 1.2)) continue;
       const length = Math.max(1, Math.hypot(bx - ax, bz - az));
 
       const edge: LaneEdge = {
