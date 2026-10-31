@@ -52,8 +52,19 @@ jobs:
           fi
       - name: Check toolchain and assemble through the checked-in Gradle pipeline
         run: |
-          python3 scripts/build-apk.py --check
-          python3 scripts/build-apk.py
+          set -euo pipefail
+          if ! python3 scripts/build-apk.py --check > toolchain-check.log 2>&1; then
+            cat toolchain-check.log
+            while IFS= read -r line; do echo "::error::$line"; done < toolchain-check.log
+            exit 1
+          fi
+          cat toolchain-check.log
+          if ! python3 scripts/build-apk.py > gradle-apk.log 2>&1; then
+            tail -50 gradle-apk.log
+            tail -15 gradle-apk.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
+          tail -40 gradle-apk.log
           mkdir -p artifacts
           cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/banglar-tesla-v0.6.0-baseline-debug.apk
           sha256sum artifacts/banglar-tesla-v0.6.0-baseline-debug.apk
