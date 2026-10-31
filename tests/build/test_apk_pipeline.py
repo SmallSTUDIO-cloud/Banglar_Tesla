@@ -3,6 +3,8 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+import zipfile
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +43,27 @@ class PackagingGuards(unittest.TestCase):
             tools = apk.Tools(Path(directory), fake, fake, fake, fake, fake)
             with self.assertRaisesRegex(apk.BuildError, "did not produce a nonempty debug APK"):
                 apk.verify_apk(fake, tools, apk.read_config())
+
+    def test_deployment_dotfile_is_not_an_android_asset_but_runtime_files_must_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            dist = base / "dist"
+            dist.mkdir()
+            (dist / "index.html").write_text("<html>current bundle</html>")
+            (dist / ".nojekyll").write_text("deployment-only")
+            bundle = base / "app-debug.apk"
+            with zipfile.ZipFile(bundle, "w") as archive:
+                for name in ("AndroidManifest.xml", "resources.arsc", "classes.dex"):
+                    archive.writestr(name, "fixture")
+                archive.writestr("assets/public/index.html", "<html>current bundle</html>")
+            tools = apk.Tools(base, bundle, bundle, bundle, bundle, bundle)
+            badging = ("package: name='com.shostalab.banglartesla' versionCode='7' versionName='0.6.0'\n"
+                       "sdkVersion:'24'\ntargetSdkVersion:'34'\n")
+            with patch.object(apk.subprocess, "run", return_value=apk.subprocess.CompletedProcess([], 0, badging)):
+                apk.verify_apk(bundle, tools, apk.read_config(), dist)
+                (dist / "index.html").write_text("stale")
+                with self.assertRaisesRegex(apk.BuildError, "Missing or mismatched bundled web asset"):
+                    apk.verify_apk(bundle, tools, apk.read_config(), dist)
 
 
 if __name__ == "__main__":

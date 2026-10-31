@@ -200,7 +200,11 @@ def verify_apk(apk: Path, tools: Tools, config: AppConfig, dist: Path = WEB_DIST
         for entry in ("AndroidManifest.xml", "resources.arsc", "classes.dex", "assets/public/index.html"):
             if entry not in names:
                 raise BuildError(f"APK missing {entry}")
-        files = [p for p in dist.rglob("*") if p.is_file()]
+        # Vite copies static dotfiles such as .nojekyll for GitHub Pages.
+        # Android Gradle packaging excludes hidden assets; they are not WebView
+        # runtime resources and must not make a correctly packaged APK fail.
+        files = [p for p in dist.rglob("*") if p.is_file() and
+                 not any(part.startswith(".") for part in p.relative_to(dist).parts)]
         if not files:
             raise BuildError(f"Web bundle is empty: {dist}")
         for source in files:
