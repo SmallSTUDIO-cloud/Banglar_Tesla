@@ -35,9 +35,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      # The official GitHub-hosted Ubuntu Android image already carries SDK command-line tools.
+      # Fail with a precise prerequisite error instead of fetching a third-party binary.
       - name: Install official SDK Platform 34 and Build Tools 34.0.0
-        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+        run: |
+          command -v sdkmanager || { echo 'Official Android SDK cmdline-tools missing on runner' >&2; exit 1; }
+          sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
       - name: Check toolchain and assemble through the checked-in Gradle pipeline
         run: |
           python3 scripts/build-apk.py --check
