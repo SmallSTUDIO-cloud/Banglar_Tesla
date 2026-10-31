@@ -74,7 +74,7 @@ jobs:
           path: artifacts/banglar-tesla-v0.6.1-test.1-debug.apk
           if-no-files-found: error
       - name: Publish optional distinct test prerelease (never overwrite baseline)
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        if: (github.event_name == 'workflow_dispatch' && inputs.publish_release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-test-apk-20261031]'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
