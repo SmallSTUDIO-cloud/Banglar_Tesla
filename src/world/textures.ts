@@ -209,8 +209,9 @@ export function sidewalkTexture(): THREE.Texture {
         ctx.fillRect(x + 1, y + 1, tile - 2, tile - 2);
       }
     }
-    ctx.strokeStyle = 'rgba(42,38,32,0.52)';
-    ctx.lineWidth = 1.4;
+    // Soft joints keep the pavement legible without a high-contrast checkerboard.
+    ctx.strokeStyle = 'rgba(51,46,40,0.31)';
+    ctx.lineWidth = 1.1;
     for (let i = 0; i <= w; i += tile) {
       ctx.beginPath();
       ctx.moveTo(i, 0);
@@ -220,6 +221,12 @@ export function sidewalkTexture(): THREE.Texture {
       ctx.moveTo(0, i);
       ctx.lineTo(w, i);
       ctx.stroke();
+    }
+    // Rare silt patches and hairline repairs use the same cached 256px map.
+    for (let i = 0; i < 20; i++) {
+      const px = rng() * w, py = rng() * h;
+      ctx.fillStyle = `rgba(64,58,43,${0.04 + rng() * 0.08})`;
+      ctx.fillRect(px, py, 3 + rng() * 13, 1 + rng() * 4);
     }
     for (let i = 0; i < 900; i++) {
       ctx.fillStyle = `rgba(38,44,32,${rng() * 0.2})`;
@@ -315,11 +322,18 @@ export function brickTexture(): THREE.Texture {
 
 export function shutterTexture(): THREE.Texture {
   return makeTexture('shutter', 128, 128, (ctx, w, h) => {
+    const rng = mulberry32(488);
     ctx.fillStyle = '#47545e';
     ctx.fillRect(0, 0, w, h);
     for (let y = 0; y < h; y += 5) {
       ctx.fillStyle = y % 10 === 0 ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.24)';
       ctx.fillRect(0, y, w, 2);
+    }
+    // Light oxidisation and scuffed paint, baked once into the existing map.
+    for (let i = 0; i < 36; i++) {
+      const px = rng() * w, py = rng() * h;
+      ctx.fillStyle = rng() < 0.55 ? 'rgba(36,31,26,0.075)' : 'rgba(196,182,153,0.065)';
+      ctx.fillRect(px, py, 1 + rng() * 3, 5 + rng() * 29);
     }
     ctx.fillStyle = 'rgba(92,54,28,0.24)';
     ctx.fillRect(0, h - 18, w, 18);

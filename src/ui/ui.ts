@@ -2697,6 +2697,7 @@ export class AppUI {
       'div',
       { class: 'blacklist-summary' },
       h('span', { class: 'pill gold', text: t('blacklist.yourRep', { rep: this.state.rep }) }),
+      h('span', { class: 'pill', text: t('blacklist.yourBounty', { bounty: this.state.progress.blacklistBounty }) }),
       h('span', { class: 'pill', text: statusChipText }),
       button(t('blacklist.replayIntro'), {
         variant: 'ghost',
@@ -2728,6 +2729,7 @@ export class AppUI {
       for (const rival of BLACKLIST_RIVALS) {
         const checklist = this.state.checklistForRival(rival.rank, rival.repRequired);
         const defeated = defeatedSet.has(rival.rank);
+        const milestonesDone = checklist.tasks.filter(task => task.complete).length;
         const canChallenge = checklist.ready;
         const name = loc === 'en' ? rival.nameEn : rival.nameBn;
         const arch = loc === 'en' ? rival.archetypeEn : rival.archetypeBn;
@@ -2780,10 +2782,26 @@ export class AppUI {
             h('span', { text: complete ? '✓' : '○', attrs: { 'aria-hidden': 'true' } }),
             h('span', { text }),
           );
+        const gateMeter = (id: string, complete: boolean, label: string,
+          current: number, target: number): HTMLElement =>
+          h('div', { class: `bl-gate${complete ? ' complete' : ''}`, attrs: { 'data-task': id } },
+            h('span', { text: label }),
+            h('progress', { attrs: {
+              value: String(defeated ? target : Math.min(current, target)),
+              max: String(Math.max(1, target)), 'aria-label': label,
+            } }),
+          );
         const checklistEl = h('div', { class: 'blacklist-checklist', attrs: { 'data-checklist-rank': String(rival.rank) } },
           h('strong', { class: 'tiny', text: t('blacklist.tasksTitle') }),
           checklistLine(checklist.rankUnlocked, t('blacklist.task.rank'), 'rank'),
           checklistLine(checklist.reputationMet, t('blacklist.task.rep', { current: this.state.rep, required: rival.repRequired }), 'rep'),
+          gateMeter('milestones', milestonesDone === checklist.tasks.length, t('blacklist.task.milestones', {
+            current: milestonesDone, required: checklist.tasks.length }), milestonesDone, checklist.tasks.length),
+          gateMeter('wins', checklist.raceWinsMet, t('blacklist.task.wins', {
+            current: checklist.raceWins, required: checklist.raceTarget }), checklist.raceWins, checklist.raceTarget),
+          ...(checklist.bountyTarget > 0 ? [gateMeter('bounty', checklist.bountyMet,
+            t('blacklist.task.bounty', { current: checklist.bounty, required: checklist.bountyTarget }),
+            checklist.bounty, checklist.bountyTarget)] : []),
           ...checklist.tasks.map((task) => checklistLine(task.complete, t(`blacklist.task.${task.task}`), task.task)),
         );
         if (rival.rank === curRank && checklist.tasks.some((task) => task.task === 'escape' && !task.complete)) {
@@ -2796,7 +2814,7 @@ export class AppUI {
         const card = h(
           'div',
           {
-            class: `blacklist-card${defeated ? ' defeated' : canChallenge ? ' ready' : ' locked'}`,
+            class: `blacklist-card${rival.rank === curRank ? ' current' : ''}${defeated ? ' defeated' : canChallenge ? ' ready' : ' locked'}`,
             attrs: { 'data-rank': String(rival.rank) },
           },
           h(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BLACKLIST_RIVALS, OPEN_STREET_EVENTS } from '../../src/blacklist/blacklistCatalog';
-import { tasksForRank } from '../../src/blacklist/requirements';
+import { tasksForRank, raceWinsRequired, bountyRequired } from '../../src/blacklist/requirements';
 import { GameState } from '../../src/core/gameState';
 import { createDefaultProgress, migrateProgress, sanitizeProgress, SAVE_VERSION } from '../../src/core/save';
 
@@ -26,6 +26,22 @@ describe('persistent Blacklist prerequisites and rewards', () => {
     expect(sanitized.blacklistTasks).toEqual(['8:fare','1:escape']);
   });
 
+  it('grandfathers existing ready challenges while sanitizing forged career data', () => {
+    const old = { ...createDefaultProgress(2), version: 4, blacklistNextRank: 6,
+      blacklistDefeated: [10, 9, 8, 7], blacklistTasks: ['6:race', '6:fare', '6:escape'] };
+    const migrated = sanitizeProgress(migrateProgress(old));
+    expect(migrated.blacklistRaceWins['6']).toBe(raceWinsRequired(6));
+    expect(migrated.blacklistBounty).toBe(bountyRequired(6));
+    const state = new GameState(null);
+    state.progress = migrated;
+    state.progress.rep = BLACKLIST_RIVALS.find(r => r.rank === 6)!.repRequired;
+    expect(state.checklistForRival(6, state.rep).ready).toBe(true);
+    const tampered = sanitizeProgress({ ...migrated,
+      blacklistRaceWins: { '6': 1e12, '-1': 10, 'oops': 20 }, blacklistBounty: Infinity });
+    expect(tampered.blacklistRaceWins).toEqual({ '6': 1000 });
+    expect(tampered.blacklistBounty).toBe(0);
+  });
+
   it('requires real per-tier work in order and pays each event only once across reloads', () => {
     const storage = new MemoryStorage();
     let state = new GameState(storage, () => 1000);
@@ -45,11 +61,19 @@ describe('persistent Blacklist prerequisites and rewards', () => {
       expect(paidOptional).toBe(rank === 10);
       expect(state.balance - beforeOptional).toBe(rank === 10 ? 100 : 0);
       expect(state.recordBlacklistTask('race')).toBe(false); // cannot count twice
+      // Event rewards stay first-win-only; a replayed, actually won event can
+      // still count as a new race victory at the next tier.
+      while (state.checklistForRival(rank, rival.repRequired).raceWins < raceWinsRequired(rank)) {
+        expect(state.recordEventVictory({ eventId: optional.id, cashReward: 100, repReward: 20 })).toBe(false);
+      }
       state.recordRide({ earned: 25, distance: 100, mood: 90, damage: 0, mode: 'free', wet: false });
       if (rank <= 7) {
         expect(state.checklistForRival(rank, rival.repRequired).ready).toBe(false);
         expect(state.recordBlacklistTask('escape', rank)).toBe(true);
         expect(state.recordBlacklistTask('escape', rank)).toBe(false);
+        while (state.progress.blacklistBounty < bountyRequired(rank)) {
+          state.recordPursuitEscape(3, 50);
+        }
       }
       expect(state.checklistForRival(rank, rival.repRequired).ready).toBe(true);
       const beforeBoss = state.balance;

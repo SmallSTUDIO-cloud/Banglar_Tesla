@@ -111,6 +111,7 @@ export interface CityResult {
   billboardCount: number;
   treeCount: number;
   treeSites: readonly { x: number; z: number }[];
+  utilityPoleSites: readonly { x: number; z: number }[];
   interiorCount: number;
   courtyardCount: number;
   courtyardSites: readonly { x: number; z: number }[];
@@ -130,9 +131,14 @@ const PLASTER_TINTS = [
   '#c4cfd4',
   '#e6d2a2',
   '#cfc2ab',
+  '#c9d3c7', // muted washed green, not a saturated painted block
+  '#dbc9b2',
+  '#c7c9c4',
+  '#d6c6b7',
 ];
 
-const AWNING_COLORS = ['#b32821', '#15694d', '#1c5488', '#c87d1a', '#7c2352'];
+const AWNING_COLORS = ['#a73a30', '#29644c', '#315a77', '#ad7935', '#793955'];
+const SHUTTER_TINTS = ['#cfd6de', '#c3cfce', '#d1c8ba', '#bcc8d1', '#d0d1c8', '#c3d2c4', '#c8c3cb'];
 
 const SECTOR_GRID = 4;
 const SECTOR_COUNT = SECTOR_GRID * SECTOR_GRID;
@@ -200,6 +206,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const placeAnchors = new Map<string, THREE.Vector3>();
   const wirePairs: [THREE.Vector3, THREE.Vector3][] = [];
   const streetTrees: StreetTree[] = [];
+  const utilityPoleSites: { x: number; z: number }[] = [];
   const rng = mulberry32(20261207);
 
   // Shared world materials:
@@ -282,11 +289,18 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const sectorDetails = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.detail`, detailMat, true));
   const sectorShutters = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.shutter`, shutterMat, true));
   const sectorBricks = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.brick`, brickMat, true));
-  const sectorSigns = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.signs`, signMat));
-  const sectorPosters = Array.from({ length: SECTOR_COUNT }, (_, i) => new Bucket(`sec.${i}.posters`, posterMat));
+  // Thin atlas quads do not need sixteen separate draw calls. Four broad
+  // 2x2-sector groups retain district culling while reducing main/night passes;
+  // building bodies and opaque details remain tightly culled per sector.
+  const decalGroup = (sector: number) => Math.floor((sector % SECTOR_GRID) / 2) +
+    2 * Math.floor(Math.floor(sector / SECTOR_GRID) / 2);
+  const signGroups = Array.from({ length: 4 }, (_, i) => new Bucket(`signs.district.${i}`, signMat));
+  const posterGroups = Array.from({ length: 4 }, (_, i) => new Bucket(`posters.district.${i}`, posterMat));
+  const lightGroups = Array.from({ length: 4 }, (_, i) => new Bucket(`lights.district.${i}`, windowLightMat));
+  const sectorSigns = Array.from({ length: SECTOR_COUNT }, (_, i) => signGroups[decalGroup(i)]);
+  const sectorPosters = Array.from({ length: SECTOR_COUNT }, (_, i) => posterGroups[decalGroup(i)]);
   let posterCount = 0, billboardCount = 0;
-  const sectorWindowLights = Array.from({ length: SECTOR_COUNT }, (_, i) =>
-    new Bucket(`sec.${i}.windowLights`, windowLightMat));
+  const sectorWindowLights = Array.from({ length: SECTOR_COUNT }, (_, i) => lightGroups[decalGroup(i)]);
   const litWindow = (sec: number, x: number, y: number, z: number,
     yaw: number, width: number, height: number): void => {
     // Stable per-pane occupancy, independent of the city's seeded layout RNG.
@@ -716,6 +730,15 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       const ez = seg.az + seg.uz * d + seg.leftZ * curbDist * poleSide;
       if (isClearOfRoads(ex, ez, 0.95)) {
         bWalk.box({ x: ex, y: 3.6, z: ez }, { x: 0.22, y: 7.2, z: 0.22 }, '#8a857c', { y: yaw });
+        // Only the concrete column is solid, not its crossbar, wires or paper
+        // notice. Static grid indexing already used by buildings/lamps handles
+        // these tiny non-breakable colliders without any per-frame mesh work.
+        const poleHalf = 0.14;
+        colliders.push({ minX: ex - poleHalf, maxX: ex + poleHalf,
+          minZ: ez - poleHalf, maxZ: ez + poleHalf, height: 7.2,
+          cameraBlocking: false, kind: 'prop',
+          cx: ex, cz: ez, halfX: poleHalf, halfZ: poleHalf, yaw: 0 });
+        utilityPoleSites.push({ x: ex, z: ez });
         bMetal.box({ x: ex, y: 6.85, z: ez }, { x: 1.15, y: 0.08, z: 0.08 }, '#41474e', { y: yaw });
         // Signature Dhaka coiled fibre-optic cable loop on utility pole!
         bMetal.torus({ x: ex, y: 5.3, z: ez }, 0.28, '#1b1e22', { y: yaw });
@@ -859,6 +882,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           // Coordinate-derived style does not consume the seeded layout RNG:
           // building footprints, signs, stalls and navigation stay unchanged.
           const frontageStyle = Math.abs(Math.round(cx * 13 + cz * 7)) % 7;
+          const windowShade = ['#20313b', '#334043', '#2b3733', '#34444b'][frontageStyle % 4];
           if (useBrick) {
             bBrk.box({ x: cx, y: height * 0.5, z: cz }, { x: bDepth, y: height, z: bWidth }, '#d8b8a8', {
               y: yaw,
@@ -899,7 +923,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 for (const dOff of [-bDepth * 0.24, bDepth * 0.24]) {
                   const ox = wx - fx * dOff;
                   const oz = wz - fz * dOff;
-                  bDet.box({ x: ox, y: winY, z: oz }, { x: 1.18, y: 1.12, z: 0.06 }, '#20313b', { y: sYaw });
+                  bDet.box({ x: ox, y: winY, z: oz }, { x: 1.18, y: 1.12, z: 0.06 }, windowShade, { y: sYaw });
                   litWindow(secIdx, ox + seg.ux * 0.075 * sDir, winY,
                     oz + seg.uz * 0.075 * sDir, sYaw, 0.96, 0.88);
                   bDet.box(
@@ -983,6 +1007,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           // Street-facing facade details: ground-floor Dokan shutters + pilasters, striped awning, Bangla signboard & upper balconies!
           const frontX = cx + fx * (bDepth * 0.5 + 0.04);
           const frontZ = cz + fz * (bDepth * 0.5 + 0.04);
+          // Intermittent limewash edge and rain-stained sill distinguish the
+          // otherwise uniform upper blocks. Both join the sector detail mesh.
+          if (!useBrick && (frontageStyle === 2 || frontageStyle === 6)) {
+            bDet.box({ x: frontX + seg.ux * (bWidth * 0.45) + fx * 0.035,
+              y: height * 0.54, z: frontZ + seg.uz * (bWidth * 0.45) + fz * 0.035 },
+              { x: 0.19, y: height * 0.76, z: 0.045 },
+              frontageStyle === 2 ? '#aeb6a3' : '#ada99b', { y: faceYaw });
+          }
 
           const isCommercial = seg.kind !== 'gali' || rng() < 0.45;
           // A few occupied shops stay warm at dusk; the pane and small ground
@@ -1001,8 +1033,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               const bayOff = -((shopBays - 1) * 0.5) * 3.4 + sb * 3.4;
               const sx = frontX + seg.ux * bayOff;
               const sz = frontZ + seg.uz * bayOff;
-              if (frontageStyle === 3 && sb === 0) {
-                // One occupied dokan bay: shaded entrance, inset side jambs and
+              if ((frontageStyle === 3 || frontageStyle === 5) && sb === 0) {
+                // Two occupied dokan variants: shaded entrance, inset jambs and
                 // a low counter. All detail stays on the building side of the
                 // established facade/collider, never on the footpath.
                 bDet.box({ x: sx + fx * 0.07, y: 1.42, z: sz + fz * 0.07 },
@@ -1026,10 +1058,38 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                   bDet.box({ x: sx + seg.ux * bundle * 0.52 + fx * 0.12,
                     y: 1.66, z: sz + seg.uz * bundle * 0.52 + fz * 0.12 },
                     { x: 0.38, y: 0.31, z: 0.09 },
-                    ['#ad6d42', '#5e8269', '#c6a67a'][bundle + 1], { y: faceYaw });
+                    frontageStyle === 5
+                      ? ['#b99452', '#637948', '#91775c'][bundle + 1]
+                      : ['#ad6d42', '#5e8269', '#c6a67a'][bundle + 1], { y: faceYaw });
+                }
+                if (frontageStyle === 5) {
+                  // Produce sacks and a shallow street-facing display shelf;
+                  // no change to footprint/collision or sidewalk clearance.
+                  for (let sack = -1; sack <= 1; sack++) {
+                    bDet.box({ x: sx + seg.ux * sack * 0.53 + fx * 0.23,
+                      y: 0.43, z: sz + seg.uz * sack * 0.53 + fz * 0.23 },
+                      { x: 0.38, y: 0.38, z: 0.24 },
+                      ['#b69a72', '#9b8565', '#b7a180'][sack + 1], { y: faceYaw });
+                  }
+                }
+              } else if (frontageStyle === 2 && sb === 0) {
+                // Half-raised shutter reveals a low goods counter instead of
+                // another fully locked frontage. No actual indoor navigation.
+                bDet.box({ x: sx + fx * 0.075, y: 1.01, z: sz + fz * 0.075 },
+                  { x: 2.65, y: 1.65, z: 0.035 }, '#34403c', { y: faceYaw });
+                bShut.quad({ x: sx + fx * 0.09, y: 2.22, z: sz + fz * 0.09 },
+                  2.65, 0.96, SHUTTER_TINTS[frontageStyle], { y: faceYaw });
+                bDet.box({ x: sx + fx * 0.13, y: 0.67, z: sz + fz * 0.13 },
+                  { x: 1.97, y: 0.80, z: 0.27 }, '#77573d', { y: faceYaw });
+                for (let item = -1; item <= 1; item++) {
+                  bDet.box({ x: sx + seg.ux * item * 0.48 + fx * 0.23,
+                    y: 1.16, z: sz + seg.uz * item * 0.48 + fz * 0.23 },
+                    { x: 0.30, y: 0.21, z: 0.20 },
+                    ['#b08e61', '#7d8a69', '#bd9971'][item + 1], { y: faceYaw });
                 }
               } else {
-                bShut.quad({ x: sx, y: 1.42, z: sz }, 2.65, 2.55, '#cfd6de', { y: faceYaw });
+                bShut.quad({ x: sx, y: 1.42, z: sz }, 2.65, 2.55,
+                  SHUTTER_TINTS[frontageStyle], { y: faceYaw });
               }
               // Vertical shopfront concrete pilaster beside shutter bay
               bDet.box(
@@ -1083,16 +1143,17 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               '#8a8478',
               { y: faceYaw },
             );
-            if (frontageStyle === 1) {
-              // Older open iron railing instead of repeating an opaque parapet
-              // on every frontage; merged into the existing sector detail mesh.
+            if (frontageStyle === 1 || (frontageStyle === 6 && fl % 2 === 1)) {
+              // Iron railings on old balconies, with occasional open upper
+              // galleries. Everything stays in the existing detail bucket.
               for (const railY of [by - 0.25, by + 0.42]) {
                 bDet.box({ x: frontX + fx * 0.82, y: railY, z: frontZ + fz * 0.82 },
                   { x: balW, y: 0.065, z: 0.065 }, railCol, { y: faceYaw });
               }
-              for (let bar = -2; bar <= 2; bar++) {
-                bDet.box({ x: frontX + fx * 0.82 + seg.ux * (balW * bar / 5),
-                  y: by + 0.08, z: frontZ + fz * 0.82 + seg.uz * (balW * bar / 5) },
+              const bars = frontageStyle === 1 ? 2 : 1;
+              for (let bar = -bars; bar <= bars; bar++) {
+                bDet.box({ x: frontX + fx * 0.82 + seg.ux * (balW * bar / (bars + 3)),
+                  y: by + 0.08, z: frontZ + fz * 0.82 + seg.uz * (balW * bar / (bars + 3)) },
                   { x: 0.045, y: 0.72, z: 0.06 }, '#676963', { y: faceYaw });
               }
             } else {
@@ -1116,9 +1177,29 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             bDet.box(
               { x: frontX + fx * 0.03, y: by + 0.62, z: frontZ + fz * 0.03 },
               { x: Math.min(balW * 0.52, 2.4), y: 1.85, z: 0.06 },
-              '#1c2d36',
+              windowShade,
               { y: faceYaw },
             );
+            // One sliding-door mullion breaks the large unlit dark rectangles
+            // without introducing transparent glass or per-window objects.
+            bDet.box({ x: frontX + fx * 0.078 + seg.ux * (frontageStyle === 4 ? 0.36 : -0.12),
+              y: by + 0.62,
+              z: frontZ + fz * 0.078 + seg.uz * (frontageStyle === 4 ? 0.36 : -0.12) },
+              { x: 0.045, y: 1.85, z: 0.045 },
+              frontageStyle === 4 ? '#b0a99a' : '#738180', { y: faceYaw });
+            // A single faded cloth panel on occasional balconies suggests an
+            // occupied home without glass transparency or extra texture passes.
+            if ((frontageStyle === 0 || frontageStyle === 5) && fl % 2 === 1) {
+              bDet.quad({ x: frontX + fx * 0.098 + seg.ux * 0.41,
+                y: by + 0.69, z: frontZ + fz * 0.098 + seg.uz * 0.41 },
+                0.70, 1.55, frontageStyle === 0 ? '#b6a888' : '#839d94',
+                { y: faceYaw });
+            }
+            if (frontageStyle === 2 && fl % 2 === 0) {
+              bDet.box({ x: frontX + fx * 0.84, y: by + 0.40,
+                z: frontZ + fz * 0.84 },
+                { x: balW * 0.92, y: 0.045, z: 0.045 }, '#b0a68c', { y: faceYaw });
+            }
             litWindow(secIdx, frontX + fx * 0.1, by + 1.0,
               frontZ + fz * 0.1, faceYaw, Math.min(balW * 0.38, 1.55), 0.85);
             if ((fl + secIdx) % 3 === 0) {
@@ -1435,6 +1516,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     if (!placedBuildings.every((building) => footprintSeparated(footprint, building, 0.25))) continue;
     addStreetTree(sectorDetails[sectorIndex(tree.x, tree.z)], tree);
     treeSites.push({ x: tree.x, z: tree.z });
+    // Match the 20 cm flared base of treeModel's trunk. Canopy and branches
+    // deliberately stay non-collidable; this is a firm, non-breakable trunk.
+    const trunkHalf = 0.20;
+    colliders.push({ minX: tree.x - trunkHalf, maxX: tree.x + trunkHalf,
+      minZ: tree.z - trunkHalf, maxZ: tree.z + trunkHalf,
+      height: tree.height * 0.94, cameraBlocking: false, kind: 'prop',
+      cx: tree.x, cz: tree.z, halfX: trunkHalf, halfZ: trunkHalf, yaw: 0 });
   }
 
   // Iconic Mohammadpur Mosque Landmarks (Shia Mosque near Ring×Tajmahal & Satmasjid near Satmasjid Rd)
@@ -1544,19 +1632,21 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         registerCasterMesh(m);
       }
     }
-    for (const decalBucket of [sectorShutters[i], sectorSigns[i], sectorPosters[i]]) {
-      const m = decalBucket.build({ cast: false, receive: true });
-      if (m) group.add(m);
-    }
+    const shutter = sectorShutters[i].build({ cast: false, receive: true });
+    if (shutter) group.add(shutter);
+  }
+  for (const decalBucket of [...signGroups, ...posterGroups]) {
+    const m = decalBucket.build({ cast: false, receive: true });
+    if (m) group.add(m);
   }
 
   const nightGroup = new THREE.Group();
   nightGroup.name = 'night-glow';
-  for (const gm of bGlow.buildChunked(3, 280, { cast: false, receive: false })) {
+  for (const gm of bGlow.buildChunked(2, 280, { cast: false, receive: false })) {
     nightGroup.add(gm);
   }
   // Keep each sector independently cullable and the panes out of shadow maps.
-  for (const bucket of sectorWindowLights) {
+  for (const bucket of lightGroups) {
     const mesh = bucket.build({ cast: false, receive: false });
     if (mesh) nightGroup.add(mesh);
   }
@@ -1867,6 +1957,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     billboardCount,
     treeCount: treeSites.length,
     treeSites,
+    utilityPoleSites,
     interiorCount,
     courtyardCount,
     courtyardSites,

@@ -73,7 +73,7 @@ def read_config(root: Path = ROOT) -> AppConfig:
     namespace = value("namespace", r"['\"]([^'\"]+)['\"]")
     if namespace != config.application_id:
         raise BuildError(f"Android namespace {namespace} disagrees with applicationId {config.application_id}")
-    if config != AppConfig("com.shostalab.banglartesla", 24, 9, "0.6.2-test.1") or compile_sdk != PLATFORM_API or target_sdk != PLATFORM_API:
+    if config != AppConfig("com.shostalab.banglartesla", 24, 10, "0.6.3-test.1") or compile_sdk != PLATFORM_API or target_sdk != PLATFORM_API:
         raise BuildError(f"Unexpected Android identity/version/SDK: {config}; compileSdk={compile_sdk}, targetSdk={target_sdk}")
     web_version = json.loads((root / "package.json").read_text(encoding="utf-8"))["version"]
     capacitor_id = json.loads((root / "capacitor.config.json").read_text(encoding="utf-8"))["appId"]

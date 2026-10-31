@@ -445,6 +445,7 @@ export class Game implements UIBridge {
       onPursuitEscaped: (maxHeat, repReward) => {
         this.state.setHeat(0);
         this.state.addRep(repReward);
+        this.state.recordPursuitEscape(maxHeat, repReward);
         if (this.activeBlacklistEscapeRank !== null) {
           const rank = this.activeBlacklistEscapeRank;
           this.activeBlacklistEscapeRank = null;

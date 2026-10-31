@@ -310,6 +310,18 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
       solid.cylinder({ x: p.x, y: groundY + 1.35, z: p.z }, 0.04, 2.5, '#a87d44');
     }
     cloth.box({ x, y: groundY + 2.58, z }, { x: 2.55, y: 0.06, z: 1.75 }, '#195d82', { y: yaw, x: 0.10 });
+    const valance = at(0, 0.86);
+    cloth.box({ x: valance.x, y: groundY + 2.54, z: valance.z },
+      { x: 2.55, y: 0.13, z: 0.055 }, '#b69c73', { y: yaw });
+    const teaBoard = at(0, 0.90);
+    // Existing Bengali tea sign from the shared atlas, not another texture.
+    signs.quad({ x: teaBoard.x, y: groundY + 2.24, z: teaBoard.z },
+      1.78, 0.39, '#ffffff', { y: yaw }, signAtlas.slot(1));
+    for (const offset of [-0.72, 0.72]) {
+      const hook = at(offset, 0.88);
+      solid.cylinder({ x: hook.x, y: groundY + 2.49, z: hook.z },
+        0.013, 0.16, '#8f8066');
+    }
     // Aluminum tea kettle + biscuit jars + hanging yellow banana bunches (`কলার ছড়া`)!
     const kt = at(-0.48, 0.08);
     metal.cylinder({ x: kt.x, y: groundY + 1.12, z: kt.z }, 0.18, 0.30, '#dce3ea');
@@ -322,11 +334,62 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
       const bp = at(bx, 0.42);
       solid.cylinder({ x: bp.x, y: groundY + 2.05, z: bp.z }, 0.12, 0.36, '#f2c938');
     }
-    // Sidewalk wooden adda bench
+    // Street-side adda: two customers on a wooden bench, with small glass
+    // cha cups; one holds a cigarette. Geometry shares the stall's breakable
+    // tag and the existing opaque buckets (no per-person meshes/lights).
     const bench = at(0, 0.92);
-    if (isClearOfRoads(bench.x, bench.z, 0.65)) {
-      solid.box({ x: bench.x, y: groundY + 0.26, z: bench.z }, { x: 1.55, y: 0.06, z: 0.34 }, '#6e4522', { y: yaw });
-      solid.box({ x: bench.x, y: groundY + 0.13, z: bench.z }, { x: 1.35, y: 0.24, z: 0.26 }, '#543419', { y: yaw });
+    const seats = [-0.43, 0.43].map((offset) => at(offset, 0.92));
+    if (isClearOfRoads(bench.x, bench.z, 0.90) &&
+        seats.every((seat) => isClearOfRoads(seat.x, seat.z, 0.40))) {
+      solid.box({ x: bench.x, y: groundY + 0.27, z: bench.z },
+        { x: 1.65, y: 0.07, z: 0.40 }, '#755033', { y: yaw });
+      solid.box({ x: bench.x, y: groundY + 0.13, z: bench.z },
+        { x: 1.42, y: 0.24, z: 0.28 }, '#543b26', { y: yaw });
+      // Backrest faces the shop; do not put a tall plank between the road
+      // camera and the drinkers.
+      const back = at(0, 0.70);
+      solid.box({ x: back.x, y: groundY + 0.60, z: back.z },
+        { x: 1.65, y: 0.27, z: 0.07 }, '#68472e', { y: yaw });
+      seats.forEach((seat, i) => {
+        const shirt = i === 0 ? '#c1a77f' : '#536f70';
+        // Rounded torso, bent thighs and planted feet read as sitting rather
+        // than two upright boxes balanced on the bench.
+        solid.cylinder({ x: seat.x, y: groundY + 0.67, z: seat.z },
+          0.20, 0.51, shirt);
+        solid.cylinder({ x: seat.x, y: groundY + 1.04, z: seat.z },
+          0.11, 0.23, i === 0 ? '#9a704f' : '#7f583f');
+        solid.cylinder({ x: seat.x, y: groundY + 1.17, z: seat.z },
+          0.11, 0.045, '#292622');
+        for (const dx of [-0.11, 0.11]) {
+          const xOff = (i === 0 ? -0.43 : 0.43) + dx;
+          const thigh = at(xOff, 1.04);
+          solid.box({ x: thigh.x, y: groundY + 0.34, z: thigh.z },
+            { x: 0.13, y: 0.11, z: 0.28 }, '#374247', { y: yaw });
+          const foot = at(xOff, 1.19);
+          solid.box({ x: foot.x, y: groundY + 0.17, z: foot.z },
+            { x: 0.11, y: 0.27, z: 0.14 }, '#374247', { y: yaw });
+        }
+        // Arm and raised glass: the cup silhouette reads from road level.
+        const hand = at((i === 0 ? -0.43 : 0.43) + 0.23, 1.12);
+        solid.box({ x: hand.x, y: groundY + 0.78, z: hand.z },
+          { x: 0.08, y: 0.27, z: 0.09 }, shirt, { y: yaw, x: -0.45 });
+        metal.cylinder({ x: hand.x, y: groundY + 0.89, z: hand.z },
+          0.065, 0.10, '#b4c5c1');
+        solid.cylinder({ x: hand.x, y: groundY + 0.94, z: hand.z },
+          0.056, 0.014, '#a05b32');
+        if (i === 0) {
+          const fingers = at(-0.64, 1.10);
+          solid.box({ x: fingers.x, y: groundY + 0.76, z: fingers.z },
+            { x: 0.08, y: 0.25, z: 0.09 }, shirt, { y: yaw, x: -0.35 });
+          solid.box({ x: fingers.x, y: groundY + 0.88, z: fingers.z },
+            { x: 0.035, y: 0.035, z: 0.16 }, '#eee6d3', { y: yaw });
+          solid.box({ x: fingers.x, y: groundY + 0.88, z: fingers.z },
+            { x: 0.04, y: 0.04, z: 0.025 }, '#b3633b', { y: yaw });
+          // A small static pale wisp, not a particle emitter.
+          solid.cylinder({ x: fingers.x, y: groundY + 1.00, z: fingers.z },
+            0.012, 0.11, '#a2aaa1');
+        }
+      });
     }
     const vPos = at(0, -0.68);
     addPersonFigure(vPos.x, vPos.z, yaw, '#e76f51', '#1d4e6e');

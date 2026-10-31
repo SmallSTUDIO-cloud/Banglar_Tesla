@@ -84,6 +84,9 @@ interface ActiveTrafficAgent extends InstancedVehicleState {
   cruise: number;
   lateralOffset: number;
   targetLateral: number;
+  /** Current real road user being passed; never crosses the centreline. */
+  passing: ActiveTrafficAgent | 'player' | null;
+  passCooldown: number;
   dwellTimer: number;
   dwellCooldown: number;
   stuckTimer: number;
@@ -145,6 +148,19 @@ function sampleJunction(from: LaneEdge, to: LaneEdge, lead: number, lateral: num
 
 function junctionLead(from: LaneEdge, to: LaneEdge, kind: VehicleKind): number {
   return Math.min(kind === 'bus' || kind === 'truck' ? 8 : 5.5, from.length * 0.35, to.length * 0.35);
+}
+
+/** Width-aware overtaking space on the *same* left-hand carriageway. Return
+ * null on narrow roads or when the manoeuvre would enter the oncoming half. */
+export function curbsidePassOffset(
+  roadHalfWidth: number, laneKind: LaneEdge['kind'], followerHalfWidth: number,
+  leaderHalfWidth: number,
+): number | null {
+  if (laneKind !== 'main' && laneKind !== 'medium') return null;
+  const centre = roadHalfWidth * (laneKind === 'main' ? 0.46 : 0.44);
+  const required = followerHalfWidth + leaderHalfWidth + 0.30;
+  const curbRoom = roadHalfWidth - centre - followerHalfWidth - 0.34;
+  return required <= curbRoom && centre - followerHalfWidth > 0.30 ? required : null;
 }
 
 const FLEET_DISTRIBUTION: { kind: VehicleKind; weight: number; cruiseMin: number; cruiseMax: number }[] = [
@@ -323,6 +339,8 @@ export class TrafficSystem {
       nearLod: true,
       lateralOffset: lateral,
       targetLateral: lateral,
+      passing: null,
+      passCooldown: 0,
       dwellTimer: 0,
       dwellCooldown: 5 + this.rng() * 14,
       stuckTimer: 0,
@@ -585,6 +603,7 @@ export class TrafficSystem {
       let minGap = 999;
       let leaderSpeed = 0;
       let blockerLateral = 0;
+      let leadAgent: ActiveTrafficAgent | null = null;
       const sameLane = this.laneOccupancy.get(a.lane.id)!;
       for (let j = 0; j < sameLane.length; j++) {
         const other = sameLane[j];
@@ -599,6 +618,7 @@ export class TrafficSystem {
               minGap = netGap;
               leaderSpeed = other.speed;
               blockerLateral = other.lateralOffset;
+              leadAgent = other;
             }
           }
         }
@@ -637,6 +657,7 @@ export class TrafficSystem {
       if (playerGap !== null && playerGap < minGap) {
         minGap = playerGap;
         leaderSpeed = playerAlong;
+        leadAgent = null;
       }
 
       const redSignal =
@@ -651,7 +672,53 @@ export class TrafficSystem {
         }
       }
 
-      if (
+      a.passCooldown = Math.max(0, a.passCooldown - stepDt);
+      if (a.passing) {
+        const leadS = a.passing === 'player'
+          ? (this.playerX - a.lane.ax) * a.lane.ux + (this.playerZ - a.lane.az) * a.lane.uz
+          : a.passing.s;
+        const passed = a.s > leadS + a.arch.halfLength +
+          (a.passing === 'player' ? 1.65 : a.passing.arch.halfLength) + 2.5;
+        if (passed || (a.passing !== 'player' && a.passing.lane !== a.lane)) {
+          // Rejoin only after the passed vehicle is behind the rear bumper.
+          a.passing = null;
+          a.passCooldown = 3;
+        }
+      }
+      if (!a.passing && a.passCooldown === 0 && a.dwellTimer <= 0 &&
+          !a.turnLane && !a.plannedLaneId && distToNode > 52 &&
+          a.cruise > leaderSpeed + 0.9 && minGap > 4.2 && minGap < 14 &&
+          (leadAgent || (playerGap !== null && playerAlong >= 0 &&
+            Math.abs(angleDelta(a.yaw, this.playerYaw)) < 0.45))) {
+        const width = leadAgent?.arch.halfWidth ?? 0.85;
+        const offset = curbsidePassOffset(a.lane.halfRoadWidth, a.lane.kind, a.arch.halfWidth, width);
+        const target = leadAgent ?? 'player';
+        let clear = offset !== null;
+        // Reserve the whole side corridor, including the space where we will
+        // merge. Never squeeze past a bus, a parked neighbour or the player.
+        for (let k = 0; clear && k < sameLane.length; k++) {
+          const other = sameLane[k];
+          if (other === a || other === leadAgent) continue;
+          if (other.s - a.s > -5 && other.s - a.s < 23 &&
+              Math.abs(other.lateralOffset - offset!) <
+                a.arch.halfWidth + other.arch.halfWidth + 0.35) clear = false;
+        }
+        if (clear && target !== 'player') {
+          const relS = (this.playerX - a.x) * a.lane.ux + (this.playerZ - a.z) * a.lane.uz;
+          const playerLat = (this.playerX - a.lane.ax) * a.lane.uz -
+            (this.playerZ - a.lane.az) * a.lane.ux;
+          if (relS > -5 && relS < 23 &&
+              Math.abs(playerLat - offset!) < a.arch.halfWidth + 0.85 + 0.4) clear = false;
+        }
+        if (clear && offset !== null) {
+          a.passing = target;
+          a.targetLateral = offset;
+        }
+      }
+      if (a.passing) {
+        // Hold the reserved curbside line until the target is actually behind.
+        // The existing car-following safety envelope still handles braking.
+      } else if (
         minGap < 4.5 &&
         a.dwellTimer <= 0 &&
         a.lane.kind === 'main' &&
@@ -869,6 +936,9 @@ export class TrafficSystem {
         a.lane = cand;
         a.plannedLaneId = null;
         a.turnLane = null;
+        a.passing = null;
+        a.passCooldown = 0;
+        a.lateralOffset = a.targetLateral = 0;
         a.turnOffsetX = a.turnOffsetZ = 0;
         a.potholeDepth = a.bumpOffset = 0;
         a.contactTravel = a.contactSideTravel = a.contactCooldown = 0;

@@ -2179,6 +2179,22 @@ input[type='range']::-moz-range-thumb {
 .blacklist-card.ready {
   border-color: rgba(232, 178, 90, 0.52);
 }
+/* The active Mohammadpur rival gets a distinct dossier, not a borrowed photo. */
+.blacklist-card.current {
+  background: radial-gradient(circle at 12% 18%, rgba(203, 160, 75, .19), transparent 45%),
+    linear-gradient(135deg, rgba(12, 28, 25, .98), rgba(8, 22, 20, .96));
+  border-color: rgba(232, 178, 90, .55);
+  padding: .85rem;
+}
+.blacklist-card.current .bl-card-head { align-items: flex-start; }
+.blacklist-card.current .bl-portrait {
+  width: clamp(72px, 9vw, 108px);
+  height: clamp(72px, 9vw, 108px);
+  flex: 0 0 clamp(72px, 9vw, 108px);
+}
+.blacklist-card.current .bl-portrait svg { width: 100%; height: 100%; }
+.blacklist-card.current .bl-title-col strong { font-size: calc(1.07rem * var(--text-scale)); }
+.blacklist-card.current .bl-taunt { font-size: calc(.84rem * var(--text-scale)); }
 .blacklist-card.defeated {
   border-color: rgba(76, 214, 160, 0.42);
   opacity: 0.88;
@@ -2692,3 +2708,13 @@ input[type='range']::-moz-range-thumb {
 .blacklist-task { display: flex; gap: .5rem; align-items: center; font-size: .78rem; color: #ead9b6; }
 .blacklist-task.complete { color: #8ae4b6; }
 .blacklist-checklist .btn { justify-self: start; margin-top: .3rem; }
+/* Original Dhaka rival dossiers: readable, measurable career gates rather
+   than copying a proprietary menu image or embedding a screenshot. */
+.bl-gate { display: grid; gap: .16rem; color: #ead9b6; font-size: calc(.77rem * var(--text-scale)); font-variant-numeric: tabular-nums; }
+.bl-gate.complete { color: #8ae4b6; }
+.bl-gate progress { width: 100%; height: .38rem; border: 0; border-radius: 1rem; overflow: hidden; background: #25352f; }
+.bl-gate progress::-webkit-progress-bar { background: #25352f; border-radius: 1rem; }
+.bl-gate progress::-webkit-progress-value { background: linear-gradient(90deg, #b68c38, #edc870); border-radius: 1rem; }
+.bl-gate.complete progress::-webkit-progress-value { background: #65cda0; }
+.bl-gate progress::-moz-progress-bar { background: #edc870; border-radius: 1rem; }
+.bl-gate.complete progress::-moz-progress-bar { background: #65cda0; }

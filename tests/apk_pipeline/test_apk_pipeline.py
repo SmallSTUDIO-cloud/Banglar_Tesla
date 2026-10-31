@@ -19,7 +19,7 @@ class PackagingGuards(unittest.TestCase):
     def test_identity_and_versions_remain_consistent(self):
         self.assertEqual(
             apk.read_config(),
-            apk.AppConfig("com.shostalab.banglartesla", 24, 9, "0.6.2-test.1"),
+            apk.AppConfig("com.shostalab.banglartesla", 24, 10, "0.6.3-test.1"),
         )
 
     def test_wrapper_is_complete_and_checksum_verified(self):
@@ -57,7 +57,7 @@ class PackagingGuards(unittest.TestCase):
                     archive.writestr(name, "fixture")
                 archive.writestr("assets/public/index.html", "<html>current bundle</html>")
             tools = apk.Tools(base, bundle, bundle, bundle, bundle, bundle)
-            badging = ("package: name='com.shostalab.banglartesla' versionCode='9' versionName='0.6.2-test.1'\n"
+            badging = ("package: name='com.shostalab.banglartesla' versionCode='10' versionName='0.6.3-test.1'\n"
                        "sdkVersion:'24'\ntargetSdkVersion:'34'\n")
             with patch.object(apk.subprocess, "run", return_value=apk.subprocess.CompletedProcess([], 0, badging)), patch("builtins.print"):
                 apk.verify_apk(bundle, tools, apk.read_config(), dist)

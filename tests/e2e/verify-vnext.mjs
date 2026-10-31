@@ -234,6 +234,7 @@ async function main() {
       g.exitRaceToFreeRide();
       // Seed the prerequisite fixture; separate repair smoke exercises real callbacks.
       g.state.progress.blacklistTasks = ['10:race', '10:fare'];
+      g.state.progress.blacklistRaceWins['10'] = 1;
       g.startRivalEvent('bl_boss_10');
       const ai = g.raceSystem.getAiRacersSnapshot();
       g.debugStepSim(3.2);

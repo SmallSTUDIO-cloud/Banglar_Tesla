@@ -5,10 +5,10 @@ import { Bucket } from './geo';
  * mesh. No per-tree Mesh, material, light, texture, animation or draw call. */
 const trunk = new THREE.CylinderGeometry(0.115, 0.20, 1, 7);
 const branch = new THREE.CylinderGeometry(0.035, 0.105, 1, 5);
-// A 7×5 smooth ellipsoid gives rounded leaf masses at a fraction of the
-// triangles/overdraw of individual leaves or alpha-tested cards. Indexed like
-// the sector boxes, so mergeGeometries can batch the entire street frontage.
-const crown = new THREE.SphereGeometry(1, 7, 5);
+// One softly irregular low-poly crown shared by all trees. Four overlapping
+// masses replace six disconnected bright globes; the opaque sector bucket and
+// indexed geometry keep the same draw-call count without alpha-leaf overdraw.
+const crown = new THREE.SphereGeometry(1, 8, 6);
 const crownPositions = crown.getAttribute('position') as THREE.BufferAttribute;
 for (let i = 0; i < crownPositions.count; i++) {
   const x = crownPositions.getX(i), y = crownPositions.getY(i), z = crownPositions.getZ(i);
@@ -59,21 +59,34 @@ export function addStreetTree(bucket: Bucket, tree: StreetTree): void {
   // Uneven overlapping broadleaf lobes: a flattened interior crown with a
   // broken outer silhouette. Opaque rounded masses match the stylised city
   // without translucent leaf cards (costly overdraw on mobile GPUs).
-  const green = ['#335841', '#416d46', '#4a7348', '#53724b', '#396649'];
-  const warm = ['#477248', '#a55a43', '#507a48', '#b56847', '#477048'];
-  const palette = flowering ? warm : green;
-  for (let i = 0; i < 6; i++) {
-    const angle = rotate + i * Math.PI * 2 / 5;
-    const center = i === 5;
-    const radius = center ? 0 : 1.08 + (noise(i + 8) - 0.5) * 0.45;
+  const greens = ['#365b43', '#436a48', '#4e704e', '#3f6545', '#567653'];
+  // The centre overlaps three lower crowns, producing a single shaded canopy
+  // rather than individual balloons. Coordinate hash varies each silhouette.
+  const green = greens[Math.floor(noise(41) * greens.length)];
+  bucket.add(crown, { x, y: h + 0.76, z },
+    { x: 1.45 + noise(10) * 0.20, y: 0.99, z: 1.38 + noise(11) * 0.22 }, green,
+    { y: rotate * 0.4, z: (noise(12) - 0.5) * 0.12 });
+  for (let i = 0; i < 3; i++) {
+    const angle = rotate + i * Math.PI * 2 / 3;
+    const radius = 0.70 + noise(i + 8) * 0.19;
     const lx = x + Math.cos(angle) * radius;
     const lz = z + Math.sin(angle) * radius;
-    const y = h + (center ? 0.98 : 0.50 + (noise(i + 15) - 0.5) * 0.36);
-    const width = center ? 1.24 : 1.03 + noise(i + 23) * 0.25;
-    const depth = center ? 1.20 : 0.96 + noise(i + 29) * 0.23;
-    bucket.add(crown, { x: lx, y, z: lz },
-      { x: width, y: center ? 0.96 : 0.82 + noise(i + 35) * 0.18, z: depth },
-      palette[(i + Math.floor(noise(i + 39) * 4)) % palette.length],
-      { y: angle * 0.65, z: (noise(i + 44) - 0.5) * 0.24 });
+    bucket.add(crown, { x: lx, y: h + 0.43 + noise(i + 15) * 0.21, z: lz },
+      { x: 0.95 + noise(i + 23) * 0.18, y: 0.77 + noise(i + 35) * 0.13,
+        z: 0.92 + noise(i + 29) * 0.18 },
+      greens[(Math.floor(noise(i + 39) * greens.length) + i) % greens.length],
+      { y: angle * 0.6, z: (noise(i + 44) - 0.5) * 0.20 });
+  }
+  // Flowering trees stay leafy; only three small clusters carry muted colour.
+  if (flowering) {
+    for (let i = 0; i < 3; i++) {
+      const angle = rotate + i * Math.PI * 2 / 3;
+      const r = 1.12 + noise(i + 50) * 0.18;
+      bucket.add(crown,
+        { x: x + Math.cos(angle) * r, y: h + 0.78 + noise(i + 53) * 0.25,
+          z: z + Math.sin(angle) * r },
+        { x: 0.22, y: 0.14, z: 0.22 },
+        i % 2 ? '#ae806f' : '#aa796d');
+    }
   }
 }

@@ -23,7 +23,7 @@ import {
 } from './save';
 import type { StorageLike } from './settings';
 import { blacklistChecklist, blacklistTaskId, tasksForRank, type BlacklistTask } from '../blacklist/requirements';
-import { rivalByRank } from '../blacklist/blacklistCatalog';
+import { OPEN_STREET_EVENTS, rivalByRank } from '../blacklist/blacklistCatalog';
 
 export type PurchaseResult =
   | { ok: true; balance: number }
@@ -335,6 +335,18 @@ export class GameState extends Emitter<StateEvents> {
     return true;
   }
 
+  /** Bounty is earned only on a completed escape, never by starting a pursuit
+   * or being busted. Persist it across ranks, independently of spendable taka. */
+  recordPursuitEscape(maxHeat: number, repReward: number): number {
+    if (this.blacklistRank <= 0 || !Number.isFinite(maxHeat) || maxHeat < 1) return 0;
+    const safeRep = Number.isFinite(repReward) ? clamp(repReward, 0, 100_000) : 0;
+    const earned = Math.max(80, Math.round(Math.min(5, maxHeat) * 70 + safeRep));
+    this.progress.blacklistBounty = Math.min(100_000_000, this.progress.blacklistBounty + earned);
+    this.emit('progress', this.progress);
+    this.saveNow();
+    return earned;
+  }
+
   /** Returns whether this event actually paid a first-completion reward. */
   recordEventVictory(opts: {
     eventId: string;
@@ -356,7 +368,13 @@ export class GameState extends Emitter<StateEvents> {
       if (opts.repReward > 0) this.addRep(opts.repReward);
       if (opts.eventId) this.progress.completedEvents.push(opts.eventId);
     }
-    if (!rank) this.recordBlacklistTask('race');
+    if (!rank && OPEN_STREET_EVENTS.some((ev) => ev.id === opts.eventId) &&
+        this.blacklistRank >= 1) {
+      const key = String(this.blacklistRank);
+      this.progress.blacklistRaceWins[key] = Math.min(1000, (this.progress.blacklistRaceWins[key] ?? 0) + 1);
+      this.recordBlacklistTask('race');
+      this.emit('progress', this.progress);
+    }
     if (rank && rank >= 1 && rank <= 10 && !this.progress.blacklistDefeated.includes(rank)) {
       this.progress.blacklistDefeated.push(rank);
       this.progress.blacklistDefeated.sort((a, b) => b - a);
