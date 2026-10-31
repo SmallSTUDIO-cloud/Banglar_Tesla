@@ -14,7 +14,7 @@ The starting working tree had **39 modified tracked files and 60 untracked paths
 
 No untracked PNG, APK, keystore, SDK, node_modules, dist bundle or local build output was selected for Git. `artifacts/`, `dist/`, Android build output, `assets/public/`, Gradle cache and local.properties stay ignored. A source/docs/tests/Android secret-pattern scan found no private key or GitHub token. This does **not** mean the earlier ignored artifact directories were untouched: the standalone stress and director fixtures write their existing hard-coded ignored paths. Do not stage those outputs.
 
-The pre-existing GitHub `v0.6.0` release is **not** this baseline. The workflow is now configured for a distinct `v0.6.0-baseline-20261031` release **only after** a successful manually dispatched build; it must not overwrite the old release or silently replace its APK. It publishes a debug-signed test APK only. No existing tag, version code, package identity or release signing configuration is changed.
+The pre-existing GitHub `v0.6.0` release is **not** this baseline. The workflow is now configured for a distinct `v0.6.0-baseline-20261031` release **only after** a successful build, either manually dispatched or explicitly opted in by a push commit marked `[release-baseline-20261031]` (the local integration token cannot dispatch Actions: HTTP 403); it must not overwrite the old release or silently replace its APK. It publishes a debug-signed test APK only. No existing tag, version code, package identity or release signing configuration is changed.
 
 ## Test evidence (local sandbox)
 

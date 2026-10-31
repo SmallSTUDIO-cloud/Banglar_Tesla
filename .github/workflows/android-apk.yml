@@ -74,7 +74,7 @@ jobs:
           path: artifacts/banglar-tesla-v0.6.0-baseline-debug.apk
           if-no-files-found: error
       - name: Publish separate baseline release (never overwrite v0.6.0)
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        if: (github.event_name == 'workflow_dispatch' && inputs.publish_release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-baseline-20261031]'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
