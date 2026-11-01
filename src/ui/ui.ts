@@ -135,10 +135,10 @@ export interface UIBridge {
   hasSave(): boolean;
 }
 
-/** Enabled in Milestone 5 once the stable release APK asset URL is published and verified. */
+/** The accepted v0.6.3-test.1 binary is the v0.6.3 web baseline download. */
 export const ENABLE_WEB_INSTALL_APK_BUTTON = true;
 export const STABLE_APK_DOWNLOAD_URL =
-  'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/latest/download/Banglar-Tesla.apk';
+  'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/download/v0.6.3-test.1-20261101/banglar-tesla-v0.6.3-test.1-debug.apk';
 
 export class AppUI {
   private root: HTMLElement;
@@ -382,7 +382,7 @@ export class AppUI {
         attrs: {
           id: 'install-apk-btn',
           href: STABLE_APK_DOWNLOAD_URL,
-          download: 'Banglar-Tesla.apk',
+          download: 'banglar-tesla-v0.6.3-test.1-debug.apk',
           rel: 'noopener noreferrer',
           title: t('menu.installApkSub'),
         },
