@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, it, expect } from 'vitest';
-import { RickshawController } from '../../src/vehicle/rickshawController';
+import { RickshawController, type BoxCollider } from '../../src/vehicle/rickshawController';
 import { CAMERA_MODES, RIDE, type CameraMode } from '../../src/core/config';
 import { buildTrafficRoutes, getLaneGraph, sampleRoute } from '../../src/ai/routes';
 import { ChaseCamera, nextCameraMode } from '../../src/vehicle/chaseCamera';
@@ -272,6 +272,39 @@ describe('7-mode NFS Most Wanted camera system', () => {
       expect(cam.position.y).toBeGreaterThan(0.3);
     }
   });
+  it('indexes camera clipping candidates without changing exact OBB, height or disabled results', () => {
+    const rig = new ChaseCamera(new THREE.PerspectiveCamera());
+    const probe = rig as unknown as { pointBlocked: (
+      x: number, y: number, z: number, colliders: BoxCollider[], pad: number,
+    ) => boolean };
+    const colliders: BoxCollider[] = [];
+    for (let x = -140; x <= 140; x += 8) for (let z = -140; z <= 140; z += 8) {
+      colliders.push({ minX: x - 2, maxX: x + 2, minZ: z - 3, maxZ: z + 3,
+        height: 2 + (x + z + 280) % 8, cx: x, cz: z, halfX: 2, halfZ: 3,
+        yaw: (x + z) % 3 === 0 ? 0.2 : 0 });
+    }
+    const reference = (x: number, y: number, z: number, pad: number) =>
+      colliders.some(c => {
+        if (c.disabled || c.height < y - 0.15 ||
+          x <= c.minX - pad || x >= c.maxX + pad || z <= c.minZ - pad || z >= c.maxZ + pad) return false;
+        const co = Math.cos(c.yaw ?? 0), si = Math.sin(c.yaw ?? 0);
+        const dx = x - c.cx!, dz = z - c.cz!;
+        return Math.abs(dx * co - dz * si) < c.halfX! + pad &&
+          Math.abs(dx * si + dz * co) < c.halfZ! + pad;
+      });
+    for (let i = 0; i < 250; i++) {
+      const x = (i * 71.3) % 285 - 142, z = (i * 43.7) % 285 - 142;
+      const y = 1 + i % 10, pad = i % 2 ? 0.46 : 0.6;
+      expect(probe.pointBlocked(x, y, z, colliders, pad)).toBe(reference(x, y, z, pad));
+    }
+    // Breakables toggle at runtime; mission props can append to the list.
+    colliders[610].disabled = true;
+    expect(probe.pointBlocked(colliders[610].cx!, 1, colliders[610].cz!, colliders, 0.46))
+      .toBe(reference(colliders[610].cx!, 1, colliders[610].cz!, 0.46));
+    colliders.push({ minX: 140, maxX: 142, minZ: 140, maxZ: 142, height: 3 });
+    expect(probe.pointBlocked(141, 1, 141, colliders, 0.46)).toBe(true);
+  });
+
 });
 
 describe('Mohammadpur OSM road network, left-hand lanes & jam detour routing', () => {

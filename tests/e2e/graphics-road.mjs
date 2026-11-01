@@ -42,7 +42,8 @@ try {
     x: window.__banglarTesla.controller.x, z: window.__banglarTesla.controller.z,
     splashParticles: window.__banglarTesla.debugSnapshot().splashParticles }));
   await page.screenshot({ path: path.join(root, 'artifacts', 'v2-pothole-drive.png') });
-  if (result.potholes < 4 || result.potholes > 8 || result.infill < 1 || result.badHole || errors.length) {
+  // Eight curated road-contact holes plus eight authored damage-zone basins.
+  if (result.potholes !== 16 || result.infill < 1 || result.badHole || errors.length) {
     throw new Error(JSON.stringify({ result, driven, errors }));
   }
   console.log('PASS browser pothole/city fixture', JSON.stringify({ result, driven }));

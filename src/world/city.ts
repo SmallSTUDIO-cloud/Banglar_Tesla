@@ -23,6 +23,7 @@ import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
 import { PosterAtlas } from './posterAtlas';
+import { EDUCATION_POSTERS, educationPosterTexture, snackPacketAtlas } from './streetPrint';
 import { DAMAGE_ZONES, roadDamageAt } from './roadDamage';
 import {
   GRAPH_NODES,
@@ -109,6 +110,8 @@ export interface CityResult {
   infillCount: number;
   posterCount: number;
   billboardCount: number;
+  groceryCount: number;
+  educationPosterCount: number;
   treeCount: number;
   treeSites: readonly { x: number; z: number }[];
   utilityPoleSites: readonly { x: number; z: number }[];
@@ -252,6 +255,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   });
   const posterAtlas = new PosterAtlas();
   const posterMat = new THREE.MeshLambertMaterial({ map: posterAtlas.texture });
+  const educationMat = new THREE.MeshLambertMaterial({ map: educationPosterTexture() });
+  const snackAtlas = snackPacketAtlas();
+  const snackMat = new THREE.MeshLambertMaterial({ map: snackAtlas.texture });
   const glowMat = new THREE.MeshBasicMaterial({
     vertexColors: true,
     transparent: true,
@@ -296,10 +302,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     2 * Math.floor(Math.floor(sector / SECTOR_GRID) / 2);
   const signGroups = Array.from({ length: 4 }, (_, i) => new Bucket(`signs.district.${i}`, signMat));
   const posterGroups = Array.from({ length: 4 }, (_, i) => new Bucket(`posters.district.${i}`, posterMat));
+  const educationGroups = Array.from({ length: 4 }, (_, i) => new Bucket(`education.district.${i}`, educationMat));
+  const snackGroups = Array.from({ length: 4 }, (_, i) => new Bucket(`snacks.district.${i}`, snackMat));
   const lightGroups = Array.from({ length: 4 }, (_, i) => new Bucket(`lights.district.${i}`, windowLightMat));
   const sectorSigns = Array.from({ length: SECTOR_COUNT }, (_, i) => signGroups[decalGroup(i)]);
   const sectorPosters = Array.from({ length: SECTOR_COUNT }, (_, i) => posterGroups[decalGroup(i)]);
-  let posterCount = 0, billboardCount = 0;
+  const sectorEducation = Array.from({ length: SECTOR_COUNT }, (_, i) => educationGroups[decalGroup(i)]);
+  const sectorSnacks = Array.from({ length: SECTOR_COUNT }, (_, i) => snackGroups[decalGroup(i)]);
+  let posterCount = 0, billboardCount = 0, educationPosterCount = 0, groceryCount = 0;
   const sectorWindowLights = Array.from({ length: SECTOR_COUNT }, (_, i) => lightGroups[decalGroup(i)]);
   const litWindow = (sec: number, x: number, y: number, z: number,
     yaw: number, width: number, height: number): void => {
@@ -757,6 +767,21 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             0.38, 0.54, '#ffffff', { y: posterYaw }, posterAtlas.poster(lampBreakId % 3));
           posterCount++;
         }
+        // Selected utility poles carry a small printed edition of the supplied
+        // poster. The larger wall editions below retain full reading size.
+        if (lampBreakId % 23 === 4 && educationPosterCount < 12) {
+          const nx = -seg.leftX * poleSide, nz = -seg.leftZ * poleSide;
+          const boardYaw = Math.atan2(nx, nz);
+          const design = educationPosterCount % 2;
+          const w = design === 0 ? 0.72 : 0.86;
+          const h = design === 0 ? 1.02 : 0.86;
+          bMetal.box({ x: ex + nx * 0.16, y: 2.30, z: ez + nz * 0.16 },
+            { x: w + 0.08, y: h + 0.08, z: 0.035 }, '#d6d1c2', { y: boardYaw });
+          sectorEducation[sectorIndex(ex, ez)].quad(
+            { x: ex + nx * 0.188, y: 2.30, z: ez + nz * 0.188 },
+            w, h, '#ffffff', { y: boardYaw }, EDUCATION_POSTERS[design]);
+          educationPosterCount++;
+        }
       }
 
       // Keep the existing roadside positions and RNG draw count. Defer the
@@ -803,6 +828,22 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   }
   const placedBuildings: PlacedFootprint[] = [];
 
+  // Static parcel broad phase: test only neighboring center cells before SAT.
+  // This changes neither the ordered candidate set nor the overlap rule; it
+  // avoids repeatedly scanning every apartment while filling narrow lots.
+  const PARCEL_CELL = 24;
+  const parcelCells = new Map<string, PlacedFootprint[]>();
+  let maxParcelRadius = 0;
+  const parcelKey = (x: number, z: number): string => `${x},${z}`;
+  const addFootprint = (footprint: PlacedFootprint): void => {
+    placedBuildings.push(footprint);
+    maxParcelRadius = Math.max(maxParcelRadius, footprint.radius);
+    const key = parcelKey(Math.floor(footprint.x / PARCEL_CELL), Math.floor(footprint.z / PARCEL_CELL));
+    let cell = parcelCells.get(key);
+    if (!cell) { cell = []; parcelCells.set(key, cell); }
+    cell.push(footprint);
+  };
+
   // Bounding circles used to reject neighboring angled facades with large
   // empty wedges between their real footprints. A SAT test allows close,
   // staggered street frontage without merging buildings or narrowing roads.
@@ -837,7 +878,15 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     // A 28 cm service joint is too narrow for a rickshaw, but still leaves
     // separate facades/rooflines. Public lanes, sidewalks, POIs and junctions
     // remain protected by the independent corridor and anchor checks above.
-    return placedBuildings.every((other) => footprintSeparated(candidate, other, 0.28));
+    const gx = Math.floor(cx / PARCEL_CELL), gz = Math.floor(cz / PARCEL_CELL);
+    const reach = Math.ceil((candidate.radius + maxParcelRadius + 0.28) / PARCEL_CELL);
+    for (let dz = -reach; dz <= reach; dz++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        const cell = parcelCells.get(parcelKey(gx + dx, gz + dz));
+        if (cell && !cell.every((other) => footprintSeparated(candidate, other, 0.28))) return false;
+      }
+    }
+    return true;
   };
 
   let signCursor = 0;
@@ -856,7 +905,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const faceYaw = Math.atan2(-seg.leftX * side, -seg.leftZ * side);
 
         if (canPlaceBuilding(cx, cz, bDepth, bWidth, yaw)) {
-          placedBuildings.push({
+          addFootprint({
             x: cx, z: cz, halfX: bDepth / 2, halfZ: bWidth / 2, yaw,
             radius: Math.hypot(bDepth, bWidth) / 2,
           });
@@ -950,6 +999,19 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 { x: 0.84, y: 0.45, z: 0.08 }, '#41525a', { y: sideFace });
               bDet.cylinder({ x: sideX + fx * 2.2, y: height * 0.46,
                 z: sideZ + fz * 2.2 }, 0.035, height * 0.89, '#5c6260');
+              if (sideDir === 1 && (frontageStyle === 0 || frontageStyle === 4) &&
+                  bDepth >= 9 && educationPosterCount < 28) {
+                const design = (Math.abs(Math.round(cx * 7 + cz * 13)) % 2);
+                const w = design === 0 ? 1.78 : 2.05;
+                const h = design === 0 ? 2.53 : 2.05;
+                const px = sideX - fx * 3.35 + seg.ux * 0.065;
+                const pz = sideZ - fz * 3.35 + seg.uz * 0.065;
+                bDet.box({ x: px - seg.ux * 0.018, y: 1.63, z: pz - seg.uz * 0.018 },
+                  { x: w + 0.09, y: h + 0.09, z: 0.028 }, '#eee9db', { y: sideYawL });
+                sectorEducation[secIdx].quad({ x: px, y: 1.63, z: pz },
+                  w, h, '#ffffff', { y: sideYawL }, EDUCATION_POSTERS[design]);
+                educationPosterCount++;
+              }
               if (sideDir === 1 && frontageStyle === 0 && posterCount < 90) {
                 const posterX = sideX - fx * 2.7 + seg.ux * 0.045;
                 const posterZ = sideZ - fz * 2.7 + seg.uz * 0.045;
@@ -1033,7 +1095,31 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               const bayOff = -((shopBays - 1) * 0.5) * 3.4 + sb * 3.4;
               const sx = frontX + seg.ux * bayOff;
               const sz = frontZ + seg.uz * bayOff;
-              if ((frontageStyle === 3 || frontageStyle === 5) && sb === 0) {
+              const isGrocery = sb === 0 && [1, 3, 4, 5].includes(frontageStyle);
+              if ((frontageStyle === 1 || frontageStyle === 4) && sb === 0) {
+                // Busy mudi dokan: dark recessed shelves, pale rice/lentil sacks,
+                // packaged goods and a timber counter, merged with facade
+                // details. No new collision volume or actor update.
+                bDet.box({ x: sx + fx * 0.045, y: 1.43, z: sz + fz * 0.045 },
+                  { x: 2.64, y: 2.54, z: 0.035 }, '#263632', { y: faceYaw });
+                for (const shelfY of [0.68, 1.30, 1.94]) {
+                  bDet.box({ x: sx + fx * 0.13, y: shelfY, z: sz + fz * 0.13 },
+                    { x: 2.35, y: 0.075, z: 0.24 }, '#76533c', { y: faceYaw });
+                  for (let item = -2; item <= 2; item++) {
+                    const color = ['#c69f56', '#e3c681', '#6d965f', '#be7141', '#b6a880'][item + 2];
+                    bDet.box({ x: sx + seg.ux * item * 0.43 + fx * 0.19,
+                      y: shelfY + 0.18, z: sz + seg.uz * item * 0.43 + fz * 0.19 },
+                      { x: 0.31, y: 0.27, z: 0.13 }, color, { y: faceYaw });
+                  }
+                }
+                bDet.box({ x: sx + fx * 0.30, y: 0.66, z: sz + fz * 0.30 },
+                  { x: 1.65, y: 0.15, z: 0.42 }, '#8b603e', { y: faceYaw });
+                for (const end of [-1, 1]) {
+                  bDet.box({ x: sx + seg.ux * end * 0.94 + fx * 0.20,
+                    y: 0.35, z: sz + seg.uz * end * 0.94 + fz * 0.20 },
+                    { x: 0.40, y: 0.56, z: 0.25 }, '#c0a16e', { y: faceYaw });
+                }
+              } else if ((frontageStyle === 3 || frontageStyle === 5) && sb === 0) {
                 // Two occupied dokan variants: shaded entrance, inset jambs and
                 // a low counter. All detail stays on the building side of the
                 // established facade/collider, never on the footpath.
@@ -1091,6 +1177,29 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 bShut.quad({ x: sx, y: 1.42, z: sz }, 2.65, 2.55,
                   SHUTTER_TINTS[frontageStyle], { y: faceYaw });
               }
+              if (isGrocery) {
+                groceryCount++;
+                // Hanging strips of crimped snack packets just beyond the
+                // shopfront, under the existing canopy. Small two-triangle
+                // packets are batched across the district: 0 shadow casters,
+                // 0 per-packet draw calls, no animated texture or collider.
+                bDet.box({ x: sx + fx * 0.32, y: 2.39, z: sz + fz * 0.32 },
+                  { x: 2.30, y: 0.027, z: 0.025 }, '#5e4d39', { y: faceYaw });
+                for (let string = -1; string <= 1; string++) {
+                  const off = string * 0.77;
+                  bDet.box({ x: sx + seg.ux * off + fx * 0.33,
+                    y: 1.86, z: sz + seg.uz * off + fz * 0.33 },
+                    { x: 0.014, y: 1.05, z: 0.014 }, '#d3c3a3');
+                  for (let packet = 0; packet < 3; packet++) {
+                    const px = sx + seg.ux * off + fx * 0.36;
+                    const pz = sz + seg.uz * off + fz * 0.36;
+                    sectorSnacks[secIdx].quad(
+                      { x: px, y: 2.16 - packet * 0.37, z: pz },
+                      0.32, 0.34, '#ffffff', { y: faceYaw },
+                      snackAtlas.slots[(groceryCount + string + packet + 4) % 4]);
+                  }
+                }
+              }
               // Vertical shopfront concrete pilaster beside shutter bay
               bDet.box(
                 { x: sx + seg.ux * 1.48, y: 1.45, z: sz + seg.uz * 1.48 },
@@ -1122,6 +1231,20 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           } else {
             // Residential iron boundary gate + masonry pillars
             bShut.quad({ x: frontX, y: 1.25, z: frontZ }, 2.8, 2.3, '#2d3b42', { y: faceYaw });
+            // Road-facing editions remain visible from the rickshaw, not only
+            // from narrow party-wall alleys. Keep the actual gate/sign legible.
+            if (bWidth >= 10 && frontageStyle % 2 === 0 && educationPosterCount < 55) {
+              const design = educationPosterCount % 2;
+              const w = design === 0 ? 1.72 : 1.95;
+              const h = design === 0 ? 2.44 : 1.95;
+              const px = frontX + seg.ux * 3.7 + fx * 0.075;
+              const pz = frontZ + seg.uz * 3.7 + fz * 0.075;
+              bDet.box({ x: px - fx * 0.018, y: 1.58, z: pz - fz * 0.018 },
+                { x: w + 0.09, y: h + 0.09, z: 0.028 }, '#e7e2d5', { y: faceYaw });
+              sectorEducation[secIdx].quad({ x: px, y: 1.58, z: pz },
+                w, h, '#ffffff', { y: faceYaw }, EDUCATION_POSTERS[design]);
+              educationPosterCount++;
+            }
             for (const pDir of [-1.55, 1.55]) {
               bDet.box(
                 { x: frontX + seg.ux * pDir, y: 1.32, z: frontZ + seg.uz * pDir },
@@ -1295,11 +1418,11 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   let infillCount = 0;
   const infillBySector = new Uint8Array(SECTOR_COUNT);
   for (const seg of ROAD_SEGMENTS) {
-    if (infillCount >= 64) break;
+    if (infillCount >= 112) break;
     const yaw = Math.atan2(seg.ux, seg.uz);
     for (const side of [-1, 1] as const) {
-      for (let along = 16; along < seg.length - 16 && infillCount < 64; along += 6.5) {
-        const width = 4.9, depth = 6.4;
+      for (let along = 9.5; along < seg.length - 9.5 && infillCount < 112; along += 5.2) {
+        const width = 4.55, depth = 6.4;
         const frontDist = seg.halfWidth + seg.sidewalk + 1.0;
         const cx = seg.ax + seg.ux * along + seg.leftX * (frontDist + depth / 2) * side;
         const cz = seg.az + seg.uz * along + seg.leftZ * (frontDist + depth / 2) * side;
@@ -1307,27 +1430,32 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const sec = sectorIndex(cx, cz);
         // Distribute the frontage pass across the city instead of consuming
         // the whole budget on the first long road's empty parcels.
-        if (infillBySector[sec] >= 5) continue;
+        if (infillBySector[sec] >= 8) continue;
         const faceX = -seg.leftX * side, faceZ = -seg.leftZ * side;
         const frontX = cx + faceX * (depth / 2 + 0.025);
         const frontZ = cz + faceZ * (depth / 2 + 0.025);
         const faceYaw = Math.atan2(faceX, faceZ);
         const tint = PLASTER_TINTS[(infillCount * 3 + sec) % PLASTER_TINTS.length];
-        sectorWalls[sec].box({ x: cx, y: 3.1, z: cz }, { x: depth, y: 6.2, z: width }, tint, { y: yaw });
-        sectorDetails[sec].box({ x: cx, y: 6.28, z: cz }, { x: depth + 0.15, y: 0.16, z: width + 0.15 }, '#9d9888', { y: yaw });
+        const floors = (infillCount + sec) % 3 === 0 ? 3 : 2;
+        const height = floors * 3.1;
+        sectorWalls[sec].box({ x: cx, y: height / 2, z: cz }, { x: depth, y: height, z: width }, tint, { y: yaw });
+        sectorDetails[sec].box({ x: cx, y: height + 0.08, z: cz }, { x: depth + 0.15, y: 0.16, z: width + 0.15 }, '#9d9888', { y: yaw });
         sectorShutters[sec].quad({ x: frontX, y: 1.28, z: frontZ }, 3.1, 2.5, '#a4aeb4', { y: faceYaw });
-        sectorDetails[sec].box({ x: frontX + faceX * 0.18, y: 4.8, z: frontZ + faceZ * 0.18 },
-          { x: 1.7, y: 1.15, z: 0.10 }, '#213940', { y: faceYaw });
-        litWindow(sec, frontX + faceX * 0.26, 4.8,
-          frontZ + faceZ * 0.26, faceYaw, 1.35, 0.9);
+        for (let fl = 1; fl < floors; fl++) {
+          const wy = fl * 3.1 + 1.7;
+          sectorDetails[sec].box({ x: frontX + faceX * 0.18, y: wy,
+            z: frontZ + faceZ * 0.18 }, { x: 1.7, y: 1.15, z: 0.10 }, '#213940', { y: faceYaw });
+          litWindow(sec, frontX + faceX * 0.26, wy,
+            frontZ + faceZ * 0.26, faceYaw, 1.35, 0.9);
+        }
         sectorSigns[sec].quad({ x: frontX + faceX * 0.06, y: 3.17, z: frontZ + faceZ * 0.06 },
           3.4, 0.72, '#ffffff', { y: faceYaw }, signAtlas.slot(signCursor++));
-        placedBuildings.push({ x: cx, z: cz, halfX: depth / 2, halfZ: width / 2,
+        addFootprint({ x: cx, z: cz, halfX: depth / 2, halfZ: width / 2,
           yaw, radius: Math.hypot(depth, width) / 2 });
         const ex = Math.abs(Math.cos(yaw)) * depth / 2 + Math.abs(Math.sin(yaw)) * width / 2;
         const ez = Math.abs(Math.sin(yaw)) * depth / 2 + Math.abs(Math.cos(yaw)) * width / 2;
         colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez,
-          height: 6.2, cameraBlocking: true, kind: 'building', cx, cz,
+          height, cameraBlocking: true, kind: 'building', cx, cz,
           halfX: depth / 2, halfZ: width / 2, yaw });
         infillCount++;
         infillBySector[sec]++;
@@ -1402,7 +1530,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         details.box({ x: x - fx * 1.2, y: h + 0.95, z: z - fz * 1.2 },
           { x: 1.9, y: 1.5, z: 2.15 }, tint, { y: yaw });
       }
-      placedBuildings.push({ x, z, halfX: depth / 2, halfZ: width / 2,
+      addFootprint({ x, z, halfX: depth / 2, halfZ: width / 2,
         yaw, radius: Math.hypot(depth, width) / 2 });
       const ex = Math.abs(Math.cos(yaw)) * depth / 2 + Math.abs(Math.sin(yaw)) * width / 2;
       const ez = Math.abs(Math.sin(yaw)) * depth / 2 + Math.abs(Math.cos(yaw)) * width / 2;
@@ -1451,7 +1579,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           d.cone({ x: px - frontX * 0.45, y: 0.74, z: pz - frontZ * 0.45 },
             0.37, 0.85, '#346445');
         }
-        placedBuildings.push({ x, z, halfX: depth / 2, halfZ: width / 2,
+        addFootprint({ x, z, halfX: depth / 2, halfZ: width / 2,
           yaw, radius: Math.hypot(depth, width) / 2 });
         courtyardSites.push({ x, z });
         courtyardBySector[sec]++;
@@ -1496,7 +1624,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     }
     sgn.quad({ x: plazaX, y: 1.95, z: plazaZ + 0.78 }, 1.9, 0.55,
       '#ffffff', { y: 0 }, signAtlas.slot(signCursor++));
-    placedBuildings.push({ x: plazaX, z: plazaZ, halfX: 1.2, halfZ: 1.2,
+    addFootprint({ x: plazaX, z: plazaZ, halfX: 1.2, halfZ: 1.2,
       yaw: 0, radius: Math.hypot(1.2, 1.2) });
     // A low, tight counter collider rather than a full roof footprint keeps
     // the adjacent side lane traversable for both the player and traffic.
@@ -1504,6 +1632,49 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       minZ: plazaZ - 0.75, maxZ: plazaZ - 0.15, height: 1.4,
       cameraBlocking: false, kind: 'building' });
     pocketPlazaCount = 1;
+  }
+
+  // Second parcel size for leftover narrow street-front seams. The large
+  // apartment pass cannot fit here, but actual shop-houses often can. Keep a
+  // clear junction sightline and every authored mission/POI forecourt.
+  for (const seg of ROAD_SEGMENTS) {
+    if (infillCount >= 126) break;
+    const yaw = Math.atan2(seg.ux, seg.uz);
+    for (const side of [-1, 1] as const) {
+      for (let along = 9; along < seg.length - 9 && infillCount < 126; along += 3.4) {
+        const width = 3.05, depth = 4.6;
+        const distance = seg.halfWidth + seg.sidewalk + 0.85 + depth / 2;
+        const cx = seg.ax + seg.ux * along + seg.leftX * distance * side;
+        const cz = seg.az + seg.uz * along + seg.leftZ * distance * side;
+        const sec = sectorIndex(cx, cz);
+        if (infillBySector[sec] >= 12 ||
+            PLACES.some(p => Math.hypot(cx - p.x, cz - p.z) < 10) ||
+            GRAPH_NODES.some(n => Math.hypot(cx - n.x, cz - n.z) < n.outerRadius + 4) ||
+            !canPlaceBuilding(cx, cz, depth, width, yaw)) continue;
+        const fx = -seg.leftX * side, fz = -seg.leftZ * side;
+        const faceYaw = Math.atan2(fx, fz);
+        const x = cx + fx * (depth / 2 + 0.03);
+        const z = cz + fz * (depth / 2 + 0.03);
+        const height = 6.15;
+        sectorWalls[sec].box({ x: cx, y: height / 2, z: cz },
+          { x: depth, y: height, z: width }, PLASTER_TINTS[(sec + infillCount) % PLASTER_TINTS.length], { y: yaw });
+        sectorDetails[sec].box({ x: cx, y: height + 0.12, z: cz },
+          { x: depth + 0.15, y: 0.24, z: width + 0.12 }, '#9c9383', { y: yaw });
+        sectorShutters[sec].quad({ x, y: 1.42, z }, 2.47, 2.51, '#536b6d', { y: faceYaw });
+        sectorDetails[sec].box({ x: x + fx * 0.08, y: 4.65, z: z + fz * 0.08 },
+          { x: 1.42, y: 1.13, z: 0.07 }, '#32484c', { y: faceYaw });
+        sectorSigns[sec].quad({ x: x + fx * 0.065, y: 3.15, z: z + fz * 0.065 },
+          2.65, 0.63, '#ffffff', { y: faceYaw }, signAtlas.slot(signCursor++));
+        addFootprint({ x: cx, z: cz, halfX: depth / 2, halfZ: width / 2,
+          yaw, radius: Math.hypot(depth, width) / 2 });
+        const ex = Math.abs(Math.cos(yaw)) * depth / 2 + Math.abs(Math.sin(yaw)) * width / 2;
+        const ez = Math.abs(Math.sin(yaw)) * depth / 2 + Math.abs(Math.cos(yaw)) * width / 2;
+        colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez,
+          height, cameraBlocking: true, kind: 'building', cx, cz,
+          halfX: depth / 2, halfZ: width / 2, yaw });
+        infillCount++; infillBySector[sec]++;
+      }
+    }
   }
 
   // Canopies are merged into existing cullable sector detail meshes: no
@@ -1635,7 +1806,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     const shutter = sectorShutters[i].build({ cast: false, receive: true });
     if (shutter) group.add(shutter);
   }
-  for (const decalBucket of [...signGroups, ...posterGroups]) {
+  for (const decalBucket of [...signGroups, ...posterGroups, ...educationGroups, ...snackGroups]) {
     const m = decalBucket.build({ cast: false, receive: true });
     if (m) group.add(m);
   }
@@ -1955,6 +2126,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     infillCount,
     posterCount,
     billboardCount,
+    groceryCount,
+    educationPosterCount,
     treeCount: treeSites.length,
     treeSites,
     utilityPoleSites,
