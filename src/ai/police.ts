@@ -66,6 +66,7 @@ export interface PoliceCallbacks {
 }
 
 const MAX_UNITS = 5;
+// Radius encloses the full 1.76 x 4.18m patrol SUV, including turn corners.
 
 export class PolicePursuitSystem {
   readonly group = new THREE.Group();
@@ -485,10 +486,9 @@ export class PolicePursuitSystem {
         const sd = Math.hypot(sx, sz);
         if (sd < 3.1 && sd > 0.001) {
           const push = (3.1 - sd) * 0.5;
-          u.x += (sx / sd) * push;
-          u.z += (sz / sd) * push;
-          o.x -= (sx / sd) * push;
-          o.z -= (sz / sd) * push;
+          const dx = (sx / sd) * push, dz = (sz / sd) * push;
+          u.x += dx; u.z += dz;
+          o.x -= dx; o.z -= dz;
         }
       }
 
@@ -608,8 +608,8 @@ export class PolicePursuitSystem {
       hitAny = true;
       pushX += h.pushX * 0.72;
       pushZ += h.pushZ * 0.72;
-      u.x -= h.pushX * 0.28;
-      u.z -= h.pushZ * 0.28;
+      const ux = u.x - h.pushX * 0.28, uz = u.z - h.pushZ * 0.28;
+      u.x = ux; u.z = uz;
       nx = h.nx;
       nz = h.nz;
       contactX = h.contactX;

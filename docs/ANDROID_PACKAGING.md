@@ -2,8 +2,8 @@
 
 `android/` contains the native Android WebView wrapper (`com.shostalab.banglartesla`, `Banglar Tesla`, `sensorLandscape`, immersive fullscreen, offline bundled `assets/public/` via `AssetWebViewClient`, and hardware Back-button pause handling).
 
-* **Local reproducible debug APK build:** `npm run build:apk` → `artifacts/banglar-tesla-v0.1.0-android-test-debug.apk` (signed with APK Signature Scheme v1 + v2 + v3, `minSdkVersion 24`, `targetSdkVersion 34`, zero permissions).
-* **Android Studio / Gradle build:** run `npm run build`, open `android/` in Android Studio (or run `cd android && ./gradlew assembleDebug` / `./gradlew bundleRelease`).
+* **Current authoritative instructions:** [ANDROID_BUILD.md](ANDROID_BUILD.md). `npm run build:apk` invokes the existing Android Gradle project with an official JDK/SDK/Gradle installation; expected debug output is `android/app/build/outputs/apk/debug/app-debug.apk`. The checked-in, checksum-verified Gradle 8.7 wrapper is under `android/`. A debug APK is not a release-signed Play Store artifact.
+* **Historical alternatives below** are background from the initial slice, **not** the current APK build path. Do not run Capacitor sync over the checked-in native project.
 
 Below are the additional background notes from the initial vertical slice.
 

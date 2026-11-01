@@ -293,7 +293,9 @@ export class Scrapbook {
     const data = raw as Partial<ScrapbookSnapshot>;
     const records = Array.isArray(data.records) ? data.records.slice(0, MAX_SCRAPBOOK_RECORDS) : [];
     for (const rec of records) {
-      if (rec && typeof rec.id === 'string') {
+      // Old saves may contain a visit to the removed landmark. Keep all other
+      // career records and totals; do not surface the retired destination.
+      if (rec && typeof rec.id === 'string' && rec.id !== 'landmark:drmc') {
         book.addRecord(rec, rec.createdAtRealMs ?? Date.now());
       }
     }

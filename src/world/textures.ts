@@ -84,6 +84,47 @@ export function makeTexture(
 }
 
 /* ----------------------------------------------------------- road + ground */
+/** Packed-earth and worn courtyard paving where street-aligned buildings leave
+ * open frontage. One repeatable 256px shared texture replaces the flat gray
+ * ground plane; roads/sidewalks remain their own materials and geometry. */
+export function courtyardGroundTexture(): THREE.Texture {
+  return makeTexture('courtyard.ground', 256, 256, (ctx, w, h) => {
+    const rng = mulberry32(70712);
+    ctx.fillStyle = '#888070';
+    ctx.fillRect(0, 0, w, h);
+    // No uniformly repeated checkerboard: short irregular old brick fragments,
+    // silt, shadowed grout, and fine gravel at three physical scales.
+    for (let i = 0; i < 115; i++) {
+      const x = rng() * w, y = rng() * h;
+      const v = 103 + Math.floor(rng() * 53);
+      ctx.fillStyle = `rgba(${v + 8},${v - 2},${v - 17},${0.12 + rng() * 0.18})`;
+      ctx.fillRect(x, y, 6 + rng() * 16, 3 + rng() * 8);
+      if (rng() < 0.3) {
+        ctx.fillStyle = 'rgba(45,39,32,0.17)';
+        ctx.fillRect(x, y + 7, 15 + rng() * 11, 0.7);
+      }
+    }
+    for (let i = 0; i < 7000; i++) {
+      const gray = 69 + Math.floor(rng() * 91);
+      ctx.fillStyle = `rgba(${gray + 6},${gray},${gray - 12},${0.11 + rng() * 0.31})`;
+      ctx.fillRect(rng() * w, rng() * h, rng() < 0.22 ? 2 : 1, 1);
+    }
+    ctx.strokeStyle = 'rgba(49,45,39,0.25)';
+    ctx.lineWidth = 0.8;
+    for (let c = 0; c < 12; c++) {
+      ctx.beginPath();
+      let x = rng() * w, y = rng() * h;
+      ctx.moveTo(x, y);
+      for (let k = 0; k < 3; k++) {
+        x += (rng() - 0.5) * 16;
+        y += (rng() - 0.5) * 14;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }, { repeat: [64, 64] });
+}
+
 
 export function asphaltTexture(): { map: THREE.Texture; rough: THREE.Texture } {
   const map = makeTexture(
@@ -132,15 +173,15 @@ export function asphaltTexture(): { map: THREE.Texture; rough: THREE.Texture } {
     128,
     (ctx, w, h) => {
       const rng = mulberry32(202);
-      ctx.fillStyle = '#c4c4c4';
+      ctx.fillStyle = '#e9e9e9';
       ctx.fillRect(0, 0, w, h);
       for (let i = 0; i < 1600; i++) {
-        const g = 135 + Math.floor(rng() * 105);
+        const g = 205 + Math.floor(rng() * 50);
         ctx.fillStyle = `rgb(${g},${g},${g})`;
         ctx.fillRect(rng() * w, rng() * h, 2, 2);
       }
       for (let i = 0; i < 7; i++) {
-        ctx.fillStyle = 'rgba(55,55,55,0.5)';
+        ctx.fillStyle = 'rgba(176,176,176,0.18)';
         ctx.beginPath();
         ctx.ellipse(rng() * w, rng() * h, 8 + rng() * 20, 6 + rng() * 14, 0, 0, Math.PI * 2);
         ctx.fill();
@@ -168,8 +209,9 @@ export function sidewalkTexture(): THREE.Texture {
         ctx.fillRect(x + 1, y + 1, tile - 2, tile - 2);
       }
     }
-    ctx.strokeStyle = 'rgba(42,38,32,0.52)';
-    ctx.lineWidth = 1.4;
+    // Soft joints keep the pavement legible without a high-contrast checkerboard.
+    ctx.strokeStyle = 'rgba(51,46,40,0.31)';
+    ctx.lineWidth = 1.1;
     for (let i = 0; i <= w; i += tile) {
       ctx.beginPath();
       ctx.moveTo(i, 0);
@@ -179,6 +221,12 @@ export function sidewalkTexture(): THREE.Texture {
       ctx.moveTo(0, i);
       ctx.lineTo(w, i);
       ctx.stroke();
+    }
+    // Rare silt patches and hairline repairs use the same cached 256px map.
+    for (let i = 0; i < 20; i++) {
+      const px = rng() * w, py = rng() * h;
+      ctx.fillStyle = `rgba(64,58,43,${0.04 + rng() * 0.08})`;
+      ctx.fillRect(px, py, 3 + rng() * 13, 1 + rng() * 4);
     }
     for (let i = 0; i < 900; i++) {
       ctx.fillStyle = `rgba(38,44,32,${rng() * 0.2})`;
@@ -274,11 +322,18 @@ export function brickTexture(): THREE.Texture {
 
 export function shutterTexture(): THREE.Texture {
   return makeTexture('shutter', 128, 128, (ctx, w, h) => {
+    const rng = mulberry32(488);
     ctx.fillStyle = '#47545e';
     ctx.fillRect(0, 0, w, h);
     for (let y = 0; y < h; y += 5) {
       ctx.fillStyle = y % 10 === 0 ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.24)';
       ctx.fillRect(0, y, w, 2);
+    }
+    // Light oxidisation and scuffed paint, baked once into the existing map.
+    for (let i = 0; i < 36; i++) {
+      const px = rng() * w, py = rng() * h;
+      ctx.fillStyle = rng() < 0.55 ? 'rgba(36,31,26,0.075)' : 'rgba(196,182,153,0.065)';
+      ctx.fillRect(px, py, 1 + rng() * 3, 5 + rng() * 29);
     }
     ctx.fillStyle = 'rgba(92,54,28,0.24)';
     ctx.fillRect(0, h - 18, w, 18);

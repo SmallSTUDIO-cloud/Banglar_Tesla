@@ -22,11 +22,13 @@
  */
 
 import { clamp01 } from '../core/mathx';
+import { identityIndex, voiceDirection } from './voiceDirection';
 import type { AudioEngine, DialogueClipRole } from './audio';
 
 export interface AndroidTtsBridge {
   isBengaliAvailable(): boolean;
   speak(text: string, pitch: number, rate: number, volume: number): boolean;
+  speakCharacter?: (text: string, pitch: number, rate: number, volume: number, character: string) => boolean;
   stop(): void;
 }
 
@@ -62,6 +64,10 @@ export interface SpeakOptions {
   /** Per-character TTS identity overrides (0..2 scale, Web Speech semantics). */
   voicePitch?: number;
   voiceRate?: number;
+  characterId?: string;
+  emotion?: string;
+  /** Never substitute an unrelated role WAV for dynamic text with no recording. */
+  exactAudioOnly?: boolean;
 }
 
 export interface SpeechDiagnostics {
@@ -92,6 +98,8 @@ export function isVerifiedBengaliVoice(voice: Pick<SpeechSynthesisVoice, 'lang' 
 export class BanglaSpeechService {
   private webBnVoice: SpeechSynthesisVoice | null = null;
   private webEnVoice: SpeechSynthesisVoice | null = null;
+  private webBnVoices: SpeechSynthesisVoice[] = [];
+  private webEnVoices: SpeechSynthesisVoice[] = [];
   private voicesChecked = false;
   private activeTimer: number | null = null;
   private seqToken = 0;
@@ -128,14 +136,18 @@ export class BanglaSpeechService {
           if (diff !== 0) return diff;
           return (b.localService ? 1 : 0) - (a.localService ? 1 : 0);
         });
+        this.webBnVoices = bnVoices;
         this.webBnVoice = bnVoices[0] ?? null;
 
         const enVoices = voices.filter((v) => STRICT_EN_LANG_RE.test(v.lang ?? ''));
         enVoices.sort((a, b) => (b.localService ? 1 : 0) - (a.localService ? 1 : 0));
+        this.webEnVoices = enVoices;
         this.webEnVoice = enVoices[0] ?? null;
       } catch {
         this.webBnVoice = null;
         this.webEnVoice = null;
+        this.webBnVoices = [];
+        this.webEnVoices = [];
       }
     };
     refresh();
@@ -244,30 +256,26 @@ export class BanglaSpeechService {
       return 'silent-muted';
     }
 
-    const pitch = opts.voicePitch ??
-      (opts.speaker === 'driver'
-        ? 0.88
-        : opts.speaker === 'rival'
-          ? 0.92
-          : opts.speaker === 'police'
-            ? 0.95
-            : 1.08);
-    const rate = opts.voiceRate ?? (opts.speaker === 'player' ? 1.02 : 1.03);
-    const estimatedMs =
-      opts.speaker === 'rival'
-        ? 3600
-        : opts.speaker === 'police'
-          ? 3100
-          : opts.speaker === 'player'
-            ? 2350
-            : 1900;
+    const directed = voiceDirection(
+      opts.characterId ?? opts.speaker, opts.emotion ?? 'neutral',
+      opts.voicePitch ?? (opts.speaker === 'driver' ? .88 : opts.speaker === 'rival' ? .92 : opts.speaker === 'police' ? .95 : 1.08),
+      opts.voiceRate ?? (opts.speaker === 'player' ? 1.02 : 1.03),
+    );
+    const { pitch, rate } = directed;
+    // Native bridge has no completion event. Estimate from the *actual* line
+    // length so ducking and queued dialogue do not cut off a long Bengali line.
+    const estimatedMs = Math.max(1700, Math.min(10500,
+      Math.round((effectiveLocale === 'bn' ? 115 : 85) * opts.text.length / rate + 550)));
 
     if (effectiveLocale === 'bn') {
       // 1. Verified Native Android TextToSpeech (`bn-BD` -> `bn-IN` -> `bn` installed Voice)
       if (typeof window !== 'undefined' && window.__btAndroidTts) {
         try {
           if (window.__btAndroidTts.isBengaliAvailable()) {
-            const started = window.__btAndroidTts.speak(opts.text, pitch, rate, vol);
+            const bridge = window.__btAndroidTts;
+            const started = bridge.speakCharacter
+              ? bridge.speakCharacter(opts.text, pitch, rate, vol, opts.characterId ?? opts.speaker)
+              : bridge.speak(opts.text, pitch, rate, vol);
             if (started) {
               this.lastBackend = 'android-bn';
               this.lastSelectedVoice = 'android-tts:bn';
@@ -300,8 +308,8 @@ export class BanglaSpeechService {
         try {
           window.speechSynthesis.cancel();
           const utter = new SpeechSynthesisUtterance(opts.text);
-          utter.voice = this.webBnVoice;
-          utter.lang = this.webBnVoice.lang || 'bn-BD';
+          utter.voice = this.webBnVoices[identityIndex(opts.characterId ?? opts.speaker, this.webBnVoices.length)] ?? this.webBnVoice;
+          utter.lang = utter.voice.lang || 'bn-BD';
           utter.pitch = pitch;
           utter.rate = rate;
           utter.volume = vol;
@@ -321,10 +329,10 @@ export class BanglaSpeechService {
           utter.onerror = finish;
           this.audioEngine.setDialogueDuck(true);
           window.speechSynthesis.speak(utter);
-          this.activeTimer = window.setTimeout(finish, estimatedMs + 950);
+          this.activeTimer = window.setTimeout(finish, estimatedMs + 3000);
           this.lastBackend = 'web-bn';
-          this.lastSelectedVoice = this.webBnVoice.name || 'web-speech:bn';
-          this.lastLocale = this.webBnVoice.lang || 'bn-BD';
+          this.lastSelectedVoice = utter.voice.name || 'web-speech:bn';
+          this.lastLocale = utter.voice.lang || 'bn-BD';
           this.lastFallbackReason = 'none';
           return 'web-bn';
         } catch {
@@ -332,6 +340,16 @@ export class BanglaSpeechService {
         }
       }
 
+      // An unmatched role clip would say entirely different words. Preserve
+      // the subtitle rather than pretending a generic WAV voiced this line.
+      if (opts.exactAudioOnly && !opts.lineId) {
+        this.lastBackend = 'silent-muted';
+        this.lastFallbackReason = 'no-installed-bengali-voice-or-exact-recording';
+        this.lastSelectedVoice = 'none';
+        markDone();
+        opts.onEnd?.();
+        return 'silent-muted';
+      }
       // 3. Bundled offline phonetic Bengali WAV clip (`libespeak-ng` `bn` render)
       this.lastBackend = 'bundled-fallback';
       this.lastSelectedVoice = `bundled-wav:bn:${opts.speaker}`;
@@ -351,8 +369,8 @@ export class BanglaSpeechService {
       try {
         window.speechSynthesis.cancel();
         const utter = new SpeechSynthesisUtterance(opts.text);
-        utter.voice = this.webEnVoice;
-        utter.lang = this.webEnVoice.lang || 'en-US';
+        utter.voice = this.webEnVoices[identityIndex(opts.characterId ?? opts.speaker, this.webEnVoices.length)] ?? this.webEnVoice;
+        utter.lang = utter.voice.lang || 'en-US';
         utter.pitch = pitch;
         utter.rate = rate;
         utter.volume = vol;
@@ -372,10 +390,10 @@ export class BanglaSpeechService {
         utter.onerror = finish;
         this.audioEngine.setDialogueDuck(true);
         window.speechSynthesis.speak(utter);
-        this.activeTimer = window.setTimeout(finish, estimatedMs + 950);
+        this.activeTimer = window.setTimeout(finish, estimatedMs + 3000);
         this.lastBackend = 'web-en';
-        this.lastSelectedVoice = this.webEnVoice.name || 'web-speech:en';
-        this.lastLocale = this.webEnVoice.lang || 'en-US';
+        this.lastSelectedVoice = utter.voice.name || 'web-speech:en';
+        this.lastLocale = utter.voice.lang || 'en-US';
         this.lastFallbackReason = 'none';
         return 'web-en';
       } catch {
@@ -383,6 +401,14 @@ export class BanglaSpeechService {
       }
     }
 
+    if (opts.exactAudioOnly && !opts.lineId) {
+      this.lastBackend = 'silent-muted';
+      this.lastFallbackReason = 'no-installed-english-voice-or-exact-recording';
+      this.lastSelectedVoice = 'none';
+      markDone();
+      opts.onEnd?.();
+      return 'silent-muted';
+    }
     this.lastBackend = 'bundled-fallback';
     this.lastSelectedVoice = `bundled-wav:en:${opts.speaker}`;
     this.lastLocale = 'en-US';

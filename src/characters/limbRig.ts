@@ -133,7 +133,7 @@ function cylinderBetween(from: Vec3, to: Vec3, radius: number): CylinderSegment 
 export function buildArmChain(opts: ArmChainOptions): ArmChainPose {
   const bend = opts.elbowBend ?? 0.075;
   const lift = opts.elbowLift ?? 0.045;
-  const overlap = opts.wristOverlap ?? 0.045;
+  const overlap = opts.wristOverlap ?? 0;
 
   const sh = opts.shoulder;
   const grip = opts.grip;
@@ -182,6 +182,7 @@ export function buildDriverArms(opts: {
   shoulderY: number;
   shoulderZ: number;
   shoulderX: number;
+  shoulderCenterX?: number;
   gripLeft: Vec3;
   gripRight: Vec3;
   upperRadius: number;
@@ -194,7 +195,7 @@ export function buildDriverArms(opts: {
 }): [ArmChainPose, ArmChainPose] {
   const left = buildArmChain({
     side: 1,
-    shoulder: { x: opts.shoulderX, y: opts.shoulderY, z: opts.shoulderZ },
+    shoulder: { x: (opts.shoulderCenterX ?? 0) + opts.shoulderX, y: opts.shoulderY, z: opts.shoulderZ },
     grip: opts.gripLeft,
     upperRadius: opts.upperRadius,
     foreRadius: opts.foreRadius,
@@ -205,7 +206,7 @@ export function buildDriverArms(opts: {
   });
   const right = buildArmChain({
     side: -1,
-    shoulder: { x: -opts.shoulderX, y: opts.shoulderY, z: opts.shoulderZ },
+    shoulder: { x: (opts.shoulderCenterX ?? 0) - opts.shoulderX, y: opts.shoulderY, z: opts.shoulderZ },
     grip: opts.gripRight,
     upperRadius: opts.upperRadius,
     foreRadius: opts.foreRadius,

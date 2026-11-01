@@ -20,6 +20,7 @@ import { distanceToRoadCarriageway, snapToNearestRoad } from '../world/layout';
 import { Bucket } from '../world/geo';
 import { vehicleById } from '../economy/catalog';
 import { RickshawVisual } from '../vehicle/rickshawModel';
+import { RivalVisualBatch } from './rivalBatch';
 import { testRickshawCapsuleVsObb } from '../vehicle/rickshawController';
 import {
   BLACKLIST_RIVALS,
@@ -71,7 +72,7 @@ export interface RaceStandingEntry {
 export interface RaceResultSummary {
   won: boolean;
   playerPosition: 1 | 2 | 3 | 4;
-  totalRacers: 4;
+  totalRacers: 2 | 4;
   topSpeedKmh: number;
   laps: number;
   standings: RaceStandingEntry[];
@@ -105,7 +106,7 @@ export interface RaceHudSnapshot {
   lapIndex: number;
   lapTotal: number;
   playerRank: 1 | 2 | 3 | 4;
-  totalRacers: 4;
+  totalRacers: 2 | 4;
   elapsedSeconds: number;
   remainingSeconds: number;
   targetX: number;
@@ -160,6 +161,7 @@ export class RivalRaceSystem {
 
   // Exactly 3 distinct AI opponents (`1 Player + 3 AI = 4-Rickshaw Race`)
   private aiRacers: AiRacerRuntime[] = [];
+  private rivalBatch: RivalVisualBatch | null = null;
   private playerRank: 1 | 2 | 3 | 4 = 4;
 
   // Pooled 3D checkpoint beacon + Dhaka bamboo-festoon Start/Finish Arch (0 per-race leaks!)
@@ -389,7 +391,10 @@ export class RivalRaceSystem {
 
     // Spawn 3 distinct AI opponents in staggered front slots 0, 1, 2!
     const trio = selectRaceRivalTrio(event, this.activeRival);
-    this.aiRacers = trio.map((slotCfg, idx) => {
+    // Blacklist ladder matches are head-to-head; open street events retain
+    // the full four-rickshaw field.
+    const entrants = event.blacklistRank ? trio.slice(0, 1) : trio;
+    this.aiRacers = entrants.map((slotCfg, idx) => {
       const slot = course.gridSlots[idx as 0 | 1 | 2];
       const vehDef =
         slotCfg.rival.look.kind === 'electric' ? vehicleById('electric') : vehicleById('cinema');
@@ -432,7 +437,9 @@ export class RivalRaceSystem {
       } satisfies AiRacerRuntime;
     });
 
-    const playerSlot = course.gridSlots[3];
+    this.rivalBatch = new RivalVisualBatch(this.group, this.aiRacers.map((r) => r.visual.root));
+
+    const playerSlot = course.gridSlots[event.blacklistRank ? 1 : 3];
     this.playerStartPose = { x: playerSlot.x, z: playerSlot.z, yaw: playerSlot.yaw };
     this.lastClearedPose = { ...this.playerStartPose };
 
@@ -440,7 +447,7 @@ export class RivalRaceSystem {
     this.countdownTimer = 3.0;
     this.elapsed = 0;
     this.startHits = currentHits;
-    this.playerRank = 4;
+    this.playerRank = event.blacklistRank ? 2 : 4;
     this.syncBeacon();
 
     return { ...this.playerStartPose };
@@ -454,6 +461,8 @@ export class RivalRaceSystem {
     this.concluded = false;
     this.beaconGroup.visible = false;
     this.startArchGroup.visible = false;
+    this.rivalBatch?.dispose();
+    this.rivalBatch = null;
     for (let i = 0; i < this.aiRacers.length; i++) {
       const r = this.aiRacers[i];
       this.group.remove(r.visual.root);
@@ -601,7 +610,7 @@ export class RivalRaceSystem {
     this.hudSnap.lapIndex = curLap;
     this.hudSnap.lapTotal = this.activeCourse.laps;
     this.hudSnap.playerRank = this.playerRank;
-    this.hudSnap.totalRacers = 4;
+    this.hudSnap.totalRacers = this.aiRacers.length === 1 ? 2 : 4;
     this.hudSnap.elapsedSeconds = this.elapsed;
     this.hudSnap.remainingSeconds = Math.max(0, this.activeEvent.targetSeconds - this.elapsed);
     this.hudSnap.targetX = activeCp?.x ?? px;
@@ -747,7 +756,7 @@ export class RivalRaceSystem {
     roadblockObstacles: readonly RaceRoadblockObstacle[],
   ): void {
     if (!this.activeEvent || r.finished) return;
-    const wp = r.waypoints[r.wpIdx];
+    let wp = r.waypoints[r.wpIdx];
     if (!wp) {
       r.finished = true;
       r.cpIndex = this.checkpoints.length;
@@ -762,20 +771,23 @@ export class RivalRaceSystem {
       r.cpIndex++;
     }
 
-    const baseDx = wp.x - r.x;
-    const baseDz = wp.z - r.z;
-    const dist = Math.hypot(baseDx, baseDz);
-    if (dist < 6.4) {
-      r.cpIndex = Math.max(r.cpIndex, wp.targetGateIndex);
-      r.wpIdx++;
-      if (r.wpIdx >= r.waypoints.length) {
+    const waypointDist = Math.hypot(wp.x - r.x, wp.z - r.z);
+    // Wait until the junction centre before selecting the next leg. A 6.4m
+    // cut let racers aim across adjacent buildings and stick at narrow turns.
+    if (waypointDist < (wp.isLaunch ? 1.5 : 2.2)) {
+      if (r.wpIdx + 1 < r.waypoints.length) {
+        r.wpIdx++;
+        wp = r.waypoints[r.wpIdx];
+      } else if (r.cpIndex >= this.checkpoints.length) {
         r.finished = true;
-        r.cpIndex = this.checkpoints.length;
         r.finishTimeSec = this.elapsed;
         r.speed = 0;
         return;
       }
     }
+    const baseDx = wp.x - r.x;
+    const baseDz = wp.z - r.z;
+    const dist = Math.hypot(baseDx, baseDz);
 
     const fwdX = Math.sin(r.yaw);
     const fwdZ = Math.cos(r.yaw);
@@ -966,11 +978,14 @@ export class RivalRaceSystem {
         standings[1].position = 2;
       }
     }
-    const playerPos = standings.find((s) => s.isPlayer)?.position ?? (won ? 1 : 4);
+    const playerPos = standings.find((s) => s.isPlayer)?.position ?? (won ? 1 : (this.aiRacers.length === 1 ? 2 : 4));
+    const totalRacers = this.aiRacers.length === 1 ? 2 : 4;
 
     this.phase = 'finished';
     this.beaconGroup.visible = false;
     this.startArchGroup.visible = false;
+    this.rivalBatch?.dispose();
+    this.rivalBatch = null;
     for (let i = 0; i < this.aiRacers.length; i++) {
       const r = this.aiRacers[i];
       this.group.remove(r.visual.root);
@@ -1002,7 +1017,7 @@ export class RivalRaceSystem {
     this.onRaceFinished?.({
       won,
       playerPosition: playerPos,
-      totalRacers: 4,
+      totalRacers,
       topSpeedKmh,
       laps,
       standings,

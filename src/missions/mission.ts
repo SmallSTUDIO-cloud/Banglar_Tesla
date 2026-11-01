@@ -30,6 +30,10 @@ export interface MissionOffer {
   daily: boolean;
   multiplier: number;
   seed: number;
+  /** Optional actual roadside pickup rather than the named place's normal curb. */
+  pickupPosition?: { x: number; z: number; segmentId: string };
+  /** Flat fare explicitly agreed with a free-roam roadside passenger. */
+  agreedFare?: number;
 }
 
 export interface MissionGenOptions {
@@ -85,7 +89,8 @@ export function generateMission(opts: MissionGenOptions): MissionOffer {
 
   const optionalRoll = rng();
   let optional: OptionalGoal | null = null;
-  if (optionalRoll < 0.24) optional = 'fast';
+  if (opts.wet && (archetype === 'elder' || archetype === 'shopper') && optionalRoll >= 0.45) optional = 'rain';
+  else if (optionalRoll < 0.24) optional = 'fast';
   else if (optionalRoll < 0.46) optional = 'smooth';
   else if (optionalRoll < 0.68) optional = 'lane';
   else if (opts.wet) optional = 'rain';

@@ -88,7 +88,8 @@ describe('v0.5.0 v4 Purpose-Built Mohammadpur Race-Map, 4-Racer Mode & Rival Cha
       lastSummary = s;
     };
 
-    const grid = race.startEvent(rival10.bossEvent, rival10, 0);
+    // The open race format still supports four; ladder bosses are now 1v1.
+    const grid = race.startEvent({ ...rival10.bossEvent, blacklistRank: undefined }, rival10, 0);
     expect(race.participantCount).toBe(4);
     expect(race.getAiRacersSnapshot().length).toBe(3);
     for (const aiSnap of race.getAiRacersSnapshot()) {

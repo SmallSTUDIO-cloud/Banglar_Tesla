@@ -10,9 +10,10 @@ import { clamp } from './mathx';
 import { DEFAULT_COSMETICS, cosmeticById, UPGRADES, VEHICLES, TAPES } from '../economy/catalog';
 import type { CosmeticCategory } from '../economy/catalog';
 import type { StorageLike } from './settings';
+import { bountyRequired, raceWinsRequired } from '../blacklist/requirements';
 import { canonicalMinutesForPhase, DEFAULT_START_MINUTES, normalizeMinutes } from '../world/timeSystem';
 
-export const SAVE_VERSION = 3; // v3: permanent scrapbook + five-state weather (vNext §10)
+export const SAVE_VERSION = 5; // v5: race-win and pursuit-bounty career progress
 export const SAVE_KEY = 'banglar-tesla.save';
 export const BACKUP_KEY = 'banglar-tesla.save.bak';
 
@@ -47,6 +48,10 @@ export interface Progress {
   blacklistNextRank: number;
   blacklistDefeated: number[];
   blacklistIntroSeen: boolean;
+  /** Completed, per-rank challenge tasks (e.g. "7:escape"). */
+  blacklistTasks: string[];
+  blacklistRaceWins: Record<string, number>;
+  blacklistBounty: number;
   completedEvents: string[];
   heat: number;
   createdAt: number;
@@ -81,6 +86,9 @@ export function createDefaultProgress(now = Date.now()): Progress {
     blacklistNextRank: 10,
     blacklistDefeated: [],
     blacklistIntroSeen: false,
+    blacklistTasks: [],
+    blacklistRaceWins: {},
+    blacklistBounty: 0,
     completedEvents: [],
     heat: 0,
     createdAt: now,
@@ -136,6 +144,22 @@ export function migrateProgress(raw: unknown): unknown {
     if (!isRecord(data.scrapbook)) {
       data.scrapbook = { records: [] };
     }
+  }
+  if (version < 4) {
+    data.version = 4;
+    if (!Array.isArray(data.blacklistTasks)) data.blacklistTasks = [];
+  }
+  if (version < 5) {
+    data.version = 5;
+    // Grandfather completed preparation on the active tier. Existing players
+    // must never lose a challenge that was already unlocked in their save.
+    const rank = typeof data.blacklistNextRank === 'number' && Number.isInteger(data.blacklistNextRank)
+      ? data.blacklistNextRank : 10;
+    const tasks = strArray(data.blacklistTasks);
+    data.blacklistRaceWins = rank >= 1 && rank <= 10 && tasks.includes(`${rank}:race`)
+      ? { [rank]: raceWinsRequired(rank) } : {};
+    data.blacklistBounty = rank >= 1 && rank <= 7 && tasks.includes(`${rank}:escape`)
+      ? bountyRequired(rank) : 0;
   }
   return data;
 }
@@ -222,6 +246,13 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
 
   const ridesCount = Math.max(0, Math.floor(num(data.rides, 0, 0, 1_000_000)));
   const defaultLegacyRep = typeof data.rep === 'number' ? 0 : ridesCount * 45;
+  const blacklistRaceWins: Record<string, number> = {};
+  if (isRecord(data.blacklistRaceWins)) {
+    for (let rank = 1; rank <= 10; rank++) {
+      const wins = Math.floor(num(data.blacklistRaceWins[String(rank)], 0, 0, 1000));
+      if (wins > 0) blacklistRaceWins[String(rank)] = wins;
+    }
+  }
 
   return {
     version: SAVE_VERSION,
@@ -252,6 +283,9 @@ export function sanitizeProgress(raw: unknown, now = Date.now()): Progress {
     blacklistNextRank,
     blacklistDefeated,
     blacklistIntroSeen: data.blacklistIntroSeen === true,
+    blacklistTasks: [...new Set(strArray(data.blacklistTasks).filter((id) => /^(10|[1-9]):(race|fare|escape)$/.test(id)))].slice(0, 30),
+    blacklistRaceWins,
+    blacklistBounty: Math.floor(num(data.blacklistBounty, 0, 0, 100_000_000)),
     completedEvents: strArray(data.completedEvents).slice(0, 128),
     heat: num(data.heat, 0, 0, 5),
     createdAt: num(data.createdAt, now, 0, 9e15),

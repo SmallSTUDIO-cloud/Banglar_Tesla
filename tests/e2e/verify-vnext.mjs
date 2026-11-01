@@ -3,12 +3,11 @@
  *  1. Bangla voice gate: all 10 Blacklist intros play sequenced manifest lines
  *     (intro + taunt + distinct sting), with subtitles + skip cleanup; manifest
  *     WAV assets resolve with HTTP 200 from the built bundle.
- *  2. Four-rickshaw race: 3 distinct AI rivals + player, standings 1/4..4/4,
- *     winner photo (victory only) with captured scrapbook thumbnail + records.
+ *  2. Ranked boss 1v1 and optional four-rickshaw race, plus victory-only
+ *     winner photo, scrapbook thumbnail and records (checkpoint fixtures).
  *  3. Five-state weather: sunny/overcast/rain/windy/storm settable, lightning
  *     respects low-flash, wind drives litter strength, no page errors.
- *  4. DRMC: campus + gate present, route guidance reaches the gate from two
- *     districts, DEV accuracy overlay toggles, keep-clear intact.
+ *  4. Retired landmark: no rendered object, HUD/map marker or quick navigation.
  *  5. Scrapbook: deduplicated records, UI screen opens/reopens with framed
  *     photo thumbnails; rival recognition card appears near territory.
  *  6. Event director stays bounded and cleans up on menu return.
@@ -49,7 +48,7 @@ async function waitFor(url, ms = 30000) {
 
 async function main() {
   fs.mkdirSync(artifacts, { recursive: true });
-  const server = spawn('npx', ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
+  const server = spawn(path.join(root, 'node_modules/.bin/vite'), ['preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
     cwd: root,
     stdio: 'ignore',
   });
@@ -139,6 +138,7 @@ async function main() {
       g.state.markBlacklistIntroSeen();
       const out = [];
       for (let rank = 10; rank >= 1; rank--) {
+        const beforeSpeech = g.debugSnapshot().speechCount;
         g.playRivalIntro(rank, false);
         const playing = g.debugSnapshot().cinematicPlaying === true;
         const sting = g.cinematic.activeStingId;
@@ -150,13 +150,13 @@ async function main() {
         const overlay = !document.getElementById('cinematic-overlay')?.classList.contains('hidden');
         g.skipBlacklistIntro();
         const cleaned = g.debugSnapshot().cinematicPlaying === false;
-        out.push({ rank, playing, stingActive: !!sting, overlay, spoke: spoke > 0, cleaned });
+        out.push({ rank, playing, stingActive: !!sting, overlay, spoke: spoke > beforeSpeech, cleaned });
       }
       return out;
     });
     const introsOk = introResults.every((r) => r.playing && r.stingActive && r.overlay && r.spoke && r.cleaned);
     check(
-      'All 10 Blacklist rival intros play voice + distinct sting + subtitle and skip cleanly',
+      'All 10 Blacklist intros request speech and a sting, show the overlay and skip cleanly (not listening QA)',
       introsOk,
       JSON.stringify(introResults.slice(0, 3)),
     );
@@ -185,68 +185,56 @@ async function main() {
       // rain droplets + wind strength
       g.weatherDirector.setWeatherImmediate('rain');
       g.update(0.2);
-      const dropsOn = document.querySelectorAll('.rain-drop.on').length;
-      return { states, lowFlashLevel, fullFlashLevel, dropsOn, flashes };
+      const normalDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.settings.set({ rainMode: 'dynamic' });
+      g.applySettings();
+      const dynamicDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.weatherDirector.setWeatherImmediate('sunny');
+      g.update(0.2);
+      const sunnyDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.settings.set({ rainMode: 'normal' });
+      g.applySettings();
+      return { states, lowFlashLevel, fullFlashLevel, normalDrops, dynamicDrops, sunnyDrops, flashes };
     });
     check(
-      'Five weather states apply with distinct blends; lightning honors low-flash; rain droplets activate',
+      'Five weather states, bounded lightning, and Dynamic-only screen drops (none in sun)',
       weatherCheck.states.length === 5 &&
         weatherCheck.states.every((s) => s.env === s.w) &&
         weatherCheck.states.find((s) => s.w === 'storm').blendRain > 0.5 &&
         weatherCheck.states.find((s) => s.w === 'windy').wind >= 1 &&
         weatherCheck.lowFlashLevel < 0.2 &&
         weatherCheck.fullFlashLevel > 0.35 &&
-        weatherCheck.dropsOn === 10,
-      JSON.stringify({ states: weatherCheck.states.map((s) => s.w), low: weatherCheck.lowFlashLevel, full: weatherCheck.fullFlashLevel, drops: weatherCheck.dropsOn }),
+        weatherCheck.normalDrops === 0 && weatherCheck.dynamicDrops === 10 && weatherCheck.sunnyDrops === 0,
+      JSON.stringify({ states: weatherCheck.states.map((s) => s.w), low: weatherCheck.lowFlashLevel, full: weatherCheck.fullFlashLevel, normalDrops: weatherCheck.normalDrops, dynamicDrops: weatherCheck.dynamicDrops, sunnyDrops: weatherCheck.sunnyDrops }),
     );
 
     // ------------------------------------------------------------------
-    // 4. DRMC campus: placement, routes from two districts, overlay, keep-clear
+    // 4. Removed landmark: no scene, map UI, destination or navigation shortcut.
     // ------------------------------------------------------------------
-    const drmcCheck = await page.evaluate(() => {
+    const formerSiteCheck = await page.evaluate(() => {
       const g = window.__banglarTesla;
-      const report = g.debugDrmcReport();
-      const routeW = g.debugDrmcRoute(-126, -136);
-      const routeS = g.debugDrmcRoute(42, 106);
-      const routeE = g.debugDrmcRoute(162, -172);
-      const overlayOn = window.__btToggleDrmcOverlay();
-      const overlayNodes = (() => {
-        let n = 0;
-        g.scene.traverse((o) => {
-          if (o.name === 'drmc-accuracy-overlay') n = o.children.length;
-        });
-        return n;
-      })();
-      const overlayOff = window.__btToggleDrmcOverlay();
-      return {
-        fitScale: report.fitScale,
-        fitRms: report.fitRms,
-        gateToWall: report.gateToWallDistance,
-        routes: [routeW.ok, routeS.ok, routeE.ok],
-        distances: [routeW.distance, routeS.distance, routeE.distance],
-        overlayOn,
-        overlayNodes,
-        overlayOff,
-      };
+      const names = [];
+      g.scene.traverse((o) => { if (/drmc|campus/i.test(o.name)) names.push(o.name); });
+      return { names, navButton: !!document.querySelector('#hud-drmc-nav'),
+        destination: !!g.drmcNavigation, marker: !!g.ui.hud?.textContent?.match(/DRMC/i) };
     });
-    check(
-      'DRMC campus + gate placement validated (fit RMS ≤ 48 m), routes reach from 3 districts, DEV overlay toggles',
-      drmcCheck.fitRms < 48 &&
-        drmcCheck.gateToWall < 14 &&
-        drmcCheck.routes.every(Boolean) &&
-        drmcCheck.distances.every((d) => d > 40 && d < 2500) &&
-        drmcCheck.overlayOn === true &&
-        drmcCheck.overlayNodes >= 4 &&
-        drmcCheck.overlayOff === false,
-      JSON.stringify(drmcCheck),
-    );
+    check('Removed landmark has no scene objects, navigation shortcut or HUD label',
+      formerSiteCheck.names.length === 0 && !formerSiteCheck.navButton &&
+        !formerSiteCheck.destination && !formerSiteCheck.marker, JSON.stringify(formerSiteCheck));
 
     // ------------------------------------------------------------------
-    // 5. Four-rickshaw race + winner photo + scrapbook records + thumbnail
+    // 5. Optional four-racer and ranked 1v1 + winner photo (teleport fixtures)
     // ------------------------------------------------------------------
     const raceCheck = await page.evaluate(() => {
       const g = window.__banglarTesla;
       g.debugStartMode('free');
+      g.startRivalEvent('ev_duel_ring');
+      const optional = g.raceSystem.getAiRacersSnapshot();
+      const optionalParticipants = g.raceSystem.participantCount;
+      g.exitRaceToFreeRide();
+      // Seed the prerequisite fixture; separate repair smoke exercises real callbacks.
+      g.state.progress.blacklistTasks = ['10:race', '10:fare'];
+      g.state.progress.blacklistRaceWins['10'] = 1;
       g.startRivalEvent('bl_boss_10');
       const ai = g.raceSystem.getAiRacersSnapshot();
       g.debugStepSim(3.2);
@@ -265,8 +253,10 @@ async function main() {
       const thumbOk = photoRecords.some((r) => typeof r.photoThumb === 'string' && r.photoThumb.startsWith('data:image/jpeg'));
       return {
         aiCount: ai.length,
-        distinctIds: new Set(ai.map((r) => r.id)).size,
-        distinctTendencies: new Set(ai.map((r) => r.tendency)).size,
+        rivalId: ai[0]?.id,
+        optionalParticipants,
+        optionalIds: new Set(optional.map((r) => r.id)).size,
+        optionalTendencies: new Set(optional.map((r) => r.tendency)).size,
         allDriversVisible: ai.every((r) => r.hasVisibleDriver),
         sheetMode,
         photoWindow,
@@ -278,14 +268,16 @@ async function main() {
       };
     });
     check(
-      'Four-rickshaw race: 3 distinct visible rivals + standings + victory-only winner photo with scrapbook thumbnail',
-      raceCheck.aiCount === 3 &&
-        raceCheck.distinctIds === 3 &&
-        raceCheck.distinctTendencies === 3 &&
+      'Ranked 1v1 and optional four-racer formats; victory photo and scrapbook thumbnail (teleport fixtures)',
+      raceCheck.aiCount === 1 &&
+        raceCheck.rivalId === 'bl_10_raju' &&
+        raceCheck.optionalParticipants === 4 &&
+        raceCheck.optionalIds === 3 &&
+        raceCheck.optionalTendencies === 3 &&
         raceCheck.allDriversVisible &&
         raceCheck.sheetMode === 'winner-photo' &&
         raceCheck.photoWindow === true &&
-        raceCheck.standingsPills === 4 &&
+        raceCheck.standingsPills === 2 &&
         raceCheck.hasWinRecord &&
         raceCheck.topSpeed > 50 &&
         raceCheck.thumbOk,
@@ -389,7 +381,7 @@ async function main() {
     // Screenshot evidence for the QA record
     await page.evaluate(() => {
       const g = window.__banglarTesla;
-      g.startRivalEvent('bl_boss_07');
+      g.startRivalEvent('ev_duel_ring');
       g.debugStepSim(3.1);
     });
     await page.screenshot({ path: path.join(artifacts, 'vnext-4race-grid.png') });
@@ -406,14 +398,12 @@ async function main() {
     await page.evaluate(() => {
       const g = window.__banglarTesla;
       g.exitRaceToFreeRide();
-      window.__btToggleDrmcOverlay();
       g.debugTeleport(28, -50, 0.4);
       g.debugStepSim(0.05);
     });
-    await page.screenshot({ path: path.join(artifacts, 'vnext-drmc-overlay.png') });
+    await page.screenshot({ path: path.join(artifacts, 'vnext-former-site.png') });
     await page.evaluate(() => {
       const g = window.__banglarTesla;
-      window.__btToggleDrmcOverlay();
       g.weatherDirector.setWeatherImmediate('storm');
       g.update(0.2);
       g.env.strike(0.9, true);

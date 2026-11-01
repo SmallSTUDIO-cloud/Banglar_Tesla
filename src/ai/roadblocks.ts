@@ -30,6 +30,8 @@ export interface RoadblockBarrierObb {
 
 interface RoadblockSlot {
   active: boolean;
+  /** Optional event ownership; police/race slots are never removed by event TTL. */
+  owner: string | null;
   segmentId: string;
   x: number;
   z: number;
@@ -128,6 +130,7 @@ export class RoadblockSystem {
 
     return {
       active: false,
+      owner: null,
       segmentId: '',
       x: 0,
       z: 0,
@@ -185,6 +188,21 @@ export class RoadblockSystem {
     }
   }
 
+  /** Remove only a named director event's slot; no police/race cross-cleanup. */
+  despawnOwned(owner: string): number {
+    let removed = 0;
+    for (const slot of this.slots) {
+      if (!slot.active || slot.owner !== owner) continue;
+      slot.active = false;
+      slot.owner = null;
+      slot.group.visible = false;
+      slot.solidObb.disabled = true;
+      slot.smashObb.disabled = true;
+      removed++;
+    }
+    return removed;
+  }
+
   /** Immediately recycle all active roadblocks (pursuit/race end, menu, reset). */
   /** Per-event cleanup (vNext §7): remove barrier slots near a zone without touching other events. */
   despawnNear(x: number, z: number, radius = 20): number {
@@ -196,6 +214,7 @@ export class RoadblockSystem {
       const dz = slot.z - z;
       if (dx * dx + dz * dz <= rSq) {
         slot.active = false;
+        slot.owner = null;
         slot.group.visible = false;
         slot.solidObb.disabled = true;
         slot.smashObb.disabled = true;
@@ -209,6 +228,7 @@ export class RoadblockSystem {
     for (let i = 0; i < this.slots.length; i++) {
       const s = this.slots[i];
       s.active = false;
+      s.owner = null;
       s.group.visible = false;
       s.solidObb.disabled = true;
       s.smashObb.disabled = true;
@@ -226,6 +246,8 @@ export class RoadblockSystem {
     fx: number,
     fz: number,
     desiredActiveCount: number,
+    owner: string | null = null,
+    exactSegmentId?: string,
   ): boolean {
     if (this.activeCount >= Math.min(MAX_ROADBLOCKS, desiredActiveCount)) return false;
     const freeSlot = this.slots.find((s) => !s.active);
@@ -238,7 +260,7 @@ export class RoadblockSystem {
     for (let i = 0; i < ROAD_SEGMENTS.length; i++) {
       const seg = ROAD_SEGMENTS[i];
       // Only place roadblocks on wide enough main/medium corridors (>= 7.2m wide) so a >= 2m rickshaw gap is ALWAYS guaranteed!
-      if (seg.width < 7.2 || seg.length < 36) continue;
+      if (seg.width < 7.2 || seg.length < 36 || (exactSegmentId && seg.id !== exactSegmentId)) continue;
       if (this.slots.some((s) => s.active && s.segmentId === seg.id)) continue;
 
       const along = seg.length * 0.52;
@@ -274,6 +296,10 @@ export class RoadblockSystem {
     const coneEdge = gapSide * Math.max(1.85, bestSeg.halfWidth - 0.35);
 
     freeSlot.active = true;
+    freeSlot.owner = owner;
+    const signalized = owner === null || owner.endsWith(':police_checkpoint');
+    freeSlot.beaconRed.visible = signalized;
+    freeSlot.beaconBlue.visible = signalized;
     freeSlot.segmentId = bestSeg.id;
     freeSlot.x = cx;
     freeSlot.z = cz;
@@ -330,13 +356,15 @@ export class RoadblockSystem {
       const behind = dx * fx + dz * fz < -28;
       if (distSq > 155 * 155 || (behind && distSq > 55 * 55)) {
         s.active = false;
+        s.owner = null;
         s.group.visible = false;
         s.solidObb.disabled = true;
         s.smashObb.disabled = true;
         continue;
       }
-      s.beaconRed.visible = redOn;
-      s.beaconBlue.visible = !redOn;
+      const checkpoint = s.owner?.endsWith(':police_checkpoint') ?? false;
+      s.beaconRed.visible = (s.owner === null || checkpoint) && redOn;
+      s.beaconBlue.visible = (s.owner === null || checkpoint) && !redOn;
     }
 
     if (desiredCount > 0 && this.spawnCooldown <= 0 && this.activeCount < desiredCount) {
