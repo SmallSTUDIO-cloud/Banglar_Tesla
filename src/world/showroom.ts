@@ -196,7 +196,7 @@ export class Showroom {
   setRickshaw(vehicle: VehicleDef, look: RickshawLook): void {
     this.ensureBuilt();
     if (!this.visual) {
-      this.visual = new RickshawVisual(vehicle, look, false);
+      this.visual = new RickshawVisual(vehicle, look, false, true);
       this.visual.setNightLighting(true, 0.7);
       this.turntable.add(this.visual.root);
     } else {

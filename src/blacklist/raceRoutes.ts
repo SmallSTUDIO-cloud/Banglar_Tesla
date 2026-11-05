@@ -925,6 +925,24 @@ export function buildAiWaypointsForTendency(
       curZ = exit.z;
       avoidStartSegment = true;
     }
+    // Both endpoints may lie on the *same* graph edge (not at its nodes).
+    // A nearest-node A* detour can otherwise run all the way to the far
+    // junction, then double back to a mid-block finish. Stay on that open
+    // carriageway instead; preserve the authored forward launch above.
+    const sharedEdge = ROAD_SEGMENTS.find((seg) => {
+      const onEdge = (x: number, z: number): boolean => {
+        const along = (x - seg.ax) * seg.ux + (z - seg.az) * seg.uz;
+        const lateral = Math.abs((x - seg.ax) * seg.leftX + (z - seg.az) * seg.leftZ);
+        return along >= -0.2 && along <= seg.length + 0.2 && lateral <= seg.halfWidth - 0.35;
+      };
+      return onEdge(curX, curZ) && onEdge(toX, toZ);
+    });
+    if (sharedEdge) {
+      waypoints.push({ x: toX, z: toZ, targetGateIndex: gateIdx, isTurboStraight: turboNext });
+      curX = toX;
+      curZ = toZ;
+      return;
+    }
     const plan = findRoute(
       curX,
       curZ,

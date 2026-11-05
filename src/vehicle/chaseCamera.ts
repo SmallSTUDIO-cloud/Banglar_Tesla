@@ -154,6 +154,37 @@ export class ChaseCamera {
   private prevYaw = 0;
   private sideSign: 1 | -1 = 1;
   private sideSwitchCooldown = 0;
+  // Camera clearance used to scan every collider up to 16 times per frame.
+  // Immutable footprint membership is indexed once, while disabled breakable
+  // state and exact OBB/height tests remain live on each camera sample.
+  private readonly cameraCells = new Map<number, BoxCollider[]>();
+  private cameraGridSource: BoxCollider[] | null = null;
+  private cameraGridCount = -1;
+  private readonly cameraCellSize = 16;
+  private readonly cameraCellPad = 0.65; // >= max pointBlocked pad (side .60)
+
+  private cameraCellKey(gx: number, gz: number): number {
+    return ((gx + 2048) << 12) | ((gz + 2048) & 0xfff);
+  }
+
+  private indexCameraColliders(colliders: BoxCollider[]): void {
+    this.cameraCells.clear();
+    const size = this.cameraCellSize;
+    const pad = this.cameraCellPad;
+    for (const c of colliders) {
+      if (c.height < 0.35) continue;
+      for (let gx = Math.floor((c.minX - pad) / size); gx <= Math.floor((c.maxX + pad) / size); gx++) {
+        for (let gz = Math.floor((c.minZ - pad) / size); gz <= Math.floor((c.maxZ + pad) / size); gz++) {
+          const key = this.cameraCellKey(gx, gz);
+          let cell = this.cameraCells.get(key);
+          if (!cell) { cell = []; this.cameraCells.set(key, cell); }
+          cell.push(c);
+        }
+      }
+    }
+    this.cameraGridSource = colliders;
+    this.cameraGridCount = colliders.length;
+  }
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.camera = camera;
@@ -380,8 +411,14 @@ export class ChaseCamera {
   }
 
   private pointBlocked(x: number, y: number, z: number, colliders: BoxCollider[], pad: number): boolean {
-    for (let i = 0; i < colliders.length; i++) {
-      const c = colliders[i];
+    if (this.cameraGridSource !== colliders || this.cameraGridCount !== colliders.length) {
+      this.indexCameraColliders(colliders);
+    }
+    const cell = this.cameraCells.get(this.cameraCellKey(
+      Math.floor(x / this.cameraCellSize), Math.floor(z / this.cameraCellSize)));
+    if (!cell) return false;
+    for (let i = 0; i < cell.length; i++) {
+      const c = cell[i];
       if (c.disabled || c.height < y - 0.15) continue;
       if (x <= c.minX - pad || x >= c.maxX + pad || z <= c.minZ - pad || z >= c.maxZ + pad) {
         continue;

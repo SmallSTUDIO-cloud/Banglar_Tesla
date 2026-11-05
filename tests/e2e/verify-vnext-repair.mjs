@@ -200,6 +200,7 @@ try {
     g.debugStartPursuitForTest(2);
     const ordinaryEscaped = escapeBySimulation();
     const ordinaryDidNotCount = !g.state.progress.blacklistTasks.includes('7:escape');
+    const ordinaryBounty = g.state.progress.blacklistBounty > 0;
     g.startBlacklistEscape(7);
     const challengeStarted = g.police.isActive && g.activeBlacklistEscapeRank === 7;
     const challengeEscaped = escapeBySimulation();
@@ -211,17 +212,19 @@ try {
     g.pendingOffer = null;
     g.startBlacklistEscape(6);
     const bustStarted = g.police.isActive;
+    const bountyBeforeBust = g.state.progress.blacklistBounty;
     const px = g.controller.x, pz = g.controller.z;
     for (let i=0; i<260 && g.police.isActive; i++) {
       for (const u of g.police.units) if (u.active) { u.x = px + 0.5; u.z = pz; u.speed = 0; }
       g.police.update(1/60,px,pz,0,0,false);
     }
-    const bustDidNotCount = !g.state.progress.blacklistTasks.includes('6:escape') && !g.police.isActive;
+    const bustDidNotCount = !g.state.progress.blacklistTasks.includes('6:escape') && !g.police.isActive &&
+      g.state.progress.blacklistBounty === bountyBeforeBust;
     g.state.progress.blacklistNextRank = 5; g.state.progress.blacklistDefeated.push(6);
     g.returnToMenu(); g.startBlacklistEscape(5);
     const menuStarted = g.mode === 'free' && g.police.isActive && g.activeBlacklistEscapeRank === 5;
     g.police.stopPursuit(true); g.activeBlacklistEscapeRank = null;
-    return { ordinaryEscaped, ordinaryDidNotCount, challengeStarted, challengeEscaped, counted, busyRejected, bustStarted, bustDidNotCount, menuStarted };
+    return { ordinaryEscaped, ordinaryDidNotCount, ordinaryBounty, challengeStarted, challengeEscaped, counted, busyRejected, bustStarted, bustDidNotCount, menuStarted };
   });
   check('Only the manually started pursuit escape counts; bust, busy and menu paths behave correctly', Object.values(police).every(Boolean), JSON.stringify(police));
   check('No uncaught browser errors', errors.length === 0, JSON.stringify(errors));

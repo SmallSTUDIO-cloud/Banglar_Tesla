@@ -60,6 +60,13 @@ export interface DriveTuning {
   suspensionSmoothing?: number;
 }
 
+/** Bounded impact amplitude shared by wheel types; 0 at rest or off the hole. */
+export function potholeWheelImpulse(speed: number, depth: number, suspension: number, massScale = 1): number {
+  if (!Number.isFinite(speed) || !Number.isFinite(depth) || depth <= 0) return 0;
+  return clamp(Math.abs(speed) / 8, 0, 1.4) * clamp(depth / 0.065, 0, 1) *
+    (1 - clamp(suspension, 0, 1) * 0.55) * clamp(massScale, 0.5, 1.4);
+}
+
 export interface StepEvents {
   /** Collision impulse magnitude (0 = none). */
   impact: number;
@@ -410,6 +417,9 @@ export class RickshawController {
 
   private prevSpeed = 0;
   private prevFrontHeight = 0;
+  private potholeContacts = [false, false, false];
+  private potholeWheelX = new Float64Array(3);
+  private potholeWheelZ = new Float64Array(3);
   private stuckAnchorX = 0;
   private stuckAnchorZ = 0;
   private tuning: DriveTuning = {
@@ -434,6 +444,7 @@ export class RickshawController {
     private colliders: BoxCollider[],
     private heightAt: HeightSampler,
     private surfaceAt: SurfaceSampler,
+    private potholeDepthAt: (x: number, z: number) => number = () => 0,
   ) {
     this.rebuildSpatialGrid();
   }
@@ -532,6 +543,7 @@ export class RickshawController {
     this.frontHeight = front;
     this.rearHeight = rear;
     this.prevFrontHeight = front;
+    this.potholeContacts.fill(false);
     const rearWeight = -RIDE.rearAxleZ / RIDE.wheelbase;
     this.y = rear + (front - rear) * rearWeight;
     this.pitch = -Math.atan2(front - rear, RIDE.wheelbase);
@@ -794,7 +806,7 @@ export class RickshawController {
     // -------------------------------------------- ground & weight transfer
     const front = this.heightAt(this.x + fx * RIDE.frontAxleZ, this.z + fz * RIDE.frontAxleZ);
     const rear = this.heightAt(this.x + fx * RIDE.rearAxleZ, this.z + fz * RIDE.rearAxleZ);
-    const roughBump = Math.abs(front - this.prevFrontHeight) * Math.abs(this.speed);
+    let roughBump = Math.abs(front - this.prevFrontHeight) * Math.abs(this.speed);
     this.prevFrontHeight = front;
     this.frontHeight = front;
     this.rearHeight = rear;
@@ -818,6 +830,32 @@ export class RickshawController {
       clamp(-latAccel * 0.014 * suspDamp, -0.072, 0.072) +
       (surface === 'sidewalk' ? Math.sin(this.distanceDriven * 9) * 0.0032 * suspDamp : 0);
     this.roll += (targetRoll - this.roll) * clamp01(dt * 10);
+
+    // Wheel-specific contact, only at entry; a stopped wheel does not rattle
+    // repeatedly. Physical ground height already follows the shallow depression.
+    const contactX = this.potholeWheelX;
+    const contactZ = this.potholeWheelZ;
+    contactX[0] = this.x + fx * RIDE.frontAxleZ;
+    contactZ[0] = this.z + fz * RIDE.frontAxleZ;
+    contactX[1] = this.x + fx * RIDE.rearAxleZ + rx * 0.55;
+    contactZ[1] = this.z + fz * RIDE.rearAxleZ + rz * 0.55;
+    contactX[2] = this.x + fx * RIDE.rearAxleZ - rx * 0.55;
+    contactZ[2] = this.z + fz * RIDE.rearAxleZ - rz * 0.55;
+    for (let wheel = 0; wheel < 3; wheel++) {
+      const depth = this.potholeDepthAt(contactX[wheel], contactZ[wheel]);
+      const touching = depth > 0.012;
+      if (touching && !this.potholeContacts[wheel]) {
+        const bump = potholeWheelImpulse(this.speed, depth, t.suspensionSmoothing ?? 0,
+          t.isElectric ? 1.1 : 1);
+        this.bodyPitchOffset += (wheel === 0 ? -1 : 0.65) * bump * 0.028;
+        this.roll += (wheel === 0 ? 0 : wheel === 1 ? 1 : -1) * bump * 0.038;
+        this.roll = clamp(this.roll, -0.11, 0.11);
+        this.bodyPitchOffset = clamp(this.bodyPitchOffset, -0.08, 0.08);
+        this.speed *= 1 - Math.min(0.018, bump * 0.012);
+        roughBump = Math.max(roughBump, bump);
+      }
+      this.potholeContacts[wheel] = touching;
+    }
 
     // --------------------------------------------------------- stuck check
     this.stuckWindow += dt;

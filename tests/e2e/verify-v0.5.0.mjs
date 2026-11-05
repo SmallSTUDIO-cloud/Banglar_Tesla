@@ -352,6 +352,7 @@ async function main() {
 
       // Seed #10 prerequisites; the dedicated repair smoke exercises the real tasks.
       g.state.progress.blacklistTasks = ['10:race', '10:fare'];
+      g.state.progress.blacklistRaceWins['10'] = 1;
       // The ranked boss is a 1v1. Optional four-racer format was checked above.
       const balBeforeWin = g.state.balance;
       const repBeforeWin = g.state.rep;

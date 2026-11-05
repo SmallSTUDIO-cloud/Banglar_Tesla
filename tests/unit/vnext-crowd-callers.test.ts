@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { PedestrianSystem, PED_PATHS } from '../../src/ai/pedestrians';
 import { QUALITY } from '../../src/core/config';
-import { isInsideDrmcCampus } from '../../src/world/drmcGeo';
 import { isClearOfRoads } from '../../src/world/layout';
 import { PassengerActor, archetypeById } from '../../src/missions/actors';
 
@@ -27,7 +26,6 @@ describe('roadside caller crowd identity and cleanup', () => {
     }
     expect(caller).not.toBeNull();
     const { id, stop, appearance } = caller!;
-    expect(isInsideDrmcCampus(stop.actor.x, stop.actor.z, 2)).toBe(false);
     expect(isClearOfRoads(stop.actor.x, stop.actor.z, 0.15)).toBe(true);
     expect(appearance.shirt).toMatch(/^#[0-9a-f]{6}$/);
     expect(inner.peds[id].roadsideCooldownUntil).toBe(280);

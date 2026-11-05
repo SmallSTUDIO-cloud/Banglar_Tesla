@@ -11,7 +11,7 @@
  *     per-frame heap allocations and 100% preserved crowd density!
  */
 
-import { crossesDrmcCampus, isInsideDrmcCampus } from '../world/drmcGeo';
+import { quietTrafficFactor } from './traffic';
 import * as THREE from 'three';
 import { QUALITY, type QualitySettings } from '../core/config';
 import { clamp, damp, mulberry32, TAU } from '../core/mathx';
@@ -42,6 +42,7 @@ export interface PedestrianReactionEvent {
   z: number;
   textKey: string;
   kind: 'nearmiss' | 'bump';
+  pedestrianId?: number;
 }
 
 function buildSidewalkPaths(): PedPath[] {
@@ -59,7 +60,7 @@ function buildSidewalkPaths(): PedPath[] {
       const mz = (az + bz) * 0.5;
       if (!isClearOfRoads(mx, mz, 0.35)) continue;
       const len = Math.hypot(bx - ax, bz - az);
-      if (len < 6 || crossesDrmcCampus(ax, az, bx, bz, 1.6)) continue;
+      if (len < 6) continue;
       paths.push({
         segmentId: seg.id,
         ax,
@@ -93,6 +94,9 @@ const TOP_COLORS = [
   '#264653', // slate shirt
   '#c9184a', // magenta saree
   '#457b9d', // school/college blue
+  '#9b7455', // faded earth-colour cotton
+  '#6a866a', // washed olive work shirt
+  '#bd8eae', // muted printed dress
 ];
 const SKIN_TONES = ['#8b5a3c', '#9e6845', '#704730', '#ad7650', '#946242'];
 const HAIR_HEADWEAR_COLORS = [
@@ -118,9 +122,18 @@ const REACTION_KEYS = [
 
 function buildPedBodyGeo(mat: THREE.Material): THREE.BufferGeometry {
   const b = new Bucket('ped.body', mat);
-  // Chest & lower tunic/kurta hem
-  b.box({ x: 0, y: 1.08, z: 0 }, { x: 0.33, y: 0.44, z: 0.20 }, '#ffffff');
-  b.box({ x: 0, y: 0.80, z: 0 }, { x: 0.35, y: 0.20, z: 0.22 }, '#f5f5f5');
+  // Tapered cotton torso instead of a toy-like rectangular block. Keep the
+  // shoulder/hip pivots used by the existing animation and nine-mesh fleet.
+  const tunic = new THREE.CylinderGeometry(0.185, 0.145, 0.46, 7);
+  b.add(tunic, { x: 0, y: 1.08, z: 0 }, { x: 1, y: 1, z: 0.64 }, '#ffffff');
+  tunic.dispose();
+  // Bridge the hip pivot at 0.54 m: the old short waist left a visible
+  // floating gap between tunic and trousers in close-up street views.
+  b.box({ x: 0, y: 0.725, z: 0 }, { x: 0.30, y: 0.35, z: 0.20 }, '#e8e6e0');
+  // Neck placket, open collar and hem seam add readable clothing structure
+  // without a texture, skinning palette, extra material or extra draw call.
+  b.box({ x: 0, y: 1.28, z: 0.113 }, { x: 0.07, y: 0.09, z: 0.015 }, '#d7d6cd');
+  b.box({ x: 0, y: 0.74, z: 0.113 }, { x: 0.31, y: 0.025, z: 0.018 }, '#bdc0b9');
   // Collar neckline + short-sleeve shoulder caps so attached arms emerge cleanly from sleeves
   b.cylinder({ x: 0, y: 1.31, z: 0 }, 0.085, 0.06, '#e8e8e8');
   b.box({ x: -0.205, y: 1.22, z: 0 }, { x: 0.11, y: 0.16, z: 0.14 }, '#ffffff', { z: 0.14 });
@@ -137,15 +150,15 @@ function buildPedHeadGeo(mat: THREE.Material): THREE.BufferGeometry {
   sphere.dispose();
 
   // Ears + nose bridge (`+Z` is forward walking direction)
-  b.box({ x: -0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ebd8cf');
-  b.box({ x: 0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ebd8cf');
-  b.box({ x: 0, y: 1.485, z: 0.108 }, { x: 0.026, y: 0.044, z: 0.030 }, '#f5e6de');
+  b.box({ x: -0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ffffff');
+  b.box({ x: 0.105, y: 1.49, z: -0.005 }, { x: 0.024, y: 0.048, z: 0.032 }, '#ffffff');
+  b.box({ x: 0, y: 1.482, z: 0.106 }, { x: 0.022, y: 0.035, z: 0.025 }, '#ffffff');
 
   // Visible facial features: eyebrows, eye sclera, dark pupils, and mouth expression!
   for (const sx of [-1, 1]) {
-    b.box({ x: sx * 0.040, y: 1.530, z: 0.102 }, { x: 0.034, y: 0.011, z: 0.014 }, '#1c1513');
-    b.box({ x: sx * 0.039, y: 1.506, z: 0.104 }, { x: 0.030, y: 0.018, z: 0.012 }, '#ffffff');
-    b.box({ x: sx * 0.039, y: 1.505, z: 0.110 }, { x: 0.014, y: 0.014, z: 0.008 }, '#120e0d');
+    b.box({ x: sx * 0.040, y: 1.531, z: 0.102 }, { x: 0.032, y: 0.008, z: 0.011 }, '#2e211b');
+    b.box({ x: sx * 0.039, y: 1.507, z: 0.106 }, { x: 0.024, y: 0.013, z: 0.010 }, '#e9ded0');
+    b.box({ x: sx * 0.039, y: 1.506, z: 0.113 }, { x: 0.011, y: 0.012, z: 0.007 }, '#1e1816');
   }
   b.box({ x: 0, y: 1.444, z: 0.102 }, { x: 0.044, y: 0.013, z: 0.012 }, '#542422');
   return b.build({ cast: false, receive: false })!.geometry;
@@ -180,7 +193,9 @@ function buildPedArmGeo(mat: THREE.Material): THREE.BufferGeometry {
 function buildPedLegGeo(mat: THREE.Material): THREE.BufferGeometry {
   const b = new Bucket('ped.leg', mat);
   // Pivots at hip `(0, 0, 0)`: trouser leg + ankle + visible South Asian sandal/shoe!
-  b.box({ x: 0, y: -0.23, z: 0 }, { x: 0.108, y: 0.44, z: 0.125 }, '#ffffff');
+  const trouser = new THREE.CylinderGeometry(0.068, 0.051, 0.44, 7);
+  b.add(trouser, { x: 0, y: -0.23, z: 0 }, { x: 1, y: 1, z: 0.92 }, '#ffffff');
+  trouser.dispose();
   b.cylinder({ x: 0, y: -0.47, z: 0 }, 0.040, 0.08, '#9e6b49');
   // Sandal sole + forefoot strap (`+Z` forward toe)
   b.box({ x: 0, y: -0.522, z: 0.034 }, { x: 0.106, y: 0.034, z: 0.195 }, '#231915');
@@ -190,8 +205,11 @@ function buildPedLegGeo(mat: THREE.Material): THREE.BufferGeometry {
 
 function buildPedSkirtGeo(mat: THREE.Material): THREE.BufferGeometry {
   const b = new Bucket('ped.skirt', mat);
-  b.cone({ x: 0, y: 0.56, z: 0 }, 0.25, 0.68, '#ffffff');
-  b.cylinder({ x: 0, y: 0.24, z: 0 }, 0.245, 0.045, '#e8dfd1');
+  const drape = new THREE.CylinderGeometry(0.14, 0.255, 0.68, 8);
+  b.add(drape, { x: 0, y: 0.56, z: 0 }, { x: 1, y: 1, z: 0.91 }, '#ffffff');
+  drape.dispose();
+  b.cylinder({ x: 0, y: 0.24, z: 0 }, 0.238, 0.04, '#dedbd2');
+  b.box({ x: -0.105, y: 0.57, z: 0.177 }, { x: 0.055, y: 0.48, z: 0.02 }, '#e5dfd7', { z: -0.18 });
   return b.build({ cast: false, receive: false })!.geometry;
 }
 
@@ -218,6 +236,10 @@ interface PedAgent {
   hasBag: boolean;
   hairScaleY: number;
   lookAtPlayer: number;
+  /** Brief attention to a real market-loading stop; reuses the existing rig. */
+  marketAttention: number;
+  marketX: number;
+  marketZ: number;
   worldX: number;
   worldZ: number;
   farAccum: number;
@@ -256,6 +278,9 @@ export class PedestrianSystem {
   private bag: THREE.InstancedMesh;
   private maxCapacity: number;
   private activeCount = 0;
+  private baseCount = 68;
+  private quietFactor = 1;
+  private populationTick = 0;
 
   private rng = mulberry32(73319);
   private matrix = new THREE.Matrix4();
@@ -381,7 +406,8 @@ export class PedestrianSystem {
   }
 
   setQuality(quality: QualitySettings): void {
-    this.activeCount = clamp(quality.pedestrians, 8, this.maxCapacity);
+    this.baseCount = clamp(quality.pedestrians, 8, this.maxCapacity);
+    this.activeCount = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
     for (const mesh of [
       this.body,
       this.head,
@@ -397,6 +423,42 @@ export class PedestrianSystem {
     }
     // Only torso casts into shadow map (cuts 8/9ths of pedestrian shadow draw calls!)
     this.body.castShadow = quality.shadows;
+  }
+
+  setTimeMinutes(minutes: number): void {
+    this.quietFactor = quietTrafficFactor(minutes);
+  }
+
+  private adjustPopulation(dt: number, playerX: number, playerZ: number): void {
+    this.populationTick += dt;
+    if (this.populationTick < 1.25) return;
+    this.populationTick = 0;
+    const desired = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
+    if (this.activeCount < desired) this.activeCount++;
+    else if (this.activeCount > desired) {
+      const tail = this.peds[this.activeCount - 1];
+      // Do not erase someone walking beside the player or a mission caller.
+      if (tail && !tail.roadsideReserved) {
+        if (Math.hypot(tail.worldX - playerX, tail.worldZ - playerZ) > 50) {
+          this.activeCount--;
+        } else {
+          // The last instance may be right beside the rider for hours. Keep
+          // that walker visible: retire a distant, unreserved walker instead.
+          // Reserved mission callers keep their stable index throughout.
+          for (let i = this.activeCount - 2; i >= 0; i--) {
+            const candidate = this.peds[i];
+            if (candidate.roadsideReserved || Math.hypot(candidate.worldX - playerX, candidate.worldZ - playerZ) <= 50) continue;
+            this.peds[i] = tail;
+            this.peds[this.activeCount - 1] = candidate;
+            this.activeCount--;
+            break;
+          }
+        }
+      }
+    }
+    for (const mesh of [this.body, this.head, this.hair, this.armL, this.armR, this.legL, this.legR, this.skirt, this.bag]) {
+      mesh.count = this.activeCount;
+    }
   }
 
   private pickPathIndex(preferBusy: boolean): number {
@@ -431,6 +493,9 @@ export class PedestrianSystem {
       hasBag: this.rng() < 0.36,
       hairScaleY: 0.94 + this.rng() * 0.14,
       lookAtPlayer: 0,
+      marketAttention: 0,
+      marketX: 0,
+      marketZ: 0,
       worldX: p ? p.ax + (p.bx - p.ax) * t : 0,
       worldZ: p ? p.az + (p.bz - p.az) * t : 0,
       farAccum: 0,
@@ -457,7 +522,7 @@ export class PedestrianSystem {
       if (!seg) continue;
       const x = ped.worldX, z = ped.worldZ;
       const distance = Math.hypot(x - px, z - pz);
-      if (distance < 10 || distance > 35 || isInsideDrmcCampus(x, z, 2) || !isClearOfRoads(x, z, 0.15)) continue;
+      if (distance < 10 || distance > 35 || !isClearOfRoads(x, z, 0.15)) continue;
       const along = (x - seg.ax) * seg.ux + (z - seg.az) * seg.uz;
       const centerX = seg.ax + seg.ux * along, centerZ = seg.az + seg.uz * along;
       const side = Math.sign(path.safeX * seg.leftX + path.safeZ * seg.leftZ) || 1;
@@ -466,7 +531,6 @@ export class PedestrianSystem {
         z: centerZ + seg.leftZ * seg.halfWidth * 0.5 * side,
         segmentId: seg.id,
       };
-      if (isInsideDrmcCampus(pickup.x, pickup.z, 1.5)) continue;
       const delta = Math.min(4 / path.length, 0.35);
       const t1 = Math.max(0, ped.t - delta), t2 = Math.min(1, ped.t + delta);
       const a = { x: path.ax + (path.bx - path.ax) * t1, z: path.az + (path.bz - path.az) * t1 };
@@ -513,7 +577,7 @@ export class PedestrianSystem {
       const t = clamp(((x - path.ax) * dx + (z - path.az) * dz) / (dx * dx + dz * dz), 0, 1);
       const wx = path.ax + dx * t, wz = path.az + dz * t;
       const d = Math.hypot(wx - x, wz - z);
-      if (d < bestDistance && !isInsideDrmcCampus(wx, wz, 1.6) && isClearOfRoads(wx, wz, 0.15)) {
+      if (d < bestDistance && isClearOfRoads(wx, wz, 0.15)) {
         bestIdx = i; bestT = t; bestDistance = d;
       }
     }
@@ -523,6 +587,24 @@ export class PedestrianSystem {
     ped.worldZ = path.az + (path.bz - path.az) * bestT;
     ped.sideJitter = 0; ped.evadeAmount = 0; ped.stumbleTimer = 0;
     ped.pause = 0.25; ped.farAccum = 0; ped.roadsideReserved = false;
+    ped.marketAttention = 0;
+  }
+
+  /** A few existing sidewalk walkers briefly pause for a REAL roadside loading
+   * stop. No new pedestrians, displacement or road crossing. */
+  noticeRoadsideLoading(x: number, z: number): number {
+    let noticed = 0;
+    for (let i = 0; i < this.activeCount && noticed < 3; i++) {
+      const ped = this.peds[i];
+      if (ped.roadsideReserved ||
+          Math.hypot(ped.worldX - x, ped.worldZ - z) > 8) continue;
+      ped.pause = Math.max(ped.pause, 0.85);
+      ped.marketAttention = 0.85;
+      ped.marketX = x;
+      ped.marketZ = z;
+      noticed++;
+    }
+    return noticed;
   }
 
   /** Ringing the rickshaw bell alerts nearby walkers politely before near-miss distance! */
@@ -547,6 +629,7 @@ export class PedestrianSystem {
     playerYaw = 0,
   ): void {
     if (PED_PATHS.length === 0) return;
+    this.adjustPopulation(dt, playerX, playerZ);
     this.globalReactCooldown = Math.max(0, this.globalReactCooldown - dt);
 
     const absSpeed = Math.abs(playerSpeed);
@@ -568,6 +651,7 @@ export class PedestrianSystem {
 
       // Recycle pedestrians > 155m away onto sidewalks within 45..125m of player so density stays rich!
       if (distSq > 155 * 155) {
+        ped.marketAttention = 0;
         for (let tries = 0; tries < 7; tries++) {
           const candIdx = this.pickPathIndex(true);
           const cp = PED_PATHS[candIdx];
@@ -599,6 +683,7 @@ export class PedestrianSystem {
 
       if (ped.reactCooldown > 0) ped.reactCooldown = Math.max(0, ped.reactCooldown - stepDt);
       if (ped.stumbleTimer > 0) ped.stumbleTimer = Math.max(0, ped.stumbleTimer - stepDt);
+      if (ped.marketAttention > 0) ped.marketAttention = Math.max(0, ped.marketAttention - stepDt);
 
       let approachingDanger = false;
       let dClosest = 999;
@@ -627,7 +712,7 @@ export class PedestrianSystem {
             ped.reactCooldown = 7.5;
             this.globalReactCooldown = 1.6;
             const key = REACTION_KEYS[Math.floor(this.rng() * REACTION_KEYS.length)];
-            this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'bump' });
+            this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'bump', pedestrianId: i });
           }
         } else if (
           dClosest < 2.45 &&
@@ -639,7 +724,7 @@ export class PedestrianSystem {
           this.globalReactCooldown = 2.6;
           ped.pause = Math.max(ped.pause, 0.95);
           const key = REACTION_KEYS[Math.floor(this.rng() * REACTION_KEYS.length)];
-          this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'nearmiss' });
+          this.onReaction?.({ x: curX, y: 1.85, z: curZ, textKey: key, kind: 'nearmiss', pedestrianId: i });
         }
       }
 
@@ -647,6 +732,7 @@ export class PedestrianSystem {
       let moving = false;
       if (ped.pause > 0) {
         ped.pause -= stepDt;
+        if (distSq < 58 * 58) ped.phase += stepDt * .9;
       } else if (!approachingDanger || dClosest > 2.6) {
         moving = true;
         ped.t += ((ped.speed * stepDt) / path.length) * ped.dir;
@@ -688,9 +774,14 @@ export class PedestrianSystem {
 
       const walkYaw = ped.dir === 1 ? path.fwdYaw : path.revYaw;
       let yaw = walkYaw;
+      if (ped.marketAttention > 0 && distSq < 58 * 58) {
+        const toMarketYaw = Math.atan2(ped.marketX - wx, ped.marketZ - wz);
+        yaw += shortAngle(walkYaw, toMarketYaw) * Math.min(1, ped.marketAttention * 1.6);
+      }
+      // A moving rider always takes precedence over an idle market glance.
       if (ped.lookAtPlayer > 0.01) {
         const toPlayerYaw = Math.atan2(playerX - wx, playerZ - wz);
-        yaw = walkYaw + shortAngle(walkYaw, toPlayerYaw) * ped.lookAtPlayer;
+        yaw += shortAngle(yaw, toPlayerYaw) * ped.lookAtPlayer;
       }
       const stumbleTilt = ped.stumbleTimer > 0 ? Math.sin(ped.stumbleTimer * 12) * 0.24 : 0;
 
@@ -731,7 +822,12 @@ export class PedestrianSystem {
 
       // Left arm swings opposite to left leg (or raises slightly in alarm when evading!)
       const evadeRaise = ped.evadeAmount > 0.25 ? -0.45 * ped.evadeAmount : 0;
-      const armSwingL = swing !== 0 ? -swing * 0.82 : evadeRaise;
+      // A few waiting pedestrians gesture or adjust a bag. Near-LOD only,
+      // using existing arm instances rather than new actors/skin rigs.
+      const idleGesture = ped.pause > 0 && nearLod &&
+        (ped.marketAttention > 0 || ped.pathIdx % 5 === 0)
+        ? -.25 - Math.sin(ped.phase) * .12 : 0;
+      const armSwingL = swing !== 0 ? -swing * 0.82 : evadeRaise || idleGesture;
       if (armSwingL !== 0) {
         this.euler.set(armSwingL, yaw, 0.05, 'YXZ');
         this.quat.setFromEuler(this.euler);

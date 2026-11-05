@@ -110,6 +110,7 @@ export interface DerivedVehicle {
   steerRateMultiplier: number;
   grip: number;
   roughSurfaceKeep: number;
+  suspensionSmoothing: number;
   rollingDragScale: number;
   comfortBonus: number;
   damageMultiplier: number;
@@ -131,6 +132,7 @@ export interface DerivedVehicle {
  *  - tyres:                         +grip, less rain slip, better rough-road speed
  *  - steering (Handling):           +steer rate, tighter low-speed lock, calmer high-speed
  *  - seat (Durability/Suspension):  -collision damage, -bump/pothole penalty, +comfort
+ *  - sealedDrive (Weatherproof Motor): restores wet-road acceleration after three rides
  *  - efficiency (Electric/Roll):    -battery drain, +regen braking, -rolling drag
  */
 export function deriveVehicle(
@@ -149,6 +151,7 @@ export function deriveVehicle(
   const turboRecharge = clamp(upgrades.turboRecharge ?? 0, 0, 3);
   const canopy = clamp(upgrades.canopy ?? 0, 0, 2);
   const lights = clamp(upgrades.lights ?? 0, 0, 2);
+  const sealedDrive = clamp(upgrades.sealedDrive ?? 0, 0, 2);
 
   // Condition gently trims performance below 85% while keeping worn rickshaws brisk (~18+ km/h).
   const condFactor = 0.85 + 0.15 * clamp01(condition / 85);
@@ -163,6 +166,7 @@ export function deriveVehicle(
     RIDE.accel *
     vehicle.accelMultiplier *
     (1 + bearings * 0.12 + efficiency * 0.03) *
+    (1 - clamp01(wetness) * 0.11 * (1 - sealedDrive * 0.38)) *
     condFactor;
 
   const brakeDecel =
@@ -194,6 +198,7 @@ export function deriveVehicle(
     steerRateMultiplier,
     grip,
     roughSurfaceKeep,
+    suspensionSmoothing: seat * 0.22,
     rollingDragScale,
     comfortBonus,
     damageMultiplier,

@@ -7,8 +7,7 @@
  *     winner photo, scrapbook thumbnail and records (checkpoint fixtures).
  *  3. Five-state weather: sunny/overcast/rain/windy/storm settable, lightning
  *     respects low-flash, wind drives litter strength, no page errors.
- *  4. DRMC: campus + gate present, route guidance reaches the gate from two
- *     districts, DEV accuracy overlay toggles, keep-clear intact.
+ *  4. Retired landmark: no rendered object, HUD/map marker or quick navigation.
  *  5. Scrapbook: deduplicated records, UI screen opens/reopens with framed
  *     photo thumbnails; rival recognition card appears near territory.
  *  6. Event director stays bounded and cleans up on menu return.
@@ -186,61 +185,42 @@ async function main() {
       // rain droplets + wind strength
       g.weatherDirector.setWeatherImmediate('rain');
       g.update(0.2);
-      const dropsOn = document.querySelectorAll('.rain-drop.on').length;
-      return { states, lowFlashLevel, fullFlashLevel, dropsOn, flashes };
+      const normalDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.settings.set({ rainMode: 'dynamic' });
+      g.applySettings();
+      const dynamicDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.weatherDirector.setWeatherImmediate('sunny');
+      g.update(0.2);
+      const sunnyDrops = document.querySelectorAll('.rain-drop.on').length;
+      g.settings.set({ rainMode: 'normal' });
+      g.applySettings();
+      return { states, lowFlashLevel, fullFlashLevel, normalDrops, dynamicDrops, sunnyDrops, flashes };
     });
     check(
-      'Five weather states apply with distinct blends; lightning honors low-flash; rain droplets activate',
+      'Five weather states, bounded lightning, and Dynamic-only screen drops (none in sun)',
       weatherCheck.states.length === 5 &&
         weatherCheck.states.every((s) => s.env === s.w) &&
         weatherCheck.states.find((s) => s.w === 'storm').blendRain > 0.5 &&
         weatherCheck.states.find((s) => s.w === 'windy').wind >= 1 &&
         weatherCheck.lowFlashLevel < 0.2 &&
         weatherCheck.fullFlashLevel > 0.35 &&
-        weatherCheck.dropsOn === 10,
-      JSON.stringify({ states: weatherCheck.states.map((s) => s.w), low: weatherCheck.lowFlashLevel, full: weatherCheck.fullFlashLevel, drops: weatherCheck.dropsOn }),
+        weatherCheck.normalDrops === 0 && weatherCheck.dynamicDrops === 10 && weatherCheck.sunnyDrops === 0,
+      JSON.stringify({ states: weatherCheck.states.map((s) => s.w), low: weatherCheck.lowFlashLevel, full: weatherCheck.fullFlashLevel, normalDrops: weatherCheck.normalDrops, dynamicDrops: weatherCheck.dynamicDrops, sunnyDrops: weatherCheck.sunnyDrops }),
     );
 
     // ------------------------------------------------------------------
-    // 4. DRMC campus: placement, routes from two districts, overlay, keep-clear
+    // 4. Removed landmark: no scene, map UI, destination or navigation shortcut.
     // ------------------------------------------------------------------
-    const drmcCheck = await page.evaluate(() => {
+    const formerSiteCheck = await page.evaluate(() => {
       const g = window.__banglarTesla;
-      const report = g.debugDrmcReport();
-      const routeW = g.debugDrmcRoute(-126, -136);
-      const routeS = g.debugDrmcRoute(42, 106);
-      const routeE = g.debugDrmcRoute(162, -172);
-      const overlayOn = window.__btToggleDrmcOverlay();
-      const overlayNodes = (() => {
-        let n = 0;
-        g.scene.traverse((o) => {
-          if (o.name === 'drmc-accuracy-overlay') n = o.children.length;
-        });
-        return n;
-      })();
-      const overlayOff = window.__btToggleDrmcOverlay();
-      return {
-        fitScale: report.fitScale,
-        fitRms: report.fitRms,
-        gateToWall: report.gateToWallDistance,
-        routes: [routeW.ok, routeS.ok, routeE.ok],
-        distances: [routeW.distance, routeS.distance, routeE.distance],
-        overlayOn,
-        overlayNodes,
-        overlayOff,
-      };
+      const names = [];
+      g.scene.traverse((o) => { if (/drmc|campus/i.test(o.name)) names.push(o.name); });
+      return { names, navButton: !!document.querySelector('#hud-drmc-nav'),
+        destination: !!g.drmcNavigation, marker: !!g.ui.hud?.textContent?.match(/DRMC/i) };
     });
-    check(
-      'DRMC campus + gate placement validated (fit RMS ≤ 48 m), routes reach from 3 districts, DEV overlay toggles',
-      drmcCheck.fitRms < 48 &&
-        drmcCheck.gateToWall < 14 &&
-        drmcCheck.routes.every(Boolean) &&
-        drmcCheck.distances.every((d) => d > 40 && d < 2500) &&
-        drmcCheck.overlayOn === true &&
-        drmcCheck.overlayNodes >= 4 &&
-        drmcCheck.overlayOff === false,
-      JSON.stringify(drmcCheck),
-    );
+    check('Removed landmark has no scene objects, navigation shortcut or HUD label',
+      formerSiteCheck.names.length === 0 && !formerSiteCheck.navButton &&
+        !formerSiteCheck.destination && !formerSiteCheck.marker, JSON.stringify(formerSiteCheck));
 
     // ------------------------------------------------------------------
     // 5. Optional four-racer and ranked 1v1 + winner photo (teleport fixtures)
@@ -254,6 +234,7 @@ async function main() {
       g.exitRaceToFreeRide();
       // Seed the prerequisite fixture; separate repair smoke exercises real callbacks.
       g.state.progress.blacklistTasks = ['10:race', '10:fare'];
+      g.state.progress.blacklistRaceWins['10'] = 1;
       g.startRivalEvent('bl_boss_10');
       const ai = g.raceSystem.getAiRacersSnapshot();
       g.debugStepSim(3.2);
@@ -417,14 +398,12 @@ async function main() {
     await page.evaluate(() => {
       const g = window.__banglarTesla;
       g.exitRaceToFreeRide();
-      window.__btToggleDrmcOverlay();
       g.debugTeleport(28, -50, 0.4);
       g.debugStepSim(0.05);
     });
-    await page.screenshot({ path: path.join(artifacts, 'vnext-drmc-overlay.png') });
+    await page.screenshot({ path: path.join(artifacts, 'vnext-former-site.png') });
     await page.evaluate(() => {
       const g = window.__banglarTesla;
-      window.__btToggleDrmcOverlay();
       g.weatherDirector.setWeatherImmediate('storm');
       g.update(0.2);
       g.env.strike(0.9, true);
