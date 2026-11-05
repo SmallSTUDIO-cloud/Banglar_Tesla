@@ -110,12 +110,12 @@ async function main() {
       JSON.stringify({ hasUnlockBtn: preGestureState.hasUnlockBtn, initialUnlocked: preGestureState.initialUnlocked }),
     );
     check(
-      'v0.6.3 web baseline offers the accepted v0.6.3-test.1 APK, phone icon and install note',
+      'v0.6.7 web game links its debug test APK, phone icon and install note',
       preGestureState.apkVisible &&
-        preGestureState.webVersion === 'v0.6.3' &&
+        preGestureState.webVersion === 'v0.6.7' &&
         preGestureState.apkHref ===
-          'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/download/v0.6.3-test.1-20261101/banglar-tesla-v0.6.3-test.1-debug.apk' &&
-        preGestureState.apkFilename === 'banglar-tesla-v0.6.3-test.1-debug.apk' &&
+          'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/download/v0.6.7/banglar-tesla-v0.6.7-debug.apk' &&
+        preGestureState.apkFilename === 'banglar-tesla-v0.6.7-debug.apk' &&
         preGestureState.apkHasPhoneIcon &&
         preGestureState.apkHasNotice,
       JSON.stringify({

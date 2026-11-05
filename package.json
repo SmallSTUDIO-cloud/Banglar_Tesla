@@ -1,7 +1,7 @@
 {
   "name": "banglar-tesla",
   "private": true,
-  "version": "0.6.3-test.1",
+  "version": "0.6.7",
   "description": "Banglar Tesla — a 3D Mohammadpur, Dhaka rickshaw driving simulator.",
   "type": "module",
   "scripts": {
