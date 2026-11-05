@@ -3,11 +3,52 @@ import * as THREE from 'three';
 import { QUALITY } from '../../src/core/config';
 import { InstancedTrafficFleet, TRAFFIC_TYPES, getTrafficArchetype } from '../../src/ai/vehicles';
 import { TrafficSystem } from '../../src/ai/traffic';
-import { DEFAULT_LOOK, RickshawRig } from '../../src/vehicle/rickshawModel';
+import { DEFAULT_LOOK, RickshawRig, RickshawVisual, lookFrom } from '../../src/vehicle/rickshawModel';
+import { VEHICLES } from '../../src/economy/catalog';
 
 const pose = { steerAngle: 0, wheelSpin: 1.2, pedalPhase: 0, roll: 0, pitch: 0, nightFactor: 0 };
 
 describe('vehicle presentation without gameplay changes', () => {
+  it('turns existing garage progression into hero/showroom geometry without extra mesh draws', () => {
+    const vehicle = VEHICLES[0];
+    const basic = lookFrom(vehicle, {});
+    const upgraded = lookFrom(vehicle, { paint: 'paint.blue', art: 'art.floral' }, undefined,
+      { seat: 2, tyres: 3, brakes: 2, canopy: 2, steering: 2, lights: 1 });
+    expect(basic.seatColor).toBe(vehicle.palette.seat);
+    expect(upgraded.frameColor).not.toBe(basic.frameColor);
+    expect(upgraded.seatLevel).toBe(2);
+    expect(upgraded.tyreLevel).toBe(3);
+    const hero = new RickshawVisual(vehicle, basic);
+    const meshes = () => {
+      const found: THREE.Mesh[] = [];
+      hero.rig.root.traverse(o => { if (o instanceof THREE.Mesh) found.push(o); });
+      return found;
+    };
+    const baseline = meshes().length;
+    const count = (name: string) => {
+      const mesh = hero.rig.root.getObjectByName(name) as THREE.Mesh;
+      return (mesh.geometry.getAttribute('position') as THREE.BufferAttribute).count;
+    };
+    const wheelVerts = count('wheel.rubber');
+    const fabricVerts = count('rickshaw.chassis.fabric');
+    const chromeVerts = count('rickshaw.steer.chrome');
+    const radius = hero.rig.rearWheelRadius;
+    hero.applyLook(upgraded);
+    expect(meshes()).toHaveLength(baseline);
+    expect(count('wheel.rubber')).toBeGreaterThan(wheelVerts);
+    expect(count('rickshaw.chassis.fabric')).toBeGreaterThan(fabricVerts);
+    expect(count('rickshaw.steer.chrome')).toBeGreaterThan(chromeVerts);
+    expect(hero.rig.rearWheelRadius).toBe(radius);
+    expect(hero.rig.passengerMount.children).toContain(hero.seatAnchor);
+    hero.dispose();
+    // Showroom receives close-up detail without enabling a second player headlamp.
+    const showroom = new RickshawVisual(vehicle, upgraded, false, true);
+    expect(showroom.rig.headlampLight).toBeNull();
+    expect((showroom.rig.frontWheel.getObjectByName('wheel.rubber') as THREE.Mesh).geometry
+      .getAttribute('position').count).toBeGreaterThan(wheelVerts);
+    showroom.dispose();
+  });
+
   it('keeps pedal rickshaw feet anti-phased with real crank height and travel', () => {
     const rig = new RickshawRig(DEFAULT_LOOK, { isPlayer: true });
     const left = rig.puller.getObjectByName('leftLeg')!;

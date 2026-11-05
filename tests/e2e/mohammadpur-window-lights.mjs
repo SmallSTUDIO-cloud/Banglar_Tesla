@@ -37,7 +37,7 @@ try {
     g.camera.position.set(42, 2.5, 112); g.camera.lookAt(55, 1.6, 95);
     g.camera.fov = 58; g.camera.updateProjectionMatrix();
     const group = g.city.group.getObjectByName('night-glow');
-    const panes = group.children.filter(o => /^sec\.\d+\.windowLights$/.test(o.name));
+    const panes = group.children.filter(o => /^(?:sec\.\d+\.windowLights|lights\.district\.\d+)$/.test(o.name));
     const snapshot = (hour) => {
       g.debugSetTimeForTest(hour, 0); g.debugStepSim(1);
       g.renderer.render(g.scene, g.camera);

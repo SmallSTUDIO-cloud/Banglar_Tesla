@@ -462,7 +462,7 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     halfLength = 3.73;
     halfWidth = 1.19;
     radius = 2.65;
-    schemeHexes = ['#b7282e', '#165a8a', '#1e6f50', '#8a2b52'];
+    schemeHexes = ['#b7282e', '#165a8a', '#1e6f50', '#8a2b52', '#d49b38', '#4c6874'];
     // Lower skirt body + sloped front brow + rounded upper roof cap
     primary.box({ x: 0, y: 0.92, z: 0 }, { x: 2.38, y: 0.96, z: 7.42 }, '#ffffff');
     primary.box({ x: 0, y: 2.78, z: -0.04 }, { x: 2.24, y: 0.20, z: 7.18 }, '#ffffff');
@@ -644,7 +644,7 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     halfLength = 2.04;
     halfWidth = 0.86;
     radius = 1.58;
-    schemeHexes = ['#e8ecef', '#25323f', '#8a2020', '#1e4e79', '#d6cfc2'];
+    schemeHexes = ['#e8ecef', '#25323f', '#8a2020', '#1e4e79', '#d6cfc2', '#627a74', '#a28b6c'];
     // Sculpted waist body + gently sloped hood & trunk deck + greenhouse roof cap
     primary.box({ x: 0, y: 0.54, z: 0 }, { x: 1.72, y: 0.44, z: 3.98 }, '#ffffff');
     primary.box({ x: 0, y: 0.76, z: 1.36 }, { x: 1.64, y: 0.12, z: 1.16 }, '#ffffff', { x: 0.09 });

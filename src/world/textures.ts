@@ -242,6 +242,14 @@ export function plasterFacadeTexture(variant: number, tint: string): THREE.Textu
     const rng = mulberry32(700 + variant * 37);
     ctx.fillStyle = tint;
     ctx.fillRect(0, 0, w, h);
+    // Low-frequency rain/dust accumulation anchors tall bright facades to the
+    // street. Baked into the existing 256px atlas, not another texture pass.
+    const groundGrime = ctx.createLinearGradient(0, 0, 0, h);
+    groundGrime.addColorStop(0, 'rgba(59,51,41,0.015)');
+    groundGrime.addColorStop(0.64, 'rgba(59,51,41,0.035)');
+    groundGrime.addColorStop(1, 'rgba(56,52,45,0.18)');
+    ctx.fillStyle = groundGrime;
+    ctx.fillRect(0, 0, w, h);
 
     // Monsoon damp streaks & weathered concrete patina
     for (let i = 0; i < 65; i++) {

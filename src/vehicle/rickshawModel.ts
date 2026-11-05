@@ -93,6 +93,14 @@ export interface RickshawLook {
   bell: string;
   mirrorSet: boolean;
   flowersColor: string | null;
+  /** Existing garage progression is reflected in actual geometry/materials. */
+  seatColor?: string;
+  seatLevel?: number;
+  tyreLevel?: number;
+  brakeLevel?: number;
+  canopyLevel?: number;
+  steeringLevel?: number;
+  lightsLevel?: number;
   kind?: VehicleKind;
   character?: DriverCharacterSpec;
 }
@@ -110,6 +118,7 @@ export const DEFAULT_LOOK: RickshawLook = {
   bell: 'classic',
   mirrorSet: false,
   flowersColor: null,
+  seatColor: '#7a1f28',
   kind: 'pedal',
 };
 
@@ -134,8 +143,9 @@ export class RickshawRig {
   private readonly armDirection = new THREE.Vector3();
   private readonly armUp = new THREE.Vector3(0, 1, 0);
 
-  constructor(look: RickshawLook = DEFAULT_LOOK, opts: { isPlayer?: boolean } = {}) {
+  constructor(look: RickshawLook = DEFAULT_LOOK, opts: { isPlayer?: boolean; heroDetail?: boolean } = {}) {
     this.look = look;
+    const heroDetail = Boolean(opts.isPlayer || opts.heroDetail);
     this.isElectric = look.kind === 'electric' || look.kind === 'roadster';
     const isRoadster = look.kind === 'roadster';
 
@@ -172,9 +182,12 @@ export class RickshawRig {
     const bWood = new Bucket('rickshaw.chassis.wood', woodLeatherMat);
 
     // --------------------------------------------------- 1. WHEELS (exact ground contact)
-    this.frontWheel = createWheel(this.frontWheelRadius, '#1a1c1f', look.wheelTrim, 18);
-    const rearL = createWheel(this.rearWheelRadius, '#1a1c1f', look.wheelTrim, 20);
-    const rearR = createWheel(this.rearWheelRadius, '#1a1c1f', look.wheelTrim, 20);
+    const tyreLevel = Math.max(0, Math.min(3, look.tyreLevel ?? 0));
+    const tyreColor = tyreLevel >= 2 ? '#252b30' : '#1a1c1f';
+    const tread = heroDetail && tyreLevel >= 1;
+    this.frontWheel = createWheel(this.frontWheelRadius, tyreColor, look.wheelTrim, 18, tread);
+    const rearL = createWheel(this.rearWheelRadius, tyreColor, look.wheelTrim, 20, tread);
+    const rearR = createWheel(this.rearWheelRadius, tyreColor, look.wheelTrim, 20, tread);
     if (!opts.isPlayer) {
       for (const w of [this.frontWheel, rearL, rearR]) {
         w.traverse((node) => {
@@ -196,6 +209,11 @@ export class RickshawRig {
 
     const frameCol = look.frameColor;
     const trimCol = look.canopyTrim;
+    const seatCol = look.seatColor ?? '#7a1f28';
+    const seatShade = new THREE.Color(seatCol).multiplyScalar(0.55);
+    const seatLevel = Math.max(0, Math.min(3, look.seatLevel ?? 0));
+    const canopyLevel = Math.max(0, Math.min(2, look.canopyLevel ?? 0));
+    const brakeLevel = Math.max(0, Math.min(3, look.brakeLevel ?? 0));
     const rearZ = RIDE.rearAxleZ; // -0.68
     const rearY = this.rearWheelRadius; // 0.386
 
@@ -232,6 +250,13 @@ export class RickshawRig {
       // Rear rubber mudflap with brass studs
       bWood.box({ x: wx, y: 0.21, z: rearZ - this.rearWheelRadius - 0.03 }, { x: 0.12, y: 0.14, z: 0.012 }, '#181a1d');
       bChrome.cylinder({ x: wx, y: 0.17, z: rearZ - this.rearWheelRadius - 0.038 }, 0.012, 0.01, trimCol, { x: Math.PI / 2 });
+      if (heroDetail && brakeLevel > 0) {
+        // Fixed brake shoes/cable on the fork; wheel geometry still rotates freely.
+        bMetal.box({ x: wx - side * 0.055, y: rearY + 0.18, z: rearZ + 0.02 },
+          { x: 0.033, y: 0.08, z: 0.055 }, brakeLevel > 1 ? '#9e342a' : '#41484b');
+        bChrome.cylinder({ x: wx - side * 0.05, y: rearY + 0.23, z: rearZ + 0.08 },
+          0.005, 0.19, '#c4c8be', { x: 0.36 });
+      }
     }
 
     // ----------------------------------------- 3. TUBULAR STEEL BICYCLE FRAME
@@ -322,6 +347,11 @@ export class RickshawRig {
     // Front rod/caliper brake assembly
     bSteerChrome.box({ x: 0, y: 0.73, z: 0.048 }, { x: 0.11, y: 0.03, z: 0.025 }, '#c6cdd4');
     bSteerChrome.cylinder({ x: 0.02, y: 0.94, z: 0.01 }, 0.004, 0.42, '#22262a', { x: -0.14 });
+    if (heroDetail && brakeLevel > 0) {
+      bSteerMetal.box({ x: 0.052, y: this.frontWheelRadius + 0.16, z: 0.03 },
+        { x: 0.035, y: 0.095, z: 0.055 }, brakeLevel > 1 ? '#9e342a' : '#41484b');
+      bSteerChrome.cylinder({ x: 0.055, y: 0.71, z: 0.03 }, 0.005, 0.22, '#c4c8be', { x: -0.12 });
+    }
 
     // Stem + classic swept-back Bangladeshi chrome handlebars + brake levers
     bSteerChrome.cylinder({ x: 0, y: 1.09, z: -0.045 }, 0.016, 0.19, '#dce3ea', { x: -0.15 });
@@ -348,6 +378,13 @@ export class RickshawRig {
         '#cfd6de',
         { y: side * 0.18 },
       );
+      if (heroDetail && (look.steeringLevel ?? 0) > 0) {
+        // Textured, replaceable grip collars on the cockpit-facing handlebars.
+        for (const dz of [-0.035, 0.015, 0.055]) {
+          bSteerChrome.cylinder({ x: side * 0.275, y: 1.17, z: -0.195 + dz },
+            0.021, 0.008, look.steeringLevel! > 1 ? trimCol : '#adb6b7', { x: Math.PI / 2 });
+        }
+      }
     }
 
     // Polished brass rickshaw bell (`টুং টাং`) on handlebar!
@@ -390,6 +427,10 @@ export class RickshawRig {
 
     // Front headlamp(s) + municipal rickshaw number plate
     bSteerChrome.cylinder({ x: 0, y: 0.92, z: 0.075 }, 0.052, 0.075, '#cfd6de', { x: Math.PI / 2 });
+    if (heroDetail && (look.lightsLevel ?? 0) > 0) {
+      bSteerChrome.torus({ x: 0, y: 0.92, z: 0.119 }, 0.105,
+        look.lightsLevel! > 1 ? '#edd38c' : '#e1e7dd');
+    }
     if (this.isElectric) {
       for (const sx of [-0.11, 0.11]) {
         bSteerChrome.cylinder({ x: sx, y: 0.84, z: 0.065 }, 0.036, 0.055, '#1e2b36', { x: Math.PI / 2 });
@@ -448,19 +489,41 @@ export class RickshawRig {
       }
       bWood.cylinder({ x: plateX + side * 0.014, y: 0.89, z: -0.75 },
         0.018, 0.008, trimCol, { z: Math.PI / 2 });
+      if (heroDetail) {
+        // Fine hand-painted side scrolls and weathered enamel highlight.
+        for (const y of [0.715, 0.75]) {
+          bChrome.box({ x: plateX, y, z: -0.75 }, { x: 0.008, y: 0.006, z: 0.48 },
+            y < 0.74 ? trimCol : look.artSecondary);
+        }
+        bChrome.box({ x: side * 0.465, y: 0.66, z: -0.79 },
+          { x: 0.009, y: 0.018, z: 0.48 }, '#bcc4b9');
+      }
       bFabric.box({ x: side * 0.455, y: 1.07, z: -0.73 }, { x: 0.075, y: 0.065, z: 0.52 }, look.canopyColor);
       // Chrome grab handle at front of carriage
       bChrome.cylinder({ x: side * 0.46, y: 1.06, z: -0.45 }, 0.011, 0.18, '#dce3ea', { x: 0.25 });
     }
 
     // Quilted passenger bench cushion + tufted backrest
-    bFabric.box({ x: 0, y: 0.775, z: -0.74 }, { x: 0.85, y: 0.11, z: 0.48 }, '#a91d2c');
+    bFabric.box({ x: 0, y: 0.775, z: -0.74 }, { x: 0.85, y: 0.11, z: 0.48 }, seatCol);
     bFabric.box({ x: 0, y: 0.832, z: -0.54 }, { x: 0.84, y: 0.025, z: 0.07 }, trimCol); // front piping welt
-    bFabric.box({ x: 0, y: 1.06, z: -0.99 }, { x: 0.85, y: 0.48, z: 0.095 }, '#a91d2c', { x: -0.08 });
+    bFabric.box({ x: 0, y: 1.06, z: -0.99 }, { x: 0.85, y: 0.48, z: 0.095 }, seatCol, { x: -0.08 });
     // Quilted vertical pleats + brass upholstery buttons
     for (let q = -3; q <= 3; q++) {
-      bFabric.box({ x: q * 0.11, y: 1.06, z: -0.94 }, { x: 0.015, y: 0.42, z: 0.018 }, '#811220', { x: -0.08 });
+      bFabric.box({ x: q * 0.11, y: 1.06, z: -0.94 }, { x: 0.015, y: 0.42, z: 0.018 }, seatShade, { x: -0.08 });
       bChrome.cylinder({ x: q * 0.11, y: 1.10, z: -0.93 }, 0.01, 0.012, trimCol, { x: Math.PI / 2 });
+    }
+    if (heroDetail && seatLevel > 0) {
+      // The existing comfort purchase adds actual stitched upholstery and welting.
+      for (let i = -3; i <= 3; i++) {
+        bFabric.box({ x: i * 0.112, y: 0.836, z: -0.73 },
+          { x: 0.007, y: 0.003, z: 0.34 }, seatLevel > 1 ? '#dcc493' : seatShade);
+      }
+      if (seatLevel > 1) {
+        for (const x of [-0.39, 0.39]) {
+          bFabric.box({ x, y: 0.839, z: -0.74 }, { x: 0.045, y: 0.035, z: 0.46 }, seatCol);
+          bChrome.box({ x, y: 1.055, z: -0.93 }, { x: 0.01, y: 0.42, z: 0.008 }, trimCol);
+        }
+      }
     }
 
     // Rear ornate painted tin backplate + reflectors + Dhaka rickshaw plate
@@ -499,6 +562,15 @@ export class RickshawRig {
         bFabric.box({ x: side * 0.485, y: y - 0.01, z }, { x: 0.02, y: 0.04, z: length }, look.canopyColor, { x: pitch });
       }
       bChrome.box({ x: 0, y: b.y + 0.018, z: b.z }, { x: 0.995, y: 0.014, z: 0.022 }, trimCol, { x: pitch });
+      if (heroDetail && canopyLevel > 0) {
+        // Garage canopy reinforcement: stitched ribs and extra rain lip.
+        bFabric.box({ x: 0, y: b.y + 0.027, z: b.z },
+          { x: 0.94, y: 0.006, z: 0.012 }, canopyLevel > 1 ? '#f4d69d' : trimCol, { x: pitch });
+      }
+    }
+    if (heroDetail && canopyLevel > 1) {
+      bFabric.box({ x: 0, y: 1.48, z: -0.176 }, { x: 1.04, y: 0.045, z: 0.048 }, look.canopyColor);
+      bChrome.box({ x: 0, y: 1.454, z: -0.152 }, { x: 1.05, y: 0.01, z: 0.016 }, trimCol);
     }
     // Side brass folding-hood scissor arms (authentic Bangladeshi rickshaw hood mechanism!)
     for (const side of [-1, 1]) {
@@ -969,12 +1041,20 @@ export function lookFrom(
   const bell = equipped.bell ? cosmeticById(equipped.bell) : undefined;
   const flowers = equipped.flowers ? cosmeticById(equipped.flowers) : undefined;
   const mirror = equipped.mirror ? cosmeticById(equipped.mirror) : undefined;
+  const level = (id: string, max: number) => Math.max(0, Math.min(max, upgrades?.[id] ?? 0));
 
   return {
     frameColor: paint?.value ?? vehicle.palette.body,
     canopyColor: vehicle.palette.canopy,
     canopyTrim: tassel?.value ?? paint?.swatch[1] ?? vehicle.palette.trim,
-    wheelTrim: '#dce3ea',
+    wheelTrim: level('tyres', 3) >= 3 ? vehicle.palette.trim : '#dce3ea',
+    seatColor: vehicle.palette.seat,
+    seatLevel: level('seat', 3),
+    tyreLevel: level('tyres', 3),
+    brakeLevel: level('brakes', 3),
+    steeringLevel: level('steering', 3),
+    canopyLevel: level('canopy', 2),
+    lightsLevel: level('lights', 2),
     artMotif: art?.value ?? 'floral',
     artPrimary: art?.swatch[0] ?? vehicle.palette.panel,
     artSecondary: art?.swatch[1] ?? vehicle.palette.trim,
@@ -1002,13 +1082,15 @@ export class RickshawVisual {
   private pedalPhase = 0;
   private nightFactor = 0;
   private isPlayer: boolean;
+  private showcase: boolean;
 
-  constructor(vehicle: VehicleDef, look: RickshawLook, isPlayer = true) {
+  constructor(vehicle: VehicleDef, look: RickshawLook, isPlayer = true, showcase = false) {
     this.vehicle = vehicle;
     this.isPlayer = isPlayer;
+    this.showcase = showcase;
     this.root.name = 'rickshaw-visual';
     this.root.rotation.order = 'YXZ';
-    this.rig = new RickshawRig({ ...look, kind: vehicle.kind }, { isPlayer });
+    this.rig = new RickshawRig({ ...look, kind: vehicle.kind }, { isPlayer, heroDetail: showcase });
     this.root.add(this.rig.root);
     this.rig.passengerMount.add(this.seatAnchor);
     this.lookKey = this.computeKey(vehicle, look);
@@ -1026,7 +1108,7 @@ export class RickshawVisual {
     this.rig.passengerMount.remove(this.seatAnchor);
     this.root.remove(this.rig.root);
     this.rig.dispose();
-    this.rig = new RickshawRig({ ...look, kind: vehicle.kind }, { isPlayer: this.isPlayer });
+    this.rig = new RickshawRig({ ...look, kind: vehicle.kind }, { isPlayer: this.isPlayer, heroDetail: this.showcase });
     this.root.add(this.rig.root);
     this.rig.passengerMount.add(this.seatAnchor);
   }

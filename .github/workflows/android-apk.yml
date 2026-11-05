@@ -6,11 +6,6 @@ on:
       - 'arena/*'
       - main
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: 'Optionally publish a separate prerelease for this verified test build'
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -66,27 +61,29 @@ jobs:
           fi
           tail -40 gradle-apk.log
           mkdir -p artifacts
-          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/banglar-tesla-v0.6.3-test.1-debug.apk
-          sha256sum artifacts/banglar-tesla-v0.6.3-test.1-debug.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/banglar-tesla-v0.6.7-debug.apk
+          sha256sum artifacts/banglar-tesla-v0.6.7-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: banglar-tesla-v0.6.3-test.1-debug-apk
-          path: artifacts/banglar-tesla-v0.6.3-test.1-debug.apk
+          name: banglar-tesla-v0.6.7-debug-apk
+          path: artifacts/banglar-tesla-v0.6.7-debug.apk
           if-no-files-found: error
-      - name: Publish optional distinct test prerelease (never overwrite baseline)
-        if: (github.event_name == 'workflow_dispatch' && inputs.publish_release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-test-apk-063-20261101]'))
+      # A uniquely marked push publishes only after all verification and artifact upload.
+      # A debug-signed APK must never be presented as a production-signed release.
+      - name: Publish v0.6.7 debug test prerelease
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish-v0.6.7-debug]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=v0.6.3-test.1-20261101
-          APK=artifacts/banglar-tesla-v0.6.3-test.1-debug.apk
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Refusing to overwrite existing release $TAG" >&2
+          TAG=v0.6.7
+          APK=artifacts/banglar-tesla-v0.6.7-debug.apk
+          if gh release view "$TAG" >/dev/null 2>&1 || git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Refusing to overwrite existing tag or release $TAG" >&2
             exit 1
           fi
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
           SIZE="$(stat -c%s "$APK")"
           gh release create "$TAG" "$APK" --target "$GITHUB_SHA" \
-            --prerelease --title 'Banglar Tesla v0.6.3-test.1 — collision, street visuals and blacklist test APK' \
-            --notes "Debug-signed APK from commit $GITHUB_SHA. Package com.shostalab.banglartesla; versionCode 10; versionName 0.6.3-test.1; minSdk 24. File size: $SIZE bytes. SHA-256: $SHA. Built with the repository Gradle 8.7 / AGP 8.5.2 pipeline on JDK 17 and official Android SDK 34 / Build Tools 34.0.0. The build script verifies zip alignment, signing, APK identity/version and the bundled web assets. Includes tree and pole collisions, two street-visual passes, curbside NPC overtaking, and original ranked race-win / milestone / pursuit-bounty gates with save migration. Browser and unit checks ran before packaging; physical-device visual, performance and voice-listening validation remain open. Existing bundled Bengali voice fallbacks are synthetic, not human recordings; installed offline Bengali TTS voices vary by device. No installation or physical-device validation has been performed. This is a test APK, not a production-signed update; it may not install over a differently signed copy."
+            --prerelease --title 'Banglar Tesla v0.6.7 — debug test APK (latest features)' \
+            --notes "Debug-signed TEST APK from commit $GITHUB_SHA. Package com.shostalab.banglartesla; versionCode 11; versionName 0.6.7; minSdk 24. APK size: $SIZE bytes. SHA-256: $SHA. Built by the official Android SDK 34 / Gradle 8.7 pipeline after unit and web-bundle checks; APK signature, alignment, identity and bundled assets verified by scripts/build-apk.py. Includes the reviewed Living Mohammadpur traffic and market pedestrian behavior, streetscape and shopfront additions, supplied posters, and camera clipping optimization. Five before/after scenes had mixed visible density; improvement was not proven. Physical Android-device performance and installation remain untested. This is NOT a production-signed update and may not install over an app signed with a different key. The matching web game is deployed separately through the main-branch GitHub Pages workflow."

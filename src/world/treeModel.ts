@@ -12,9 +12,11 @@ const crown = new THREE.SphereGeometry(1, 8, 6);
 const crownPositions = crown.getAttribute('position') as THREE.BufferAttribute;
 for (let i = 0; i < crownPositions.count; i++) {
   const x = crownPositions.getX(i), y = crownPositions.getY(i), z = crownPositions.getZ(i);
-  const radius = 1 + 0.075 * Math.sin(x * 9 + z * 7 + y * 5) +
-    0.05 * Math.cos(x * 5 - z * 11);
-  crownPositions.setXYZ(i, x * radius, y * (1 + 0.055 * Math.sin(x * 7 + z * 4)), z * radius);
+  // Break the spherical outline at the existing vertex budget; shadows and
+  // daylight now catch irregular branch-sized lobes rather than smooth balls.
+  const radius = 1 + 0.13 * Math.sin(x * 9 + z * 7 + y * 5) +
+    0.075 * Math.cos(x * 5 - z * 11);
+  crownPositions.setXYZ(i, x * radius, y * (1 + 0.08 * Math.sin(x * 7 + z * 4)), z * radius);
 }
 crown.computeVertexNormals();
 const up = new THREE.Vector3(0, 1, 0);
@@ -39,13 +41,39 @@ export function addStreetTree(bucket: Bucket, tree: StreetTree): void {
     return ((value ^ (value >>> 16)) >>> 0) / 4294967296;
   };
   const rotate = noise(1) * Math.PI * 2;
+  // Three silhouettes at the same four-crown budget: spreading shade trees,
+  // compact roadside trees and taller, narrower crowns. No extra meshes.
+  const species = Math.floor(noise(70) * 3);
+  const spread = species === 1 ? 0.91 : species === 2 ? 0.92 : 1;
+  const lift = species === 2 ? 0.24 : species === 1 ? -0.09 : 0;
   bucket.add(trunk, { x, y: h * 0.47, z }, { x: 1, y: h * 0.94, z: 1 }, '#68523a');
+  // Two low planted clumps make the curbside tree read as layered greenery
+  // from the driving camera. Both share the opaque sector bucket and stay
+  // inside the already-clear tree footprint (no new foliage transparency).
+  for (let i = 0; i < 2; i++) {
+    const a = rotate + i * Math.PI;
+    bucket.cone({ x: x + Math.cos(a) * 0.27, y: 0.20, z: z + Math.sin(a) * 0.27 },
+      0.23, 0.40, i === 0 ? '#365845' : '#466b49');
+  }
+
+  // A few tree pits carry self-seeded roadside undergrowth. Tiny, non-solid
+  // clumps remain within the validated clear radius around the trunk.
+  if (noise(72) < 0.38) {
+    for (let i = 0; i < 3; i++) {
+      const a = rotate + i * 2.40;
+      const r = 0.48 + noise(i + 73) * 0.18;
+      bucket.cone({ x: x + Math.cos(a) * r, y: 0.15 + i * 0.025,
+        z: z + Math.sin(a) * r }, 0.14 + noise(i + 77) * 0.055,
+        0.29 + noise(i + 81) * 0.13,
+        i % 2 ? '#4b6941' : '#61704b');
+    }
+  }
 
   // Real branching reads from below; the old trees were a pole with two cones.
   // Every fork ends under foliage, so short branches have no exposed cut ends.
   for (let i = 0; i < 3; i++) {
     const angle = rotate + i * Math.PI * 2 / 3;
-    const reach = 0.95 + noise(i + 2) * 0.36;
+    const reach = (0.95 + noise(i + 2) * 0.36) * spread;
     const from = new THREE.Vector3(x, h * (0.65 + 0.035 * i), z);
     const to = new THREE.Vector3(x + Math.cos(angle) * reach, h + 0.28 + noise(i + 5) * 0.25,
       z + Math.sin(angle) * reach);
@@ -63,17 +91,19 @@ export function addStreetTree(bucket: Bucket, tree: StreetTree): void {
   // The centre overlaps three lower crowns, producing a single shaded canopy
   // rather than individual balloons. Coordinate hash varies each silhouette.
   const green = greens[Math.floor(noise(41) * greens.length)];
-  bucket.add(crown, { x, y: h + 0.76, z },
-    { x: 1.45 + noise(10) * 0.20, y: 0.99, z: 1.38 + noise(11) * 0.22 }, green,
+  bucket.add(crown, { x, y: h + 0.76 + lift, z },
+    { x: (1.45 + noise(10) * 0.20) * spread, y: species === 2 ? 1.28 : 0.99,
+      z: (1.38 + noise(11) * 0.22) * spread }, green,
     { y: rotate * 0.4, z: (noise(12) - 0.5) * 0.12 });
   for (let i = 0; i < 3; i++) {
     const angle = rotate + i * Math.PI * 2 / 3;
-    const radius = 0.70 + noise(i + 8) * 0.19;
+    const radius = (0.70 + noise(i + 8) * 0.19) * spread;
     const lx = x + Math.cos(angle) * radius;
     const lz = z + Math.sin(angle) * radius;
-    bucket.add(crown, { x: lx, y: h + 0.43 + noise(i + 15) * 0.21, z: lz },
-      { x: 0.95 + noise(i + 23) * 0.18, y: 0.77 + noise(i + 35) * 0.13,
-        z: 0.92 + noise(i + 29) * 0.18 },
+    bucket.add(crown, { x: lx, y: h + 0.43 + lift + noise(i + 15) * 0.21, z: lz },
+      { x: (0.95 + noise(i + 23) * 0.18) * spread,
+        y: (0.77 + noise(i + 35) * 0.13) * (species === 2 ? 1.24 : 1),
+        z: (0.92 + noise(i + 29) * 0.18) * spread },
       greens[(Math.floor(noise(i + 39) * greens.length) + i) % greens.length],
       { y: angle * 0.6, z: (noise(i + 44) - 0.5) * 0.20 });
   }

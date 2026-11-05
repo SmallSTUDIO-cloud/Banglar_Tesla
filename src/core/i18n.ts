@@ -578,8 +578,8 @@ export const STRINGS: Record<string, Entry> = {
   // --------------------------------------------------- APK install button (v0.4)
   'menu.installApk': { bn: 'অ্যাপ ইনস্টল (APK)', en: 'Install APK' },
   'menu.installApkSub': {
-    bn: 'অ্যান্ড্রয়েড ফোনে ইনস্টল করতে ব্রাউজার থেকে APK ইনস্টলের অনুমতি দিন',
-    en: 'Android may ask permission to install APKs from your browser',
+    bn: 'v0.6.7 পরীক্ষামূলক debug APK — আগে ইনস্টল করা অন্য সাইনিংয়ের অ্যাপের উপর নাও বসতে পারে',
+    en: 'v0.6.7 debug test APK; may not update apps signed with a different key',
   },
   'toast.apkDownload': {
     bn: 'Banglar-Tesla.apk ডাউনলোড শুরু হচ্ছে — অ্যান্ড্রয়েডে ব্রাউজার ইনস্টল অনুমতি দিন',

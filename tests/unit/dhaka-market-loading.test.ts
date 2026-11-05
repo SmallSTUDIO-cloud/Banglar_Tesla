@@ -32,8 +32,11 @@ describe('a real market-edge loading pause, never a conjured vehicle', () => {
     const before={x:near.worldX,z:near.worldZ};
     expect(p.noticeRoadsideLoading(80,95)).toBeGreaterThanOrEqual(1);
     expect(near.pause).toBeGreaterThanOrEqual(0.85);
+    expect(near.marketAttention).toBe(0.85);
+    expect([near.marketX,near.marketZ]).toEqual([80,95]);
     expect([near.worldX,near.worldZ]).toEqual([before.x,before.z]);
     expect(reserved.pause).toBe(0);
+    expect(reserved.marketAttention).toBe(0);
     expect(far.pause).toBe(0);
     expect(p.activePedestrianCount).toBe(n);
     p.dispose();

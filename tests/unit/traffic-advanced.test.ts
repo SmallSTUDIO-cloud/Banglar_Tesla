@@ -30,6 +30,17 @@ function fixture(kinds: TrafficType[], laneId = 'asad_0:rev') {
 const run = (t: TrafficSystem, n: number) => { for (let i = 0; i < n; i++) t.update(1 / 30); };
 
 describe('advanced traffic, scripted real-fleet scenarios', () => {
+  it('renormalizes the existing fleet on narrow lanes instead of turning bus/truck slots into extra rickshaws', () => {
+    const traffic = new TrafficSystem(QUALITY.low);
+    const internals = traffic as any;
+    const count = traffic.vehicleCount;
+    internals.rng = () => 0.99;
+    expect(internals.pickVehicleSpec(true).kind).toBe('van');
+    expect(internals.pickVehicleSpec(false).kind).toBe('truck');
+    expect(traffic.vehicleCount).toBe(count);
+    expect(count).toBe(QUALITY.low.trafficCount);
+    traffic.dispose();
+  });
   it('does not stop for a player approaching from behind', () => {
     const { traffic, a, lane } = fixture(['car']);
     const initial = a.s;

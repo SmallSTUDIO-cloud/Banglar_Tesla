@@ -9,6 +9,7 @@ import chromium from '@sparticuz/chromium';
 import { ensureChromiumEnv, teardownHarness } from './chromium-env.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const tag=process.argv.find(x=>x.startsWith('--tag='))?.slice(6)||'after';
+const heroUpgrades=process.argv.includes('--hero-upgrades');
 const out=path.join(root,'artifacts',`vehicle-${tag}`);fs.mkdirSync(out,{recursive:true});
 const port=4243,server=spawn(path.join(root,'node_modules/.bin/vite'),['preview','--host','127.0.0.1','--port',String(port),'--strictPort'],{cwd:root,stdio:'ignore'});
 let browser;
@@ -27,6 +28,13 @@ try{
     g.renderer.setAnimationLoop(null);g.traffic.debugSetSimulationFrozen(true);
     g.peds.group.visible=false;g.traffic.group.visible=false;
     g.debugTeleport(42,106,0);
+  });
+  if(heroUpgrades) await page.evaluate(()=>{
+    const g=window.__banglarTesla;
+    // Exercise real garage-owned state -> lookFrom -> hero rig, not hand-built art.
+    Object.assign(g.state.progress.upgrades,{seat:2,tyres:3,brakes:2,canopy:2,steering:2,lights:1});
+    Object.assign(g.state.progress.cosmetics,{paint:'paint.blue',art:'art.floral'});
+    g.refreshPlayerLook();
   });
   async function capture(name,fn,arg){
     const result=await page.evaluate(fn,arg);

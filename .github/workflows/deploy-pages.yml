@@ -43,6 +43,7 @@ jobs:
           npm run build
           npm run test:e2e
           npm run test:mobile
+          npm run test:street
           npm run test:spec
           npm run test:vnext
 

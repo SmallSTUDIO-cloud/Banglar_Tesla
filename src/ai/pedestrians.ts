@@ -94,6 +94,9 @@ const TOP_COLORS = [
   '#264653', // slate shirt
   '#c9184a', // magenta saree
   '#457b9d', // school/college blue
+  '#9b7455', // faded earth-colour cotton
+  '#6a866a', // washed olive work shirt
+  '#bd8eae', // muted printed dress
 ];
 const SKIN_TONES = ['#8b5a3c', '#9e6845', '#704730', '#ad7650', '#946242'];
 const HAIR_HEADWEAR_COLORS = [
@@ -233,6 +236,10 @@ interface PedAgent {
   hasBag: boolean;
   hairScaleY: number;
   lookAtPlayer: number;
+  /** Brief attention to a real market-loading stop; reuses the existing rig. */
+  marketAttention: number;
+  marketX: number;
+  marketZ: number;
   worldX: number;
   worldZ: number;
   farAccum: number;
@@ -486,6 +493,9 @@ export class PedestrianSystem {
       hasBag: this.rng() < 0.36,
       hairScaleY: 0.94 + this.rng() * 0.14,
       lookAtPlayer: 0,
+      marketAttention: 0,
+      marketX: 0,
+      marketZ: 0,
       worldX: p ? p.ax + (p.bx - p.ax) * t : 0,
       worldZ: p ? p.az + (p.bz - p.az) * t : 0,
       farAccum: 0,
@@ -577,6 +587,7 @@ export class PedestrianSystem {
     ped.worldZ = path.az + (path.bz - path.az) * bestT;
     ped.sideJitter = 0; ped.evadeAmount = 0; ped.stumbleTimer = 0;
     ped.pause = 0.25; ped.farAccum = 0; ped.roadsideReserved = false;
+    ped.marketAttention = 0;
   }
 
   /** A few existing sidewalk walkers briefly pause for a REAL roadside loading
@@ -588,6 +599,9 @@ export class PedestrianSystem {
       if (ped.roadsideReserved ||
           Math.hypot(ped.worldX - x, ped.worldZ - z) > 8) continue;
       ped.pause = Math.max(ped.pause, 0.85);
+      ped.marketAttention = 0.85;
+      ped.marketX = x;
+      ped.marketZ = z;
       noticed++;
     }
     return noticed;
@@ -637,6 +651,7 @@ export class PedestrianSystem {
 
       // Recycle pedestrians > 155m away onto sidewalks within 45..125m of player so density stays rich!
       if (distSq > 155 * 155) {
+        ped.marketAttention = 0;
         for (let tries = 0; tries < 7; tries++) {
           const candIdx = this.pickPathIndex(true);
           const cp = PED_PATHS[candIdx];
@@ -668,6 +683,7 @@ export class PedestrianSystem {
 
       if (ped.reactCooldown > 0) ped.reactCooldown = Math.max(0, ped.reactCooldown - stepDt);
       if (ped.stumbleTimer > 0) ped.stumbleTimer = Math.max(0, ped.stumbleTimer - stepDt);
+      if (ped.marketAttention > 0) ped.marketAttention = Math.max(0, ped.marketAttention - stepDt);
 
       let approachingDanger = false;
       let dClosest = 999;
@@ -758,9 +774,14 @@ export class PedestrianSystem {
 
       const walkYaw = ped.dir === 1 ? path.fwdYaw : path.revYaw;
       let yaw = walkYaw;
+      if (ped.marketAttention > 0 && distSq < 58 * 58) {
+        const toMarketYaw = Math.atan2(ped.marketX - wx, ped.marketZ - wz);
+        yaw += shortAngle(walkYaw, toMarketYaw) * Math.min(1, ped.marketAttention * 1.6);
+      }
+      // A moving rider always takes precedence over an idle market glance.
       if (ped.lookAtPlayer > 0.01) {
         const toPlayerYaw = Math.atan2(playerX - wx, playerZ - wz);
-        yaw = walkYaw + shortAngle(walkYaw, toPlayerYaw) * ped.lookAtPlayer;
+        yaw += shortAngle(yaw, toPlayerYaw) * ped.lookAtPlayer;
       }
       const stumbleTilt = ped.stumbleTimer > 0 ? Math.sin(ped.stumbleTimer * 12) * 0.24 : 0;
 
@@ -803,7 +824,8 @@ export class PedestrianSystem {
       const evadeRaise = ped.evadeAmount > 0.25 ? -0.45 * ped.evadeAmount : 0;
       // A few waiting pedestrians gesture or adjust a bag. Near-LOD only,
       // using existing arm instances rather than new actors/skin rigs.
-      const idleGesture = ped.pause > 0 && nearLod && ped.pathIdx % 5 === 0
+      const idleGesture = ped.pause > 0 && nearLod &&
+        (ped.marketAttention > 0 || ped.pathIdx % 5 === 0)
         ? -.25 - Math.sin(ped.phase) * .12 : 0;
       const armSwingL = swing !== 0 ? -swing * 0.82 : evadeRaise || idleGesture;
       if (armSwingL !== 0) {

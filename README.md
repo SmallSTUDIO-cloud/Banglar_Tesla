@@ -31,7 +31,7 @@ Bangla-flavoured audio. It runs offline on a phone, installed from the browser.
 | Original synthesised music (3 loops) and SFX | **Done** |
 | Bangla + English localisation with Hind Siliguri | **Done** |
 | Offline installable PWA + fullscreen + landscape | **Done** |
-| Native Android APK | **Not built — see §7 and `docs/ANDROID_PACKAGING.md`** |
+| Native Android APK | **v0.6.7 debug-signed test APK built in GitHub Actions; not production-signed — see §7** |
 | Photo mode, replays, extra districts, weather radar events | **Backlog (`docs/CONTENT_ROADMAP.md`)** |
 
 ### Honest note about the engine
@@ -231,9 +231,13 @@ fullscreen, in landscape, and works offline after the first load (service worker
 `public/sw.js`). `manifest.webmanifest` declares the name in Bangla and English, maskable icons,
 theme colour and `display: fullscreen`.
 
-A native wrapper (APK/AAB) is **not produced in this sandbox** — no Android SDK/JDK and no
-Godot. `docs/ANDROID_PACKAGING.md` gives the two viable routes (Capacitor/TWA wrapper, or a
-Godot port), with exact commands, and lists what must change in this codebase for each.
+The checked-in native Android WebView wrapper is packaged by [the Android GitHub Actions workflow](.github/workflows/android-apk.yml).
+The [v0.6.7 release](https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/tag/v0.6.7)
+contains a **debug-signed test APK** (package `com.shostalab.banglartesla`, versionCode 11,
+minSdk 24) with the current offline web game bundled inside. It is not production-signed,
+may not update a differently signed installation, and has not been verified on a physical
+Android device. To build it yourself, see [ANDROID_BUILD.md](docs/ANDROID_BUILD.md).
+The web game is deployed from `main` to GitHub Pages after its CI checks pass.
 
 ---
 
@@ -251,6 +255,6 @@ Full details in [`ASSET_CREDITS.md`](ASSET_CREDITS.md).
 
 ## 9. Known limitations
 
-See [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md). Headlines: no native APK yet; the
+See [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md). Headlines: Android APK is a debug-signed test build, not production-validated; the
 neighbourhood is one district; traffic is route-following rather than fully free-roaming;
 no rain-vs-braking split beyond a grip multiplier; photo mode is not implemented.

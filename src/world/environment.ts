@@ -41,12 +41,12 @@ export const PHASES: Record<DayPhase, PhaseConfig> = {
     zenith: '#3f84bd',
     horizon: '#cfe1ea',
     sunColor: '#fff6e2',
-    sunIntensity: 3.7,
+    sunIntensity: 3.45,
     elevation: 64,
     azimuth: 28,
-    ambient: 1.15,
-    fog: '#dde5e4',
-    fogDensity: 0.0042,
+    ambient: 1.03,
+    fog: '#d9e2df',
+    fogDensity: 0.0048,
     lamps: 0,
     exposure: 1.0,
   },
@@ -283,7 +283,9 @@ export class EnvironmentSystem {
     this.sun.castShadow = quality.shadows;
     this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
     this.sun.shadow.bias = -0.0008;
-    this.sun.shadow.normalBias = 0.035;
+    // Closer tyre/curb contact without a second contact-shadow draw pass.
+    // Keep a nonzero normal bias to avoid self-shadow acne on thin balconies.
+    this.sun.shadow.normalBias = 0.022;
     const d = quality.shadowDistance;
     const cam = this.sun.shadow.camera;
     cam.left = -d;
@@ -527,7 +529,7 @@ export class EnvironmentSystem {
     this.hemi.intensity = cfg.ambient * (this.blend.overcast > 0.35 ? 1.1 + this.blend.overcast * 0.3 : 1);
     this.hemi.intensity = this.hemi.intensity * (1 - nightWeight) + 0.16 * nightWeight;
     // Lightning: bounded sun/hemi/exposure surge (zero new lights, zero shader variants).
-    this.ambient.intensity = 0.3 - 0.22 * nightWeight;
+    this.ambient.intensity = 0.23 - 0.15 * nightWeight;
     if (flash > 0.002) {
       this.sun.intensity += flash * 2.4;
       this.hemi.intensity += flash * 0.65;
@@ -557,7 +559,9 @@ export class EnvironmentSystem {
     // the street actually reads as night instead of a grey overcast afternoon.
     this.scene.environmentIntensity =
       0.5 - 0.4 * nightWeight - Math.max(0, cfg.lamps - nightWeight * 1.6) * 0.18;
-    this.tmpSunDir.set(Math.cos(el) * Math.sin(az), Math.max(0.22, Math.sin(el)),
+    // Let the golden-hour key travel lower for longer facade/curb shadows,
+    // while retaining a safe positive elevation for the nighttime moon key.
+    this.tmpSunDir.set(Math.cos(el) * Math.sin(az), Math.max(0.17, Math.sin(el)),
       Math.cos(el) * Math.cos(az)).normalize();
     this.sun.position.copy(this.sun.target.position).addScaledVector(this.tmpSunDir, 60);
     // Keep directional light & shadow topology CONSTANT across day/night transitions

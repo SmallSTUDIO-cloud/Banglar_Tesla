@@ -285,7 +285,14 @@ export class TrafficSystem {
   }
 
   private pickVehicleSpec(narrowLane: boolean): (typeof FLEET_DISTRIBUTION)[number] {
-    let r = this.rng();
+    // Reweight the existing fleet on narrow lanes. Previously the bus/truck
+    // probability fell through to rickshaws, hiding CNGs, vans and motorbikes.
+    // No extra vehicles, models or draws: only the mix of existing instances changes.
+    let allowedWeight = 0;
+    for (const item of FLEET_DISTRIBUTION) {
+      if (!narrowLane || (item.kind !== 'bus' && item.kind !== 'truck')) allowedWeight += item.weight;
+    }
+    let r = this.rng() * allowedWeight;
     for (let i = 0; i < FLEET_DISTRIBUTION.length; i++) {
       const item = FLEET_DISTRIBUTION[i];
       if (narrowLane && (item.kind === 'bus' || item.kind === 'truck')) continue;
@@ -932,7 +939,14 @@ export class TrafficSystem {
       const mx = (cand.ax + cand.bx) * 0.5;
       const mz = (cand.az + cand.bz) * 0.5;
       const d = Math.hypot(mx - this.playerX, mz - this.playerZ);
-      if (d > 82 && d < 162) {
+      // Recycle a distant agent into the near/mid-distance street instead of
+      // spending the same capped fleet beyond the player's useful view. Check
+      // the sampled road position too: a long lane's midpoint is not its spawn.
+      if (d > 65 && d < 145) {
+        const spawnS = this.rng() * cand.length * 0.8;
+        sampleLane(cand, spawnS, 0, this.tmpPt);
+        const actualDist = Math.hypot(this.tmpPt.x - this.playerX, this.tmpPt.z - this.playerZ);
+        if (actualDist < 32 || actualDist > 155) continue;
         a.lane = cand;
         a.plannedLaneId = null;
         a.turnLane = null;
@@ -942,8 +956,7 @@ export class TrafficSystem {
         a.turnOffsetX = a.turnOffsetZ = 0;
         a.potholeDepth = a.bumpOffset = 0;
         a.contactTravel = a.contactSideTravel = a.contactCooldown = 0;
-        a.s = this.rng() * cand.length * 0.8;
-        sampleLane(a.lane, a.s, a.lateralOffset, this.tmpPt);
+        a.s = spawnS;
         a.x = this.tmpPt.x;
         a.z = this.tmpPt.z;
         a.y = this.heightAt(a.x, a.z);
