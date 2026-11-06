@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>BanglarTesla</RootNamespace>
+    <AssemblyName>BanglarTesla.Domain</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Assets/BanglarTesla/Runtime/Domain/**/*.cs" Link="Domain/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

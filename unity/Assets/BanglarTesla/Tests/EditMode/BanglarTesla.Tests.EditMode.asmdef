@@ -1,0 +1,14 @@
+{
+  "name": "BanglarTesla.Tests.EditMode",
+  "rootNamespace": "BanglarTesla.Tests",
+  "references": ["UnityEngine.TestRunner", "UnityEditor.TestRunner", "BanglarTesla.Runtime"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": ["nunit.framework.dll"],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

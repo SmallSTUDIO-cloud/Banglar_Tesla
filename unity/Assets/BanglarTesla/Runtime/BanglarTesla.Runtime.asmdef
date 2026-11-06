@@ -1,0 +1,19 @@
+{
+  "name": "BanglarTesla.Runtime",
+  "rootNamespace": "BanglarTesla",
+  "references": [
+    "Unity.InputSystem",
+    "Unity.Cinemachine",
+    "Unity.AI.Navigation",
+    "Unity.RenderPipelines.Universal.Runtime"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

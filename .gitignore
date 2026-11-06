@@ -20,3 +20,26 @@ android/app/src/main/assets/public/
 __pycache__/
 *.pyc
 audit-*.png
+
+# Unity generated state (never commit the Library or machine-specific builds)
+unity/Library/
+unity/Temp/
+unity/Obj/
+unity/Logs/
+unity/UserSettings/
+unity/MemoryCaptures/
+unity/Bee/
+unity/Build/
+unity/Builds/
+unity/.idea/
+unity/.vs/
+unity/.vscode/
+unity/*.csproj.user
+unity/*.sln.DotSettings.user
+unity/[Bb]in/
+unity/[Oo]bj/
+**/bin/
+**/obj/
+*.unitypackage
+*.burstdebug
+*.tmp

@@ -1,0 +1,40 @@
+name: Unity Domain Tests
+
+on:
+  push:
+    branches:
+      - arena/f78d620e-banglar-tesla
+    paths:
+      - unity/Assets/BanglarTesla/Runtime/Domain/**
+      - unity/Assets/BanglarTesla/Tests/EditMode/Domain/**
+      - unity/Domain/**
+      - unity/Tests/**
+      - .github/workflows/unity-domain.yml
+  pull_request:
+    paths:
+      - unity/Assets/BanglarTesla/Runtime/Domain/**
+      - unity/Assets/BanglarTesla/Tests/EditMode/Domain/**
+      - unity/Domain/**
+      - unity/Tests/**
+      - .github/workflows/unity-domain.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Compile and test engine-free C# domain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: unity/Tests/BanglarTesla.Domain.Tests.csproj
+      - name: Restore pinned test dependencies
+        run: dotnet restore unity/Tests/BanglarTesla.Domain.Tests.csproj
+      - name: Compile domain and tests with warnings as errors
+        run: dotnet build unity/Tests/BanglarTesla.Domain.Tests.csproj --configuration Release --no-restore
+      - name: Run domain parity tests
+        run: dotnet test unity/Tests/BanglarTesla.Domain.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"

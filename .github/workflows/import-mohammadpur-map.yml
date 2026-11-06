@@ -1,0 +1,65 @@
+name: Import Sourced Mohammadpur Map
+
+# One-way source import on the fixed migration branch. Generated map commits do
+# not retrigger this workflow because their paths are intentionally not listed.
+on:
+  push:
+    branches:
+      - arena/f78d620e-banglar-tesla
+    paths:
+      - scripts/import-mohammadpur-osm.py
+      - tests/map_import/**
+      - .github/workflows/import-mohammadpur-map.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mohammadpur-osm-arena-f78d620e
+  cancel-in-progress: false
+
+jobs:
+  import:
+    name: Verify and import OSM road network
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline importer contracts
+        run: python3 -m unittest discover -s tests/map_import -p 'test_*.py' -v
+      - name: Import current OSM geometry with provenance
+        run: python3 scripts/import-mohammadpur-osm.py
+      - name: Validate generated database and report
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          assert data['schemaVersion'] == 1
+          assert data['source']['license'] == 'ODbL-1.0'
+          assert data['source']['boundaryWayId'] == 318722840
+          assert len(data['source']['overpassSha256']) == 64
+          assert data['roads'] and data['boundary']
+          assert all(road['widthSource'] in {'osm:width', 'estimated:lanes', 'estimated:road-class'} for road in data['roads'])
+          assert all((road['sourceWidthMeters'] is not None) == (road['widthSource'] == 'osm:width') for road in data['roads'])
+          print(f"Validated {len(data['roads'])} roads, {len(data['pois'])} POIs and {len(data['boundaryExits'])} boundary exits")
+          PY
+          git diff --check
+      - name: Commit only generated geographic evidence
+        run: |
+          set -euo pipefail
+          git add -- unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json docs/GEOGRAPHIC_IMPORT_REPORT.md
+          if git diff --cached --quiet; then
+            echo 'Imported source is unchanged; no commit needed.'
+            exit 0
+          fi
+          git config user.name 'arena-agent'
+          git config user.email 'arena-agent@users.noreply.github.com'
+          git commit -m 'Import sourced Mohammadpur OSM road network'
+          git push origin arena/f78d620e-banglar-tesla
