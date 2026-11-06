@@ -38,10 +38,10 @@ Refer to `UNITY_PRODUCTION_MIGRATION_PLAN.md` for the acceptance gates and `GEOG
 
 | Milestone requirement | State | Verification |
 | --- | --- | --- |
-| Functional rickshaw + driving physics | Domain exists | Domain tests exist, **not executed here** |
+| Functional rickshaw + driving physics | Domain exists | Domain tests pass in .NET CI; not yet driven in Unity |
 | Sourced Mohammadpur road network | Rendered from OSM graph | Offline importer tests pass 6/6; nothing rendered in Unity yet |
 | Basic traffic | **Added this session** (domain + pooled view) | 8 new domain tests, executed on hosted CI |
-| Mobile controls | HUD + input exist | Never loaded by Unity |
+| Mobile controls | HUD + input exist | Compiled domain tests only; never loaded by Unity |
 | Working camera | Seven modes exist | Never loaded by Unity |
 
 ### Traffic (new)
@@ -88,11 +88,36 @@ reintroducing a bug and confirming it is reported:
 It is explicitly **not** a compiler: it does not type-check, does not validate Unity API usage,
 and cannot prove the code builds. Current output: 44 files, 0 findings in all four classes.
 
-## Verification status for this session
+## Verified results (hosted CI, authorized verification push)
 
-- Cannot compile or run anything locally: no Unity editor, no .NET SDK, no C# compiler, and the
-  hosting network blocks the .NET SDK download. Verification therefore runs on hosted CI via an
-  explicitly authorized push to this branch; results are recorded in the next section.
-- Executed this session: offline geography suite (6/6), static audit (0 findings), `git diff --check`.
-- **Not** executed: any C# compilation, EditMode/PlayMode test, Unity scene generation, URP render,
-  WebGL build, Android build, device launch, or frame-time measurement.
+| Commit | Workflow | Run ID | Result |
+| --- | --- | --- | --- |
+| `1b92348` | Unity Domain Tests | `42242923856` | success — compiled with warnings as errors, tests passed |
+| `627a81b` | Unity Domain Tests | `42243060263` | success |
+| `b9c4b0b` | Unity Domain Tests | `42243222629` | success — **59 passed, 0 failed, 59 total** |
+
+The 59 executed tests are exactly the 59 `[Test]` methods under
+`unity/Assets/BanglarTesla/Tests`; 8 of them are the new traffic tests. They run as plain NUnit on
+.NET 8, which is also the harness the Unity Test Framework would use in EditMode.
+
+Also executed locally: offline geography suite 6/6, static audit 0 findings, `git diff --check`.
+
+### Still not verified
+
+- No Unity editor compilation, import or scene generation has run; URP, UI Toolkit, Input System and
+  the WebGL/Android player are untouched by every result above.
+- **PlayMode tests: none exist.** Only `BanglarTesla.Tests.PlayMode.asmdef` is present, so there is
+  nothing for a PlayMode run to execute.
+- No Unity WebGL or Unity Android build, no device launch, no frame-time profile, no LOD/instancing
+  measurement. The legacy TypeScript Android workflow also passes, but it does not build this project.
+
+### Recovery snapshot
+
+Before the push, a verified recovery point was written outside the repository at
+`/home/user/recovery-snapshots/20261106T152407Z/`:
+
+- `banglar-tesla-all-refs.bundle` — all 93 commits through `4b3b587`; `git bundle verify` reports
+  "records a complete history" and a clone from it reproduces HEAD exactly. (The local clone was
+  shallow, so history was deepened before bundling; a shallow bundle had failed verification.)
+- `worktree.tar.gz` — the full working tree including the uncommitted edits and untracked files;
+  a re-extract compared byte-identical against the live tree.
