@@ -2,7 +2,7 @@
 
 **Status: source-derived Unity preview, not a surveyed or ground-truthed exact map.**
 
-- Retrieved (UTC): `2026-11-06T10:27:35+00:00`
+- Retrieved (UTC): `2026-11-06T14:25:27+00:00`
 - OSM boundary: way `318722840`; ODbL 1.0, © OpenStreetMap contributors.
 - Roads: **1610** (1490 driveable; 571 named).
 - Named points/buildings: **2857**.
@@ -11,8 +11,8 @@
 - Driveable graph component node counts: `[5101, 103, 58, 4, 4, 3, 2, 2]`.
 - Named ways skipped for incomplete geometry: **0**.
 - Origin: `{'lat': 23.76292393643411, 'lon': 90.35741097364341}`; padded bbox: `{'south': 23.7501165, 'north': 23.7763701, 'west': 90.3439034, 'east': 90.37674899999999}`.
-- Boundary payload SHA-256: `6aa04bad147ffa29145d70921061cd342a3726d077bc400056b110a3c8f52e3f`.
-- Road/POI payload SHA-256: `1c5c9992c96174af2f8ef7793377d634c9ced9180b3eab264d94f41772557084`.
+- Boundary payload SHA-256: `d5f969303290b2a507a0ad2f13c08d81a2949950b743a867df01185491ce641d`.
+- Road/POI payload SHA-256: `ce96a736f758ea33a2f4859b6f86dcb05acac7cab34e705791148cf692c466e2`.
 
 ## Landmark lookup
 
