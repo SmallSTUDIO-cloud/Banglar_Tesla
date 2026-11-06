@@ -391,8 +391,9 @@ export function createWheel(
   tireColor = '#1a1c1f',
   rimColor = '#d8dee4',
   spokes = 18,
+  reinforcedTread = false,
 ): THREE.Group {
-  const key = `${outerRadius.toFixed(3)}:${tireColor}:${rimColor}:${spokes}`;
+  const key = `${outerRadius.toFixed(3)}:${tireColor}:${rimColor}:${spokes}:${Number(reinforcedTread)}`;
   let tpl = wheelCache.get(key);
   if (!tpl) {
     const tube = Math.max(0.026, outerRadius * 0.088);
@@ -405,6 +406,17 @@ export function createWheel(
     const wallSrc = new THREE.TorusGeometry(torusCenterR - tube * 0.15, tube * 0.34, 6, 24);
     rubberBucket.add(wallSrc, { x: 0.014, y: 0, z: 0 }, { x: 0.35, y: 1, z: 1 }, '#cfc7b2', { y: Math.PI / 2 });
     rubberBucket.add(wallSrc, { x: -0.014, y: 0, z: 0 }, { x: 0.35, y: 1, z: 1 }, '#cfc7b2', { y: Math.PI / 2 });
+    // Reinforced garage tyre: short raised tread blocks rotate with the wheel.
+    // Merged into the existing rubber mesh (no new draw); cached only for hero/showroom.
+    if (reinforcedTread) {
+      for (let i = 0; i < 16; i++) {
+        const a = i * Math.PI / 8;
+        rubberBucket.box(
+          { x: i % 2 ? 0.026 : -0.026, y: Math.cos(a) * (outerRadius - 0.002), z: Math.sin(a) * (outerRadius - 0.002) },
+          { x: 0.046, y: 0.013, z: 0.037 }, '#303438', { x: a },
+        );
+      }
+    }
     tireSrc.dispose();
     wallSrc.dispose();
 
@@ -453,9 +465,11 @@ export function createWheel(
 
   const group = new THREE.Group();
   const tireMesh = new THREE.Mesh(tpl.rubberGeo, sharedRubberMat);
+  tireMesh.name = 'wheel.rubber';
   tireMesh.castShadow = true;
   tireMesh.userData.shared = true;
   const chromeMesh = new THREE.Mesh(tpl.metalGeo, sharedWheelChromeMat);
+  chromeMesh.name = 'wheel.metal';
   chromeMesh.userData.shared = true;
   group.add(tireMesh, chromeMesh);
   return group;

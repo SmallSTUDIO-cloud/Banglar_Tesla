@@ -1,8 +1,5 @@
-/**
- * Single source of truth for the in-game app version string, read directly from
- * `package.json` so the menu footer can never drift from the release version.
- */
+/** Display the package version in the web game and Android wrapper. */
 
 import pkg from '../../package.json';
 
-export const APP_VERSION: string = pkg.version;
+export const APP_VERSION: string = pkg.version.replace(/-test\.\d+$/, '');

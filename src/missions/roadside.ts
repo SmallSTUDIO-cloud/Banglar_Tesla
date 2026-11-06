@@ -1,6 +1,5 @@
 /** One-shot roadside fare bargaining and valid sidewalk placement. */
 import type { PedPath } from '../ai/pedestrians';
-import { isInsideDrmcCampus } from '../world/drmcGeo';
 import { isClearOfRoads, segmentById } from '../world/layout';
 
 export type NegotiationResult = 'accepted' | 'rejected' | 'already-attempted';
@@ -40,8 +39,7 @@ export interface RoadsideStop {
   departure: { x: number; z: number };
 }
 
-/** Find the nearest pedestrian-safe position on an already validated sidewalk.
- * Sampling also excludes junction mouths and the private campus boundary. */
+/** Find the nearest pedestrian-safe position on an already validated sidewalk. */
 export function nearestSafeSidewalk(paths: readonly PedPath[], x: number, z: number): { x: number; z: number; yaw: number } | null {
   let best: { x: number; z: number; yaw: number } | null = null;
   let bestDistance = Infinity;
@@ -51,7 +49,7 @@ export function nearestSafeSidewalk(paths: readonly PedPath[], x: number, z: num
       const t = i / steps;
       const sx = path.ax + (path.bx - path.ax) * t, sz = path.az + (path.bz - path.az) * t;
       const d = Math.hypot(sx - x, sz - z);
-      if (d >= bestDistance || isInsideDrmcCampus(sx, sz, 1.6) || !isClearOfRoads(sx, sz, 0.15)) continue;
+      if (d >= bestDistance || !isClearOfRoads(sx, sz, 0.15)) continue;
       bestDistance = d;
       best = { x: sx, z: sz, yaw: Math.atan2(x - sx, z - sz) };
     }
@@ -70,13 +68,12 @@ export function chooseRoadsideStop(paths: readonly PedPath[], px: number, pz: nu
       const x = path.ax + (path.bx - path.ax) * t;
       const z = path.az + (path.bz - path.az) * t;
       const distance = Math.hypot(x - px, z - pz);
-      if (distance < 10 || distance > 35 || isInsideDrmcCampus(x, z, 2)) continue;
+      if (distance < 10 || distance > 35) continue;
       const along = (x - seg.ax) * seg.ux + (z - seg.az) * seg.uz;
       const centerX = seg.ax + seg.ux * along;
       const centerZ = seg.az + seg.uz * along;
       const side = Math.sign((x - centerX) * seg.leftX + (z - centerZ) * seg.leftZ) || 1;
       const pickup = { x: centerX + seg.leftX * seg.halfWidth * 0.5 * side, z: centerZ + seg.leftZ * seg.halfWidth * 0.5 * side, segmentId: seg.id };
-      if (isInsideDrmcCampus(pickup.x, pickup.z, 1.5)) continue;
       const span = Math.hypot(path.bx - path.ax, path.bz - path.az);
       const delta = Math.min(4 / span, 0.35);
       const t1 = Math.max(0, t - delta), t2 = Math.min(1, t + delta);

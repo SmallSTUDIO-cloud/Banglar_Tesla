@@ -98,6 +98,8 @@ export class BlacklistIntroCinematic {
       volume: dlg.volume,
       muted: dlg.muted,
       lineId,
+      characterId: line?.character,
+      emotion: line?.emotion,
       voicePitch: tr.pitch,
       voiceRate: tr.rate,
     });

@@ -266,7 +266,7 @@ function buildUnitDiscWheelGeo(): THREE.BufferGeometry {
   // Unit outer-radius (R = 1.0, unit X-width = 1.0) motor tyre + silver hubcap!
   const b = new Bucket('inst.wheel.disc', wheelInstMat);
   b.cylinder({ x: 0, y: 0, z: 0 }, 1.0, 1.0, '#1a1c1f', { z: Math.PI / 2 });
-  b.cylinder({ x: 0, y: 0, z: 0 }, 0.58, 1.06, '#cfd6de', { z: Math.PI / 2 });
+  b.cylinder({ x: 0, y: 0, z: 0 }, 0.51, 1.06, '#9aa6b0', { z: Math.PI / 2 });
   b.cylinder({ x: 0, y: 0, z: 0 }, 0.22, 1.12, '#5a626a', { z: Math.PI / 2 });
   const mesh = b.build({ cast: false, receive: false })!;
   return mesh.geometry;
@@ -462,7 +462,7 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     halfLength = 3.73;
     halfWidth = 1.19;
     radius = 2.65;
-    schemeHexes = ['#b7282e', '#165a8a', '#1e6f50', '#8a2b52'];
+    schemeHexes = ['#b7282e', '#165a8a', '#1e6f50', '#8a2b52', '#d49b38', '#4c6874'];
     // Lower skirt body + sloped front brow + rounded upper roof cap
     primary.box({ x: 0, y: 0.92, z: 0 }, { x: 2.38, y: 0.96, z: 7.42 }, '#ffffff');
     primary.box({ x: 0, y: 2.78, z: -0.04 }, { x: 2.24, y: 0.20, z: 7.18 }, '#ffffff');
@@ -480,6 +480,24 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     detail.box({ x: 0, y: 2.02, z: 3.71 }, { x: 0.04, y: 0.94, z: 0.04 }, '#111820'); // split windshield mullion
     detail.box({ x: 0, y: 2.62, z: 3.70 }, { x: 1.72, y: 0.24, z: 0.05 }, '#102419');
     detail.box({ x: 0, y: 2.06, z: -3.69 }, { x: 1.98, y: 0.78, z: 0.05 }, '#193240');
+    // The normal chase camera often follows a bus: break up its blank rear
+    // with inset glazing, a frame, service hatch and grounded reflectors.
+    // These join the existing shared fleet-detail mesh (zero extra draws).
+    for (const side of [-1, 1]) {
+      detail.box({ x: side * 0.99, y: 2.08, z: -3.726 },
+        { x: 0.055, y: 0.88, z: 0.035 }, '#d5d2c8');
+      detail.box({ x: side * 0.93, y: 0.74, z: -3.736 },
+        { x: 0.26, y: 0.34, z: 0.055 }, '#a82c2b');
+      detail.box({ x: side * 0.93, y: 0.91, z: -3.768 },
+        { x: 0.22, y: 0.055, z: 0.02 }, '#e4bd63');
+      detail.box({ x: side * 0.78, y: 1.31, z: -3.735 },
+        { x: 0.19, y: 0.07, z: 0.035 }, '#acaeaa');
+    }
+    detail.box({ x: 0, y: 2.49, z: -3.73 }, { x: 2.05, y: 0.055, z: 0.035 }, '#d5d2c8');
+    detail.box({ x: 0, y: 1.64, z: -3.73 }, { x: 2.05, y: 0.055, z: 0.035 }, '#d5d2c8');
+    detail.box({ x: 0, y: 1.76, z: -3.75 }, { x: 0.045, y: 0.64, z: 0.03 }, '#b7b9b7');
+    detail.box({ x: 0, y: 1.2, z: -3.728 }, { x: 1.36, y: 0.46, z: 0.035 }, '#9daca8');
+    detail.box({ x: 0, y: 0.55, z: -3.815 }, { x: 0.64, y: 0.15, z: 0.035 }, '#d6d9cc');
     // Dark wheel-well cutouts & visible RHD bus driver behind windshield
     for (const wz of [2.35, -2.25]) {
       for (const sx of [-1.18, 1.18]) {
@@ -596,6 +614,10 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     primary.box({ x: 0, y: 0.76, z: 0.18 }, { x: 0.28, y: 0.22, z: 0.48 }, '#ffffff', { x: -0.14 });
     primary.box({ x: 0, y: 0.84, z: 0.56 }, { x: 0.22, y: 0.20, z: 0.18 }, '#ffffff', { x: -0.22 });
     primary.cylinder({ x: 0, y: 1.42, z: 0.04 }, 0.125, 0.23, '#ffffff');
+    // Dark narrow eye port gives the commuter helmet a readable front instead
+    // of an unbroken red cylinder (merged into the existing detail instance).
+    detail.box({ x: 0, y: 1.445, z: 0.168 }, { x: 0.18, y: 0.055, z: 0.014 }, '#152b38');
+    detail.box({ x: 0, y: 1.365, z: 0.154 }, { x: 0.12, y: 0.014, z: 0.015 }, '#25272b');
 
     detail.box({ x: 0, y: 0.48, z: 0.04 }, { x: 0.16, y: 0.26, z: 0.78 }, '#2a2f35');
     detail.cylinder({ x: 0.11, y: 0.34, z: -0.32 }, 0.038, 0.92, '#cfd6de', { x: Math.PI / 2 - 0.08 });
@@ -622,7 +644,7 @@ export function getTrafficArchetype(type: TrafficType): TrafficArchetype {
     halfLength = 2.04;
     halfWidth = 0.86;
     radius = 1.58;
-    schemeHexes = ['#e8ecef', '#25323f', '#8a2020', '#1e4e79', '#d6cfc2'];
+    schemeHexes = ['#e8ecef', '#25323f', '#8a2020', '#1e4e79', '#d6cfc2', '#627a74', '#a28b6c'];
     // Sculpted waist body + gently sloped hood & trunk deck + greenhouse roof cap
     primary.box({ x: 0, y: 0.54, z: 0 }, { x: 1.72, y: 0.44, z: 3.98 }, '#ffffff');
     primary.box({ x: 0, y: 0.76, z: 1.36 }, { x: 1.64, y: 0.12, z: 1.16 }, '#ffffff', { x: 0.09 });
@@ -748,7 +770,7 @@ export class InstancedTrafficFleet {
       primary.name = `traffic.${type}.primary`;
       primary.castShadow = true;
       primary.receiveShadow = true;
-      primary.frustumCulled = false;
+      primary.frustumCulled = true;
       primary.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       // Pre-initialise instanceColor buffer once so setColorAt never allocates mid-frame
       for (let i = 0; i < maxVehicles; i++) primary.setColorAt(i, this.whiteColor);
@@ -758,7 +780,7 @@ export class InstancedTrafficFleet {
       detail.name = `traffic.${type}.detail`;
       detail.castShadow = true;
       detail.receiveShadow = true;
-      detail.frustumCulled = false;
+      detail.frustumCulled = true;
       detail.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       detail.count = 0;
 
@@ -772,7 +794,7 @@ export class InstancedTrafficFleet {
       const layers = NPC_STEERING_ANGLES.map((angle) => {
         const mesh = new THREE.InstancedMesh(getSteeringGeometry(type, angle), detailFleetMat, maxVehicles);
         mesh.name = `traffic.${type}.steering.${angle}`;
-        mesh.frustumCulled = false;
+        mesh.frustumCulled = true;
         mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         mesh.count = 0;
         parent.add(mesh);
@@ -784,7 +806,7 @@ export class InstancedTrafficFleet {
     for (const type of ['cng', 'easybike'] as const) {
       const mesh = new THREE.InstancedMesh(glassGeometry[type], glassFleetMat, maxVehicles);
       mesh.name = `traffic.${type}.windscreen`;
-      mesh.frustumCulled = false;
+      mesh.frustumCulled = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.count = 0;
       parent.add(mesh);
@@ -794,33 +816,40 @@ export class InstancedTrafficFleet {
     const maxSpoked = maxVehicles * 3;
     this.spokedWheels = new THREE.InstancedMesh(buildUnitSpokedWheelGeo(), wheelInstMat, maxSpoked);
     this.spokedWheels.name = 'traffic.wheels.spoked';
-    this.spokedWheels.frustumCulled = false;
+    this.spokedWheels.frustumCulled = true;
     this.spokedWheels.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.spokedWheels.count = 0;
 
     const maxDisc = maxVehicles * 4;
     this.discWheels = new THREE.InstancedMesh(buildUnitDiscWheelGeo(), wheelInstMat, maxDisc);
     this.discWheels.name = 'traffic.wheels.disc';
-    this.discWheels.frustumCulled = false;
+    this.discWheels.frustumCulled = true;
     this.discWheels.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.discWheels.count = 0;
 
     const maxLamps = maxVehicles * 3;
     this.headLampMesh = new THREE.InstancedMesh(this.unitBox, lampInstMat, maxLamps);
     this.headLampMesh.name = 'traffic.lamps.head';
-    this.headLampMesh.frustumCulled = false;
+    this.headLampMesh.frustumCulled = true;
     this.headLampMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     for (let i = 0; i < maxLamps; i++) this.headLampMesh.setColorAt(i, this.whiteColor);
     this.headLampMesh.count = 0;
 
     this.brakeLampMesh = new THREE.InstancedMesh(this.unitBox, lampInstMat, maxLamps);
     this.brakeLampMesh.name = 'traffic.lamps.brake';
-    this.brakeLampMesh.frustumCulled = false;
+    this.brakeLampMesh.frustumCulled = true;
     this.brakeLampMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     for (let i = 0; i < maxLamps; i++) this.brakeLampMesh.setColorAt(i, BRAKE_OFF);
     this.brakeLampMesh.count = 0;
 
     parent.add(this.spokedWheels, this.discWheels, this.headLampMesh, this.brakeLampMesh);
+  }
+
+  /** Native frustum culling needs current instance bounds after every repack.
+   * Three.js only computes them on first use, so a stale sphere would cause
+   * vehicles to disappear when they move or re-enter the camera. */
+  private refreshBounds(mesh: THREE.InstancedMesh): void {
+    if (mesh.count > 0) mesh.computeBoundingSphere();
   }
 
   /**
@@ -868,10 +897,9 @@ export class InstancedTrafficFleet {
         mesh.setMatrixAt(mesh.count++, this.tmpMat);
       }
 
-      // Wheels are essential to the silhouette even at far LOD: omitting them
-      // made distant vehicles float. Far wheels use a fixed orientation; near
-      // wheels keep their animation. Both use the same existing instanced draw.
-      this.tmpSpinQuat.setFromAxisAngle(this.xAxis, a.nearLod ? a.wheelSpin : 0);
+      // Both LODs retain the same wheel phase. Resetting far wheels to zero
+      // snapped their spokes/hubs when they crossed the 76–86 m LOD band.
+      this.tmpSpinQuat.setFromAxisAngle(this.xAxis, a.wheelSpin);
       this.tmpWheelQuat.multiplyQuaternions(this.tmpQuat, this.tmpSpinQuat);
       const r = arch.wheelRadius;
       const mounts = arch.wheelMounts;
@@ -933,33 +961,48 @@ export class InstancedTrafficFleet {
         pair.primary.instanceMatrix.needsUpdate = true;
         if (pair.primary.instanceColor) pair.primary.instanceColor.needsUpdate = true;
         pair.detail.instanceMatrix.needsUpdate = true;
+        this.refreshBounds(pair.primary);
+        this.refreshBounds(pair.detail);
       }
     }
 
     for (const mesh of this.glassLayers.values()) {
       mesh.visible = mesh.count > 0;
-      if (mesh.count > 0) mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.count > 0) {
+        mesh.instanceMatrix.needsUpdate = true;
+        this.refreshBounds(mesh);
+      }
     }
     for (const layers of this.steeringLayers.values()) {
       for (const mesh of layers) {
         mesh.visible = mesh.count > 0;
-        if (mesh.count > 0) mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.count > 0) {
+          mesh.instanceMatrix.needsUpdate = true;
+          this.refreshBounds(mesh);
+        }
       }
     }
 
     this.spokedWheels.count = spokedCount;
     this.spokedWheels.visible = spokedCount > 0;
-    if (spokedCount > 0) this.spokedWheels.instanceMatrix.needsUpdate = true;
+    if (spokedCount > 0) {
+      this.spokedWheels.instanceMatrix.needsUpdate = true;
+      this.refreshBounds(this.spokedWheels);
+    }
 
     this.discWheels.count = discCount;
     this.discWheels.visible = discCount > 0;
-    if (discCount > 0) this.discWheels.instanceMatrix.needsUpdate = true;
+    if (discCount > 0) {
+      this.discWheels.instanceMatrix.needsUpdate = true;
+      this.refreshBounds(this.discWheels);
+    }
 
     this.headLampMesh.count = headCount;
     this.headLampMesh.visible = headCount > 0;
     if (headCount > 0) {
       this.headLampMesh.instanceMatrix.needsUpdate = true;
       if (this.headLampMesh.instanceColor) this.headLampMesh.instanceColor.needsUpdate = true;
+      this.refreshBounds(this.headLampMesh);
     }
 
     this.brakeLampMesh.count = brakeCount;
@@ -967,6 +1010,7 @@ export class InstancedTrafficFleet {
     if (brakeCount > 0) {
       this.brakeLampMesh.instanceMatrix.needsUpdate = true;
       if (this.brakeLampMesh.instanceColor) this.brakeLampMesh.instanceColor.needsUpdate = true;
+      this.refreshBounds(this.brakeLampMesh);
     }
   }
 

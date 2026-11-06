@@ -111,17 +111,17 @@ for (const shot of shots) {
     });
     await new Promise((r) => setTimeout(r, 900));
     await page.screenshot({ path: path.join(out, 'shot-passenger.png') });
-  } else if (shot === 'drmc-main' || shot === 'drmc-side' || shot === 'drmc-campus') {
+  } else if (shot === 'former-site-west' || shot === 'former-site-east' || shot === 'former-site-overhead') {
     await page.evaluate((view) => {
       const g = window.__banglarTesla;
       g.debugStartMode('free');
       g.debugSetPhase('golden', 'sunny');
       g.ui.show(null);
       g.debugFreeCamera = true;
-      if (view === 'drmc-main') {
+      if (view === 'former-site-west') {
         g.camera.position.set(20.2, 5.8, -47.9);
         g.camera.lookAt(37.4, 3.8, -61.37);
-      } else if (view === 'drmc-side') {
+      } else if (view === 'former-site-east') {
         g.camera.position.set(117.5, 5, -119.7);
         g.camera.lookAt(99, 2.8, -113.5);
       } else {
@@ -130,6 +130,39 @@ for (const shot of shots) {
       }
       g.camera.fov = 48;
       g.camera.updateProjectionMatrix();
+    }, shot);
+    await new Promise((r) => setTimeout(r, 900));
+    await page.screenshot({ path: path.join(out, `shot-${shot}.png`) });
+  } else if (shot === 'density-town' || shot === 'density-north' || shot === 'density-south') {
+    await page.evaluate((view) => {
+      const g = window.__banglarTesla;
+      g.debugStartMode('free'); g.debugSetPhase('golden', 'sunny');
+      g.ui.show(null); g.debugFreeCamera = true;
+      // Fixed gameplay-eye viewpoints and lens for repeatable frontage comparisons.
+      const views = {
+        'density-town': [[42, 2.1, 104], [115, 2.1, 83]],
+        'density-north': [[-115, 2.1, -133], [0, 2.1, -167]],
+        'density-south': [[-103, 2.1, 183], [-16, 2.1, 133]],
+      };
+      const [eye, target] = views[view];
+      g.camera.position.set(...eye); g.camera.lookAt(...target);
+      g.camera.fov = 58; g.camera.updateProjectionMatrix();
+    }, shot);
+    await new Promise((r) => setTimeout(r, 900));
+    await page.screenshot({ path: path.join(out, `shot-${shot}.png`) });
+  } else if (shot === 'former-site-approach' || shot === 'former-site-interior' || shot === 'former-site-roads') {
+    await page.evaluate((view) => {
+      const g = window.__banglarTesla;
+      g.debugStartMode('free'); g.debugSetPhase('golden', 'sunny');
+      g.ui.show(null); g.debugFreeCamera = true;
+      const views = {
+        'former-site-approach': [[28, 2.6, -48], [40, 2.8, -62]],
+        'former-site-interior': [[55, 2.8, -85], [84, 1.8, -105]],
+        'former-site-roads': [[89, 3.2, -83], [100, 2, -114]],
+      };
+      const [eye, target] = views[view];
+      g.camera.position.set(...eye); g.camera.lookAt(...target);
+      g.camera.fov = 57; g.camera.updateProjectionMatrix();
     }, shot);
     await new Promise((r) => setTimeout(r, 900));
     await page.screenshot({ path: path.join(out, `shot-${shot}.png`) });

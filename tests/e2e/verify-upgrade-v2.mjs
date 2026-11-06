@@ -100,6 +100,8 @@ async function main() {
         apkHref: apkBtn?.getAttribute('href') ?? '',
         apkHasPhoneIcon: !!apkBtn?.querySelector('svg'),
         apkHasNotice: (apkNote?.textContent ?? '').length > 8,
+        webVersion: document.querySelector('.menu-meta span')?.textContent ?? '',
+        apkFilename: apkBtn?.getAttribute('download') ?? '',
       };
     });
     check(
@@ -108,15 +110,19 @@ async function main() {
       JSON.stringify({ hasUnlockBtn: preGestureState.hasUnlockBtn, initialUnlocked: preGestureState.initialUnlocked }),
     );
     check(
-      'Web main menu displays Install APK button with phone icon, stable latest APK URL, and install approval note',
+      'v0.6.7 web game links its debug test APK, phone icon and install note',
       preGestureState.apkVisible &&
+        preGestureState.webVersion === 'v0.6.7' &&
         preGestureState.apkHref ===
-          'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/latest/download/Banglar-Tesla.apk' &&
+          'https://github.com/SmallSTUDIO-cloud/Banglar_Tesla/releases/download/v0.6.7/banglar-tesla-v0.6.7-debug.apk' &&
+        preGestureState.apkFilename === 'banglar-tesla-v0.6.7-debug.apk' &&
         preGestureState.apkHasPhoneIcon &&
         preGestureState.apkHasNotice,
       JSON.stringify({
         apkVisible: preGestureState.apkVisible,
         apkHref: preGestureState.apkHref,
+        apkFilename: preGestureState.apkFilename,
+        webVersion: preGestureState.webVersion,
         apkHasPhoneIcon: preGestureState.apkHasPhoneIcon,
         apkHasNotice: preGestureState.apkHasNotice,
       }),

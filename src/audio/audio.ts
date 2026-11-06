@@ -48,6 +48,7 @@ type AssetKey =
   | 'musicMenu'
   | 'musicDrive'
   | 'musicBrishti'
+  | 'musicAction'
   | 'ambStreet'
   | 'ambBazaar'
   | 'ambTea'
@@ -81,6 +82,7 @@ const ASSET_PATHS: Record<AssetKey, string> = {
   musicMenu: 'audio/music/menu-dhaka-sondhya.wav',
   musicDrive: 'audio/music/drive-asad-groove.wav',
   musicBrishti: 'audio/music/drive-brishti-dusk.wav',
+  musicAction: 'audio/music/race-pursuit-pulse.wav',
   ambStreet: 'audio/ambience/dhaka-street-bed.wav',
   ambBazaar: 'audio/ambience/bazaar-crowd-loop.wav',
   ambTea: 'audio/ambience/tea-stall-clink.wav',
@@ -150,6 +152,7 @@ export class AudioEngine {
   // Music crossfade state
   private sceneMode: MusicSceneMode = 'menu';
   private currentTrack: TapeId = 'cassette';
+  private actionMusicActive = false;
   private activeMusic: LoopChannel | null = null;
   private fadingMusic: LoopChannel | null = null;
   private dialogueDucked = false;
@@ -173,6 +176,7 @@ export class AudioEngine {
   private rainAmount = 0;
   private wetness = 0;
   private crowdAmount = 0.25;
+  private streetCharacter = 0.35;
   private bazaarProximity = 0;
   private electricMode = false;
   private tanBoostActive = false;
@@ -243,6 +247,7 @@ export class AudioEngine {
     if (this.turboLoop) loops++;
     if (this.sirenLoop) loops++;
     if (this.rainSource) loops++;
+    if (this.windSource) loops++;
     if (this.eMotorOsc) loops++;
     if (this.activeDialogueSource) loops++;
     return loops + this.activeOneShots;
@@ -513,6 +518,13 @@ export class AudioEngine {
     this.syncMusicTrack();
   }
 
+  /** Race/pursuit temporarily overrides the chosen cassette; it never overwrites the preference. */
+  setActionMusic(active: boolean): void {
+    if (this.actionMusicActive === active) return;
+    this.actionMusicActive = active;
+    this.syncMusicTrack();
+  }
+
   setMusicEnabled(enabled: boolean): void {
     this.volumes.musicEnabled = enabled;
     this.syncBuses();
@@ -543,6 +555,7 @@ export class AudioEngine {
       return null;
     }
     if (this.sceneMode === 'menu') return 'musicMenu';
+    if (this.actionMusicActive) return 'musicAction';
     return this.currentTrack === 'brishti' ? 'musicBrishti' : 'musicDrive';
   }
 
@@ -703,6 +716,10 @@ export class AudioEngine {
     this.crowdAmount = clamp01(amount);
   }
 
+  setStreetCharacter(activity: number): void {
+    this.streetCharacter = clamp01(activity);
+  }
+
   /** Spatial Dhaka ambience tick — updates zone loops & triggers distance-attenuated street life. */
   update(dt: number, playerX = 0, playerZ = 0): void {
     this.pedShoutCooldown = Math.max(0, this.pedShoutCooldown - dt);
@@ -721,10 +738,10 @@ export class AudioEngine {
       }
     }
     const hubFactor = clamp01(1 - (bestHubDist - 12) / 68);
-    this.bazaarProximity = clamp01(Math.max(hubFactor, this.crowdAmount * 0.72));
+    this.bazaarProximity = clamp01(Math.max(hubFactor * this.streetCharacter, this.streetCharacter * 0.55));
 
     if (this.streetLoop) {
-      const targetStreet = this.sceneMode === 'menu' ? 0.16 : 0.22 + this.crowdAmount * 0.1;
+      const targetStreet = this.sceneMode === 'menu' ? 0.16 : 0.17 + this.streetCharacter * 0.1 + this.crowdAmount * 0.03;
       this.streetLoop.gain.gain.setTargetAtTime(targetStreet, now, 0.25);
     }
     if (this.bazaarLoop) {
