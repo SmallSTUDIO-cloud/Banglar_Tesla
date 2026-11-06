@@ -24,10 +24,17 @@ namespace BanglarTesla.Presentation
         private ControlLayoutData layout = ControlLayoutDefaults.Create();
         private LogicalRect currentSafeArea;
         private HudControlId selectedControl = HudControlId.Pedal;
-        private bool built, layoutDirty = true, applyingSettings, editMode;
+        private bool built, layoutDirty = true, applyingSettings, editMode, ownsPanelSettings;
         private int lastScreenWidth = -1, lastScreenHeight = -1, lastSpeed = -1;
         private Rect lastSafeArea;
 
+        /// <summary>
+        /// Authored by the editor setup menu. A runtime-created panel has no theme style
+        /// sheet or blit shaders, so UI is unstyled or invisible in a player build.
+        /// </summary>
+        [SerializeField] private PanelSettings? panelSettings;
+
+        public PanelSettings? PanelSettings { get => panelSettings; set => panelSettings = value; }
         public DrivingInputState Input => input;
         public bool IsCustomizing => editMode;
         public event Action<HudControlId>? ControlActivated;
@@ -48,7 +55,14 @@ namespace BanglarTesla.Presentation
         {
             if (built) return;
             document = GetComponent<UIDocument>();
-            if (document.panelSettings is null) document.panelSettings = CreatePanelSettings();
+            if (panelSettings is not null) document.panelSettings = panelSettings;
+            if (document.panelSettings is null)
+            {
+                Debug.LogWarning("Banglar Tesla HUD: no authored PanelSettings. Run 'Banglar Tesla/Setup/Configure Unity Project' " +
+                                 "to generate one; a runtime panel has no theme or blit shaders and may not render.");
+                document.panelSettings = CreatePanelSettings();
+                ownsPanelSettings = true;
+            }
             root = document.rootVisualElement;
             if (root is null)
             {
@@ -415,6 +429,8 @@ namespace BanglarTesla.Presentation
         {
             if (settings is not null) settings.Changed -= ApplySettings;
             ReleaseAll();
+            if (ownsPanelSettings && document is not null && document.panelSettings is not null)
+                Destroy(document.panelSettings);
         }
     }
 }

@@ -15,6 +15,7 @@ namespace BanglarTesla
     {
         private static readonly string[] CameraModes = { "chase", "close", "wide", "low", "front", "cockpit", "side" };
         [SerializeField] private TextAsset? mapAsset;
+        [SerializeField] private UnityEngine.UIElements.PanelSettings? hudPanelSettings;
         private IKeyValueStorage? storage;
         private GameState? state;
         private SettingsStore? settings;
@@ -24,6 +25,9 @@ namespace BanglarTesla
         private RickshawDynamics? vehicle;
         private PlayerVehicleView? vehicleView;
         private FollowCamera? followCamera;
+        private GameObject? cameraObject;
+        private TrafficSimulation? traffic;
+        private TrafficView? trafficView;
         private GameTimeSystem? clock;
         private WeatherDirector? weather;
         private WeatherContext weatherContext;
@@ -33,6 +37,7 @@ namespace BanglarTesla
         private float minX, maxX, minZ, maxZ;
 
         public TextAsset? MapAsset { get => mapAsset; set => mapAsset = value; }
+        public UnityEngine.UIElements.PanelSettings? HudPanelSettings { get => hudPanelSettings; set => hudPanelSettings = value; }
         public bool Ready => ready;
         public GameState? State => state;
         public RickshawDynamics? Vehicle => vehicle;
@@ -76,7 +81,7 @@ namespace BanglarTesla
             vehicleView = viewObject.AddComponent<PlayerVehicleView>();
             vehicleView.Configure(state.Vehicle);
             vehicleView.Render(vehicle);
-            var cameraObject = new GameObject("Follow camera");
+            cameraObject = new GameObject("Follow camera");
             cameraObject.transform.SetParent(transform, false);
             Camera camera = cameraObject.AddComponent<Camera>();
             camera.nearClipPlane = 0.15f; camera.farClipPlane = 650.0f; camera.fieldOfView = 52.0f;
@@ -85,10 +90,19 @@ namespace BanglarTesla
             followCamera.Configure(vehicle);
             followCamera.SetMode(settings.Value.CameraMode);
 
+            // Traffic density follows the graphics profile; the legacy density setting is not migrated yet.
+            traffic = new TrafficSimulation(world.Graph!, TrafficConfigFor(settings.Value.GraphicsProfile));
+            traffic.Populate(new Vector2D(world.SpawnPosition.x, world.SpawnPosition.z), traffic.Config.MaxAgents);
+            var trafficObject = new GameObject("Traffic view");
+            trafficObject.transform.SetParent(transform, false);
+            trafficView = trafficObject.AddComponent<TrafficView>();
+            trafficView.Configure(traffic.Config.MaxAgents);
+
             var hudObject = new GameObject("Driving HUD");
             hudObject.transform.SetParent(transform, false);
             hudObject.AddComponent<UIDocument>();
             hud = hudObject.AddComponent<DrivingHudController>();
+            hud.PanelSettings = hudPanelSettings;
             hud.Configure(settings);
             hud.ControlActivated += OnHudAction;
             input = new UnityDrivingInput();
@@ -119,6 +133,7 @@ namespace BanglarTesla
             state!.Progress.DistanceTravelled = Math.Min(1_000_000_000.0, state.Progress.DistanceTravelled + events.Distance);
             if (events.Impact > 0.4)
                 state.DamageFromImpact(events.Impact * 3.2 * vehicle.Tuning.DamageMultiplier, simulationSeconds);
+            traffic?.Step(dt);
             if (!world!.IsInsideBoundary(vehicle.X, vehicle.Z)) RecoverToNearestRoad();
             clock!.Update(dt);
             weatherContext.TimeMinutes = clock.MinutesOfDay;
@@ -136,6 +151,8 @@ namespace BanglarTesla
         {
             if (!ready || vehicle is null) return;
             vehicleView!.Render(vehicle);
+            if (traffic is not null && trafficView is not null && cameraObject is not null)
+                trafficView.Render(traffic, cameraObject.transform.position);
             if (hudTimer >= 0.1) { hudTimer = 0.0; RefreshHud(); }
         }
 
@@ -198,6 +215,13 @@ namespace BanglarTesla
             QualitySettings.shadowDistance = value.GraphicsProfile == "performance" ? 45.0f : value.GraphicsProfile == "high" ? 120.0f : 75.0f;
         }
 
+        private static TrafficConfig TrafficConfigFor(string profile) => profile switch
+        {
+            "performance" => new TrafficConfig { MaxAgents = 36, SpawnRadius = 240.0, ComfortGap = 7.0 },
+            "high" => new TrafficConfig { MaxAgents = 120, SpawnRadius = 380.0 },
+            _ => new TrafficConfig { MaxAgents = 72, SpawnRadius = 320.0 },
+        };
+
         private void CreateLighting()
         {
             var sunObject = new GameObject("Sun");
@@ -228,12 +252,13 @@ namespace BanglarTesla
         private void ShowFatalError(string message)
         {
             var errorObject = new GameObject("Startup error");
-            errorObject.AddComponent<UnityEngine.UIElements.UIDocument>();
+            UnityEngine.UIElements.UIDocument document = errorObject.AddComponent<UnityEngine.UIElements.UIDocument>();
+            document.panelSettings = hudPanelSettings;
             var label = new UnityEngine.UIElements.Label("গেম শুরু করা যায়নি\n" + message);
             label.style.color = Color.white;
             label.style.fontSize = 22;
             label.style.marginTop = 40; label.style.marginLeft = 40; label.style.marginRight = 40;
-            errorObject.GetComponent<UnityEngine.UIElements.UIDocument>().rootVisualElement?.Add(label);
+            document.rootVisualElement?.Add(label);
         }
 
         private void OnApplicationPause(bool pause)
