@@ -46,7 +46,5 @@ jobs:
           dotnet test unity/Tests/BanglarTesla.Domain.Tests.csproj --configuration Release --no-build \
             --logger "console;verbosity=normal" 2>&1 | tee /tmp/domain-tests.log
           status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            python3 .github/scripts/ci-test-annotate.py /tmp/domain-tests.log
-            exit "$status"
-          fi
+          python3 .github/scripts/ci-test-annotate.py /tmp/domain-tests.log
+          exit "$status"

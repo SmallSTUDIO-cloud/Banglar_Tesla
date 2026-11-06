@@ -17,6 +17,13 @@ MAX_CHARS = 6000
 def main() -> int:
     path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/domain-tests.log")
     lines = path.read_text(errors="replace").splitlines()
+
+    # Always publish the dotnet summary line so counts are readable from the API
+    # even when the run succeeds and the log archive is unavailable.
+    summary = [line.strip() for line in lines if line.strip().startswith(("Passed!", "Failed!"))]
+    if summary:
+        print("::notice title=Domain test summary::" + urllib.parse.quote(summary[-1][:900], safe=""))
+
     blocks = []
     for index, line in enumerate(lines):
         if line.lstrip().startswith("Failed "):
