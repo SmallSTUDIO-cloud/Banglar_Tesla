@@ -37,4 +37,22 @@ jobs:
       - name: Compile domain and tests with warnings as errors
         run: dotnet build unity/Tests/BanglarTesla.Domain.Tests.csproj --configuration Release --no-restore
       - name: Run domain parity tests
-        run: dotnet test unity/Tests/BanglarTesla.Domain.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
+        run: |
+          set +e
+          dotnet test unity/Tests/BanglarTesla.Domain.Tests.csproj --configuration Release --no-build \
+            --logger "console;verbosity=normal" 2>&1 | tee /tmp/domain-tests.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            # Surface assertion text as an annotation so failures are readable from the API.
+            python3 - <<'PY'
+            import pathlib
+            import urllib.parse
+
+            lines = pathlib.Path('/tmp/domain-tests.log').read_text(errors='replace').splitlines()
+            keep = ('Failed ', 'Error Message', 'Expected', 'But was', 'Stack Trace', ' at BanglarTesla')
+            detail = [line for line in lines if line.strip().startswith(keep)][:40]
+            body = '\n'.join(detail) or '\n'.join(lines[-25:])
+            print('::error title=Domain test failures::' + urllib.parse.quote(body[:4000], safe=''))
+            PY
+            exit "$status"
+          fi
