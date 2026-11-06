@@ -16,6 +16,9 @@
 ## Evidence and accuracy limits
 
 - Offline importer/minimap tests: **6/6 passing** locally.
+- Hosted `Unity Domain Tests` run `42234144355` passed on commit `16ef164`, compiling the engine-free
+  domain plus tests and executing the real-map integration suite against the regenerated fixture.
+  This covers domain logic only; it does not load Unity, URP, UI Toolkit or the Input System.
 - The generated map contains **1,610 roads**, **2,857 named POIs** and **129 driveable boundary crossings**. Only **3** roads have explicit OSM widths; the other widths are labeled lane/road-class estimates.
 - Road geometry and named positions retain OSM provenance under ODbL. They are not independent ground truth or surveyed exactness.
 - Barricades are gameplay constraints. The current rickshaw, driver and world ground are explicitly procedural stand-ins, not recognizable production landmark art.
