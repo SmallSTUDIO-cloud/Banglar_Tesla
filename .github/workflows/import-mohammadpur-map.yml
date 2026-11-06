@@ -51,6 +51,7 @@ jobs:
           assert data['roads'] and data['boundary']
           assert all(road['widthSource'] in {'osm:width', 'estimated:lanes', 'estimated:road-class'} for road in data['roads'])
           assert all((road['sourceWidthMeters'] is not None) == (road['widthSource'] == 'osm:width') for road in data['roads'])
+          assert all(r['lanes'] is None or type(r['lanes']) is int for r in data['roads']), 'lanes must be a whole number or null'
           minimap = Path('unity/Assets/BanglarTesla/Resources/UI/mohammadpur-minimap.png').read_bytes()
           assert minimap.startswith(b'\x89PNG\r\n\x1a\n') and len(minimap) > 10_000
           print(f"Validated {len(data['roads'])} roads, {len(data['pois'])} POIs and {len(data['boundaryExits'])} boundary exits")

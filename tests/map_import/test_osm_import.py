@@ -73,6 +73,8 @@ class ImportContracts(unittest.TestCase):
         self.assertEqual(roads[201]["sourceWidthMeters"], 6)
         self.assertEqual(roads[202]["widthSource"], "estimated:lanes")
         self.assertIsNone(roads[202]["sourceWidthMeters"])
+        self.assertEqual(roads[202]["lanes"], 2)
+        self.assertIs(type(roads[202]["lanes"]), int)
         self.assertEqual(roads[202]["nameBn"], "আসাদ এভিনিউ")
         self.assertFalse(roads[203]["driveable"])
         self.assertEqual(report["driveableComponents"], [3])

@@ -122,12 +122,20 @@ def parse_length_m(value: Any) -> float | None:
     return number if math.isfinite(number) and 0.2 <= number <= 100 else None
 
 
-def parse_lanes(value: Any) -> float | None:
+def parse_lanes(value: Any) -> int | None:
+    """Return a whole lane count.
+
+    OSM lanes are integers, but tags occasionally carry decimals or unit text.
+    Serializing 2.0 instead of 2 breaks strict integer consumers, so the value is
+    normalized here and invalid/silly values fail closed to None.
+    """
     try:
         lanes = float(str(value).strip())
     except (TypeError, ValueError):
         return None
-    return lanes if math.isfinite(lanes) and 0 < lanes <= 12 else None
+    if not math.isfinite(lanes) or not 0 < lanes <= 12:
+        return None
+    return int(round(lanes))
 
 
 def finite_coordinate(node: dict[str, Any]) -> bool:

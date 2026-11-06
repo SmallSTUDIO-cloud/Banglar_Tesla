@@ -9,14 +9,18 @@ on:
       - unity/Assets/BanglarTesla/Tests/EditMode/Domain/**
       - unity/Domain/**
       - unity/Tests/**
+      - unity/Assets/BanglarTesla/Data/Maps/**
       - .github/workflows/unity-domain.yml
+      - .github/scripts/ci-test-annotate.py
   pull_request:
     paths:
       - unity/Assets/BanglarTesla/Runtime/Domain/**
       - unity/Assets/BanglarTesla/Tests/EditMode/Domain/**
       - unity/Domain/**
       - unity/Tests/**
+      - unity/Assets/BanglarTesla/Data/Maps/**
       - .github/workflows/unity-domain.yml
+      - .github/scripts/ci-test-annotate.py
 
 permissions:
   contents: read
