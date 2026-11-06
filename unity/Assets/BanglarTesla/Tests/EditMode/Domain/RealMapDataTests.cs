@@ -59,7 +59,7 @@ namespace BanglarTesla.Tests.EditMode.Domain
                     Vector2D a = road.Points[segment], delta = road.Points[segment + 1] - a;
                     double lengthSquared = delta.LengthSquared;
                     if (lengthSquared < 1e-10) continue;
-                    double t = Numerics.Clamp01(Vector2D.Dot(point - a, delta) / lengthSquared);
+                    double t = Math.Clamp(Vector2D.Dot(point - a, delta) / lengthSquared, 0.0, 1.0);
                     Vector2D projected = a + delta * t;
                     double distance = Vector2D.DistanceSquared(point, projected);
                     if (distance >= bestDistance) continue;
