@@ -49,6 +49,9 @@ namespace BanglarTesla.Domain.Maps
         public double widthMeters;
         public double? sourceWidthMeters;
         public string widthSource = "estimated:road-class";
+        /// <summary>Whole lane count, or 0 when the source tag was absent. The importer serializes
+        /// integers only: Newtonsoft rejects <c>2.0</c> for an <c>int</c>, so fractional tags are
+        /// normalized upstream rather than coerced here.</summary>
         public int lanes;
         public string oneWay = "no";
         public string surface = "unknown";
