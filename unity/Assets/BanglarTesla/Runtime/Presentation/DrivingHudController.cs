@@ -108,7 +108,9 @@ namespace BanglarTesla.Presentation
         {
             var panel = ScriptableObject.CreateInstance<PanelSettings>();
             panel.scaleMode = PanelScaleMode.ScaleWithScreenSize;
-            panel.referenceResolution = new Vector2(1568, 720);
+            // PanelSettings.referenceResolution is Vector2Int in Unity 6.3. Both were exact
+            // integers already, so this preserves the designed 1568x720 canvas exactly.
+            panel.referenceResolution = new Vector2Int(1568, 720);
             panel.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
             panel.match = 0.5f;
             panel.referenceDpi = 96.0f;

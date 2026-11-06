@@ -22,9 +22,9 @@ namespace BanglarTesla.Infrastructure
             Keyboard? keyboard = Keyboard.current;
             Gamepad? gamepad = Gamepad.current;
             int keyboardSteer = keyboard is null ? 0 :
-                (KeyHeld(keyboard, Key.d, Key.rightArrow) ? 1 : 0) - (KeyHeld(keyboard, Key.a, Key.leftArrow) ? 1 : 0);
-            float keyboardThrottle = keyboard is not null && KeyHeld(keyboard, Key.w, Key.upArrow) ? 1.0f : 0.0f;
-            float keyboardBrake = keyboard is not null && KeyHeld(keyboard, Key.s, Key.downArrow) ? 1.0f : 0.0f;
+                (KeyHeld(keyboard, Key.D, Key.RightArrow) ? 1 : 0) - (KeyHeld(keyboard, Key.A, Key.LeftArrow) ? 1 : 0);
+            float keyboardThrottle = keyboard is not null && KeyHeld(keyboard, Key.W, Key.UpArrow) ? 1.0f : 0.0f;
+            float keyboardBrake = keyboard is not null && KeyHeld(keyboard, Key.S, Key.DownArrow) ? 1.0f : 0.0f;
             bool keyboardTurbo = keyboard is not null && (keyboard.xKey.isPressed || keyboard.nKey.isPressed || keyboard.leftCtrlKey.isPressed);
             bool keyboardHorn = keyboard is not null && (keyboard.spaceKey.isPressed || keyboard.hKey.isPressed || keyboard.bKey.isPressed);
 

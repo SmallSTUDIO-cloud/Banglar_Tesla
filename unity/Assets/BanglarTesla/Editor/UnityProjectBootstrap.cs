@@ -122,7 +122,7 @@ namespace BanglarTesla.Editor
                 AssetDatabase.CreateAsset(panel, PanelPath);
             }
             panel.scaleMode = PanelScaleMode.ScaleWithScreenSize;
-            panel.referenceResolution = new Vector2(1568.0f, 720.0f);
+            panel.referenceResolution = new Vector2Int(1568, 720);
             panel.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
             panel.match = 0.5f;
             if (panel.themeStyleSheet is null)

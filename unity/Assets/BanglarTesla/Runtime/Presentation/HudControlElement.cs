@@ -102,7 +102,7 @@ namespace BanglarTesla.Presentation
             activePointer = -1;
             dragging = false;
             RemoveFromClassList("pressed");
-            if (HasPointerCapture(pointer)) ReleasePointer(pointer);
+            if (PointerCaptureHelper.HasPointerCapture(this, pointer)) PointerCaptureHelper.ReleasePointer(this, pointer);
         }
 
         private void OnPointerDown(PointerDownEvent evt)
@@ -112,7 +112,7 @@ namespace BanglarTesla.Presentation
             downPosition = evt.position;
             dragging = false;
             AddToClassList("pressed");
-            CapturePointer(evt.pointerId);
+            PointerCaptureHelper.CapturePointer(this, evt.pointerId);
             if (IsHold && !editMode)
             {
                 holdPressed = true;
