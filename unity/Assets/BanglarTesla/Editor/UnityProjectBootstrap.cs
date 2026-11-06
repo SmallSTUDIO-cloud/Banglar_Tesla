@@ -78,7 +78,12 @@ namespace BanglarTesla.Editor
         {
             TextAsset? map = AssetDatabase.LoadAssetAtPath<TextAsset>(MapPath);
             if (map is null) throw new System.IO.FileNotFoundException("The sourced Mohammadpur map must be imported before scene setup.", MapPath);
-            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            // Never prompt in a headless build. SaveCurrentModifiedScenesIfUserWantsTo opens a
+            // Save/Don't Save/Cancel dialog and is a native binding with no managed batch-mode
+            // guard, so with no operator present it can either return false (silently skipping
+            // scene generation) or block until the build times out. Nothing in a cloud build
+            // workspace is worth preserving; the scene is written explicitly below.
+            if (!Application.isBatchMode && !EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
             if (!AssetDatabase.IsValidFolder("Assets/BanglarTesla/Scenes"))
                 AssetDatabase.CreateFolder("Assets/BanglarTesla", "Scenes");
             UnityEngine.SceneManagement.Scene scene;
