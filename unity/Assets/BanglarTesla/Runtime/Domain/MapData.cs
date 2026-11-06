@@ -44,6 +44,7 @@ namespace BanglarTesla.Domain.Maps
         public List<GeoCoordinate> geometry = new();
         public string name = string.Empty;
         public string nameBn = string.Empty;
+        public string nameEn = string.Empty;
         public string highway = string.Empty;
         public double widthMeters;
         public double sourceWidthMeters;
@@ -61,6 +62,7 @@ namespace BanglarTesla.Domain.Maps
         public string osmType = "node";
         public string name = string.Empty;
         public string nameBn = string.Empty;
+        public string nameEn = string.Empty;
         public GeoCoordinate center;
         public List<long> nodeIds = new();
         public List<GeoCoordinate> geometry = new();

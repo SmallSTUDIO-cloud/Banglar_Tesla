@@ -99,7 +99,8 @@ def canonical_json(value: Any) -> bytes:
 
 
 def normalize_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+    # Preserve Bengali letters as well as Latin names; OSM may put either in `name`.
+    return re.sub(r"[^a-z0-9\u0980-\u09ff]+", "", value.casefold())
 
 
 def parse_length_m(value: Any) -> float | None:
@@ -306,7 +307,7 @@ def build_dataset(
             explicit, width, lanes, width_source = width_data(tags)
             roads.append({
                 "id": int(way["id"]), "nodeIds": refs, "geometry": geometry,
-                "name": name, "nameBn": str(tags.get("name:bn", "")),
+                "name": name, "nameBn": str(tags.get("name:bn", "")), "nameEn": str(tags.get("name:en", "")),
                 "highway": str(tags["highway"]), "widthMeters": round(width, 3),
                 "sourceWidthMeters": round(explicit, 3) if explicit is not None else None,
                 "widthSource": width_source, "lanes": lanes, "oneWay": str(tags.get("oneway", "no")),
@@ -316,7 +317,7 @@ def build_dataset(
         elif name:
             pois.append({
                 "id": int(way["id"]), "osmType": "way", "name": name,
-                "nameBn": str(tags.get("name:bn", "")), "center": centroid(geometry),
+                "nameBn": str(tags.get("name:bn", "")), "nameEn": str(tags.get("name:en", "")), "center": centroid(geometry),
                 "nodeIds": refs, "geometry": geometry, "tags": tags,
             })
     for node in sorted(nodes.values(), key=lambda item: int(item["id"])):
@@ -325,7 +326,7 @@ def build_dataset(
         if name:
             pois.append({
                 "id": int(node["id"]), "osmType": "node", "name": name,
-                "nameBn": str(tags.get("name:bn", "")),
+                "nameBn": str(tags.get("name:bn", "")), "nameEn": str(tags.get("name:en", "")),
                 "center": {"lat": node["lat"], "lon": node["lon"]},
                 "nodeIds": [int(node["id"])], "geometry": [{"lat": node["lat"], "lon": node["lon"]}],
                 "tags": tags,
@@ -340,15 +341,19 @@ def build_dataset(
     named_features: list[dict[str, Any]] = []
     for road in roads:
         if road["name"]:
-            named_features.append({"kind": "road", "id": road["id"], "name": road["name"], "nameBn": road["nameBn"]})
+            named_features.append({"kind": "road", "id": road["id"], "name": road["name"], "nameBn": road["nameBn"], "nameEn": road["nameEn"]})
     for poi in pois:
-        named_features.append({"kind": "poi", "id": poi["id"], "name": poi["name"], "nameBn": poi["nameBn"]})
+        named_features.append({"kind": "poi", "id": poi["id"], "name": poi["name"], "nameBn": poi["nameBn"], "nameEn": poi["nameEn"]})
     landmark_matches: dict[str, list[dict[str, Any]]] = {}
     for expected in EXPECTED_LANDMARKS:
-        target = normalize_name(expected)
-        matches = [feature for feature in named_features if target in normalize_name(feature["name"]) or target in normalize_name(feature["nameBn"])]
+        aliases = [expected]
         if expected == "Chandmia Housing":
-            matches = [feature for feature in named_features if "chandmia" in normalize_name(feature["name"]) or "chanmia" in normalize_name(feature["name"])]
+            aliases += ["Chand Miya Housing", "Chanmia Housing", "Chanmiya Housing", "চানমিয়া হাউজিং"]
+        targets = [normalize_name(alias) for alias in aliases if normalize_name(alias)]
+        matches = [
+            feature for feature in named_features
+            if any(target in normalize_name(feature[field]) for target in targets for field in ("name", "nameBn", "nameEn"))
+        ]
         landmark_matches[expected] = matches
 
     dataset = {

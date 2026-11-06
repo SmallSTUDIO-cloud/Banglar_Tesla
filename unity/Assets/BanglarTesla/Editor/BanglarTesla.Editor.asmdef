@@ -3,6 +3,7 @@
   "rootNamespace": "BanglarTesla.Editor",
   "references": [
     "BanglarTesla.Runtime",
+    "Unity.RenderPipelines.Universal.Runtime",
     "Unity.RenderPipelines.Universal.Editor"
   ],
   "includePlatforms": ["Editor"],

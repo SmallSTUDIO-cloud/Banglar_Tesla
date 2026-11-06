@@ -11,5 +11,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Assets/BanglarTesla/Runtime/Domain/**/*.cs" Link="Domain/%(RecursiveDir)%(Filename)%(Extension)" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
   </ItemGroup>
 </Project>

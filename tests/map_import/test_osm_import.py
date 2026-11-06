@@ -36,7 +36,7 @@ def overpass_fixture():
         {"type": "node", "id": 13, "lat": 23.757, "lon": 90.355},
         {"type": "node", "id": 14, "lat": 23.752, "lon": 90.354},
         {"type": "node", "id": 15, "lat": 23.753, "lon": 90.354},
-        {"type": "node", "id": 20, "lat": 23.756, "lon": 90.356, "tags": {"name": "Chandmia Housing", "place": "neighbourhood"}},
+        {"type": "node", "id": 20, "lat": 23.756, "lon": 90.356, "tags": {"name": "চানমিয়া হাউজিং", "name:en": "Chanmia Housing", "place": "neighbourhood"}},
         {"type": "node", "id": 21, "lat": 23.758, "lon": 90.357},
         {"type": "node", "id": 22, "lat": 23.7585, "lon": 90.357},
         {"type": "node", "id": 23, "lat": 23.7585, "lon": 90.3575},
@@ -88,6 +88,7 @@ class ImportContracts(unittest.TestCase):
         self.assertAlmostEqual(exit["point"]["lat"], 23.755)
         self.assertEqual(report["landmarks"]["Tajmahal Road"][0]["id"], 201)
         self.assertEqual(report["landmarks"]["Chandmia Housing"][0]["id"], 20)
+        self.assertEqual(report["landmarks"]["Chandmia Housing"][0]["nameEn"], "Chanmia Housing")
         self.assertEqual(report["landmarks"]["Mohammadpur Town Hall Market"][0]["id"], 301)
         self.assertIn("not a surveyed", osm.markdown_report(report, dataset))
 

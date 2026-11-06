@@ -48,7 +48,7 @@ namespace BanglarTesla.Domain
         internal static double NormalizeMinutes(double minutes)
         {
             if (!double.IsFinite(minutes))
-                return 480.0;
+                return 450.0;
             minutes %= 1440.0;
             return minutes < 0.0 ? minutes + 1440.0 : minutes;
         }
