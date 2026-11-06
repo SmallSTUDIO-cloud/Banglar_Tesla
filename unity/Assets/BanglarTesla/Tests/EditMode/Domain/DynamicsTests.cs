@@ -77,6 +77,29 @@ namespace BanglarTesla.Tests.EditMode.Domain
         }
 
         [Test]
+        public void RespawnPreservesResourcesAndSessionTotals()
+        {
+            var vehicle = new RickshawDynamics
+            {
+                Battery = 42.0, Stamina = 51.0, TurboCharge = 33.0,
+                DistanceDriven = 120.0, Hits = 2, HardBrakes = 1, Speed = 8.0,
+            };
+            vehicle.Respawn(4.0, 5.0, 0.5);
+            Assert.Multiple(() =>
+            {
+                Assert.That(vehicle.X, Is.EqualTo(4.0));
+                Assert.That(vehicle.Z, Is.EqualTo(5.0));
+                Assert.That(vehicle.Speed, Is.Zero);
+                Assert.That(vehicle.Battery, Is.EqualTo(42.0));
+                Assert.That(vehicle.Stamina, Is.EqualTo(51.0));
+                Assert.That(vehicle.TurboCharge, Is.EqualTo(33.0));
+                Assert.That(vehicle.DistanceDriven, Is.EqualTo(120.0));
+                Assert.That(vehicle.Hits, Is.EqualTo(2));
+                Assert.That(vehicle.HardBrakes, Is.EqualTo(1));
+            });
+        }
+
+        [Test]
         public void InvalidPhysicsDeltaFailsClosed()
         {
             var vehicle = new RickshawDynamics();

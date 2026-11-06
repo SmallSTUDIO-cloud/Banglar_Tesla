@@ -47,7 +47,7 @@ namespace BanglarTesla.Domain.Maps
         public string nameEn = string.Empty;
         public string highway = string.Empty;
         public double widthMeters;
-        public double sourceWidthMeters;
+        public double? sourceWidthMeters;
         public string widthSource = "estimated:road-class";
         public int lanes;
         public string oneWay = "no";
@@ -105,7 +105,7 @@ namespace BanglarTesla.Domain.Maps
                     if (road is null || !ids.Add(road.id)) { errors.Add("Road IDs must be present and unique."); continue; }
                     if (road.geometry is null || road.geometry.Count < 2) errors.Add($"Road {road.id} has insufficient geometry.");
                     if (!double.IsFinite(road.widthMeters) || road.widthMeters <= 0.0) errors.Add($"Road {road.id} has invalid width.");
-                    if (road.HasExplicitWidth && (!double.IsFinite(road.sourceWidthMeters) || road.sourceWidthMeters <= 0.0))
+                    if (road.HasExplicitWidth && (!road.sourceWidthMeters.HasValue || !double.IsFinite(road.sourceWidthMeters.Value) || road.sourceWidthMeters.Value <= 0.0))
                         errors.Add($"Road {road.id} is missing its explicit source width.");
                     if (road.geometry is not null && road.geometry.Any(point => !point.ToGeoPoint().IsValid))
                         errors.Add($"Road {road.id} contains invalid coordinates.");
@@ -157,7 +157,12 @@ namespace BanglarTesla.Domain.Maps
     /// <summary>Source-preserving local road geometry and a junction graph for deterministic routing.</summary>
     public sealed class RoadGraph
     {
+        private const double SpatialCellSize = 32.0, SpatialQueryRadius = 64.0;
         private readonly Dictionary<long, RoadNode> nodes = new();
+        private readonly Dictionary<(int X, int Z), List<int>> roadCells = new();
+        private int[] roadStamps = Array.Empty<int>();
+        private int queryStamp;
+        private Vector2D[] boundaryPoints = Array.Empty<Vector2D>();
 
         public RoadGraph(MapDataset dataset)
         {
@@ -167,13 +172,39 @@ namespace BanglarTesla.Domain.Maps
                 throw new ArgumentException("Invalid map dataset: " + string.Join(" ", errors), nameof(dataset));
             Projection = new GeoProjection(dataset.origin.ToGeoPoint());
             Roads = dataset.roads.Select(road => new RoadModel(road, road.geometry.Select(point => Projection.ToLocal(point.ToGeoPoint())).ToArray())).ToArray();
+            boundaryPoints = dataset.boundary.Select(point => Projection.ToLocal(point.ToGeoPoint())).ToArray();
             BuildNodes();
+            BuildSpatialIndex();
         }
 
         public MapDataset Dataset { get; }
         public GeoProjection Projection { get; }
         public IReadOnlyList<RoadModel> Roads { get; }
         public IReadOnlyDictionary<long, RoadNode> Nodes => nodes;
+
+        private void BuildSpatialIndex()
+        {
+            roadStamps = new int[Roads.Count];
+            for (int roadIndex = 0; roadIndex < Roads.Count; roadIndex++)
+            {
+                IReadOnlyList<Vector2D> points = Roads[roadIndex].Points;
+                if (points.Count < 2) continue;
+                double minX = points[0].X, maxX = points[0].X, minZ = points[0].Z, maxZ = points[0].Z;
+                for (int i = 1; i < points.Count; i++)
+                {
+                    minX = Math.Min(minX, points[i].X); maxX = Math.Max(maxX, points[i].X);
+                    minZ = Math.Min(minZ, points[i].Z); maxZ = Math.Max(maxZ, points[i].Z);
+                }
+                int x0 = (int)Math.Floor(minX / SpatialCellSize), x1 = (int)Math.Floor(maxX / SpatialCellSize);
+                int z0 = (int)Math.Floor(minZ / SpatialCellSize), z1 = (int)Math.Floor(maxZ / SpatialCellSize);
+                for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++)
+                {
+                    var key = (x, z);
+                    if (!roadCells.TryGetValue(key, out List<int>? list)) roadCells[key] = list = new List<int>();
+                    list.Add(roadIndex);
+                }
+            }
+        }
 
         private void BuildNodes()
         {
@@ -213,27 +244,58 @@ namespace BanglarTesla.Domain.Maps
         {
             RoadProjection best = default;
             double bestDistanceSquared = double.PositiveInfinity;
-            for (int roadIndex = 0; roadIndex < Roads.Count; roadIndex++)
+            bool foundCandidate = false;
+            queryStamp++;
+            if (queryStamp == int.MaxValue)
             {
-                RoadModel road = Roads[roadIndex];
-                if (driveableOnly && !road.Data.driveable) continue;
-                for (int segment = 0; segment + 1 < road.Points.Count; segment++)
+                Array.Clear(roadStamps, 0, roadStamps.Length);
+                queryStamp = 1;
+            }
+            int x0 = (int)Math.Floor((point.X - SpatialQueryRadius) / SpatialCellSize);
+            int x1 = (int)Math.Floor((point.X + SpatialQueryRadius) / SpatialCellSize);
+            int z0 = (int)Math.Floor((point.Z - SpatialQueryRadius) / SpatialCellSize);
+            int z1 = (int)Math.Floor((point.Z + SpatialQueryRadius) / SpatialCellSize);
+            for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++)
+            {
+                if (!roadCells.TryGetValue((x, z), out List<int>? list)) continue;
+                foreach (int roadIndex in list)
                 {
-                    Vector2D a = road.Points[segment];
-                    Vector2D b = road.Points[segment + 1];
-                    Vector2D delta = b - a;
-                    double lengthSquared = delta.LengthSquared;
-                    if (lengthSquared < 1e-10) continue;
-                    double t = Numerics.Clamp01(Vector2D.Dot(point - a, delta) / lengthSquared);
-                    Vector2D projected = a + delta * t;
-                    double distanceSquared = Vector2D.DistanceSquared(point, projected);
-                    if (distanceSquared >= bestDistanceSquared) continue;
-                    double length = Math.Sqrt(lengthSquared);
-                    bestDistanceSquared = distanceSquared;
-                    best = new RoadProjection(roadIndex, segment, projected, delta / length, Math.Sqrt(distanceSquared), road.CumulativeLengths[segment] + length * t);
+                    if (roadStamps[roadIndex] == queryStamp) continue;
+                    roadStamps[roadIndex] = queryStamp;
+                    foundCandidate = true;
+                    TestRoad(roadIndex, point, driveableOnly, ref best, ref bestDistanceSquared);
                 }
             }
+            if (!foundCandidate || bestDistanceSquared >= SpatialQueryRadius * SpatialQueryRadius)
+            {
+                // A far-away route/spawn query still gets the exact global nearest road.
+                for (int roadIndex = 0; roadIndex < Roads.Count; roadIndex++)
+                    TestRoad(roadIndex, point, driveableOnly, ref best, ref bestDistanceSquared);
+            }
+            if (double.IsPositiveInfinity(bestDistanceSquared))
+                return new RoadProjection(-1, -1, Vector2D.Zero, Vector2D.Zero, double.PositiveInfinity, double.PositiveInfinity);
             return best;
+        }
+
+        private void TestRoad(int roadIndex, Vector2D point, bool driveableOnly, ref RoadProjection best, ref double bestDistanceSquared)
+        {
+            RoadModel road = Roads[roadIndex];
+            if (driveableOnly && !road.Data.driveable) return;
+            for (int segment = 0; segment + 1 < road.Points.Count; segment++)
+            {
+                Vector2D a = road.Points[segment];
+                Vector2D b = road.Points[segment + 1];
+                Vector2D delta = b - a;
+                double lengthSquared = delta.LengthSquared;
+                if (lengthSquared < 1e-10) continue;
+                double t = Numerics.Clamp01(Vector2D.Dot(point - a, delta) / lengthSquared);
+                Vector2D projected = a + delta * t;
+                double distanceSquared = Vector2D.DistanceSquared(point, projected);
+                if (distanceSquared >= bestDistanceSquared) continue;
+                double length = Math.Sqrt(lengthSquared);
+                bestDistanceSquared = distanceSquared;
+                best = new RoadProjection(roadIndex, segment, projected, delta / length, Math.Sqrt(distanceSquared), road.CumulativeLengths[segment] + length * t);
+            }
         }
 
         public RoadNode? NearestNode(Vector2D point)
@@ -287,11 +349,11 @@ namespace BanglarTesla.Domain.Maps
         public bool IsInsideBoundary(Vector2D point)
         {
             bool inside = false;
-            IReadOnlyList<GeoCoordinate> source = Dataset.boundary;
+            IReadOnlyList<Vector2D> source = boundaryPoints;
             for (int i = 0, j = source.Count - 1; i < source.Count; j = i++)
             {
-                Vector2D a = Projection.ToLocal(source[i].ToGeoPoint());
-                Vector2D b = Projection.ToLocal(source[j].ToGeoPoint());
+                Vector2D a = source[i];
+                Vector2D b = source[j];
                 if ((a.Z > point.Z) != (b.Z > point.Z) &&
                     point.X < (b.X - a.X) * (point.Z - a.Z) / (b.Z - a.Z) + a.X)
                     inside = !inside;

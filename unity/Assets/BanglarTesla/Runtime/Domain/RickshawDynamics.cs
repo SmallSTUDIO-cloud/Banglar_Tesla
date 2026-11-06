@@ -9,7 +9,7 @@ namespace BanglarTesla.Domain
     public struct DriveInput
     {
         public double Throttle, Brake, Steer;
-        public bool Handbrake, Turbo;
+        public bool Handbrake, Turbo, Horn;
     }
 
     public struct StepEvents
@@ -107,18 +107,25 @@ namespace BanglarTesla.Domain
 
         public void Reset(double x, double z, double yaw)
         {
+            Respawn(x, z, yaw);
+            Hits = 0; HardBrakes = 0; DistanceDriven = 0.0;
+            Battery = 100.0; Stamina = 100.0; TurboCharge = 100.0;
+        }
+
+        /// <summary>Recover transform and motion without erasing career/session resources or odometer totals.</summary>
+        public void Respawn(double x, double z, double yaw)
+        {
             X = x; Z = z; Yaw = Numerics.NormalizeAngle(yaw); Speed = 0.0; LateralSlip = 0.0; SteerAngle = 0.0;
             double fx = Math.Sin(Yaw), fz = Math.Cos(Yaw);
             double front = heightAt(x + fx * FrontAxleZ, z + fz * FrontAxleZ);
             double rear = heightAt(x + fx * RearAxleZ, z + fz * RearAxleZ);
-            FrontHeight = front; RearHeight = rear; previousFrontHeight = front;
+            FrontHeight = front; RearHeight = rear; previousFrontHeight = front; previousSpeed = 0.0;
             Array.Clear(potholeContacts, 0, potholeContacts.Length);
             Y = rear + (front - rear) * (-RearAxleZ / Wheelbase);
             Pitch = -Math.Atan2(front - rear, Wheelbase); BodyPitchOffset = 0.0; Roll = 0.0;
-            Hits = 0; HardBrakes = 0; DistanceDriven = 0.0; Stuck = false; StuckTimer = 0.0;
-            stuckWindow = 0.0; stuckAnchorX = x; stuckAnchorZ = z; ReverseTimer = 0.0; Battery = 100.0;
-            TanActive = false; TanBlend = 0.0; ForceStopTurbo(); ScufflePenaltyTimer = 0.0; CrashRecoveryTimer = 0.0;
-            LastContact = default;
+            Stuck = false; StuckTimer = 0.0; stuckWindow = 0.0; stuckAnchorX = x; stuckAnchorZ = z;
+            ReverseTimer = 0.0; TanActive = false; TanBlend = 0.0; ForceStopTurbo();
+            ScufflePenaltyTimer = 0.0; CrashRecoveryTimer = 0.0; LastImpact = 0.0; LastContact = default;
         }
 
         public CollisionResult ResolveWorldCollisions(bool applyVelocityResponse = false) =>

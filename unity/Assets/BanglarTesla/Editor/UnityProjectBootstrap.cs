@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Build;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -14,6 +15,8 @@ namespace BanglarTesla.Editor
         private const string SettingsFolder = "Assets/BanglarTesla/Settings";
         private const string RendererPath = SettingsFolder + "/BanglarTesla-UniversalRenderer.asset";
         private const string PipelinePath = SettingsFolder + "/BanglarTesla-URP.asset";
+        private const string MapPath = "Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json";
+        private const string ScenePath = "Assets/BanglarTesla/Scenes/Mohammadpur.unity";
 
         [MenuItem("Banglar Tesla/Setup/Configure Unity Project")]
         public static void ConfigureProject()
@@ -60,7 +63,37 @@ namespace BanglarTesla.Editor
             EditorUtility.SetDirty(renderer);
             EditorUtility.SetDirty(pipeline);
             AssetDatabase.SaveAssets();
-            Debug.Log("Banglar Tesla: package identity, Android and URP settings configured. Create and validate build scenes separately.");
+            EnsurePlayableScene();
+            Debug.Log("Banglar Tesla: package identity, Android, URP and the sourced playable scene were configured. Run Editor/PlayMode validation before building.");
+        }
+
+        [MenuItem("Banglar Tesla/Setup/Create Sourced Playable Scene")]
+        public static void CreatePlayableScene() => ConfigureProject();
+
+        private static void EnsurePlayableScene()
+        {
+            TextAsset? map = AssetDatabase.LoadAssetAtPath<TextAsset>(MapPath);
+            if (map is null) throw new System.IO.FileNotFoundException("The sourced Mohammadpur map must be imported before scene setup.", MapPath);
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            if (!AssetDatabase.IsValidFolder("Assets/BanglarTesla/Scenes"))
+                AssetDatabase.CreateFolder("Assets/BanglarTesla", "Scenes");
+            UnityEngine.SceneManagement.Scene scene;
+            if (System.IO.File.Exists(ScenePath)) scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+            else scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameBootstrap? bootstrap = Object.FindFirstObjectByType<GameBootstrap>();
+            if (bootstrap is null)
+            {
+                var root = new GameObject("Banglar Tesla — Application");
+                bootstrap = root.AddComponent<GameBootstrap>();
+            }
+            bootstrap.MapAsset = map;
+            EditorUtility.SetDirty(bootstrap);
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorSceneManager.SaveScene(scene, ScenePath);
+            var scenes = new System.Collections.Generic.List<EditorBuildSettingsScene>(EditorBuildSettings.scenes);
+            if (!scenes.Exists(entry => entry.path == ScenePath)) scenes.Add(new EditorBuildSettingsScene(ScenePath, true));
+            EditorBuildSettings.scenes = scenes.ToArray();
+            AssetDatabase.SaveAssets();
         }
 
         [MenuItem("Banglar Tesla/Setup/Validate Project Readiness")]

@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="../Assets/BanglarTesla/Tests/EditMode/Domain/**/*.cs" Link="Tests/%(RecursiveDir)%(Filename)%(Extension)" />
     <ProjectReference Include="../Domain/BanglarTesla.Domain.csproj" />
+    <None Include="../Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json" Link="Fixtures/mohammadpur.osm.json" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="NUnit" Version="4.2.2" />
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />

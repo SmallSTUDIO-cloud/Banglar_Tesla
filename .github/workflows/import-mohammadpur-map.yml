@@ -8,6 +8,7 @@ on:
       - arena/f78d620e-banglar-tesla
     paths:
       - scripts/import-mohammadpur-osm.py
+      - scripts/render-mohammadpur-minimap.py
       - tests/map_import/**
       - .github/workflows/import-mohammadpur-map.yml
 
@@ -33,6 +34,8 @@ jobs:
         run: python3 -m unittest discover -s tests/map_import -p 'test_*.py' -v
       - name: Import current OSM geometry with provenance
         run: python3 scripts/import-mohammadpur-osm.py
+      - name: Render schematic minimap from imported geometry
+        run: python3 scripts/render-mohammadpur-minimap.py
       - name: Validate generated database and report
         run: |
           set -euo pipefail
@@ -48,13 +51,15 @@ jobs:
           assert data['roads'] and data['boundary']
           assert all(road['widthSource'] in {'osm:width', 'estimated:lanes', 'estimated:road-class'} for road in data['roads'])
           assert all((road['sourceWidthMeters'] is not None) == (road['widthSource'] == 'osm:width') for road in data['roads'])
+          minimap = Path('unity/Assets/BanglarTesla/Resources/UI/mohammadpur-minimap.png').read_bytes()
+          assert minimap.startswith(b'\x89PNG\r\n\x1a\n') and len(minimap) > 10_000
           print(f"Validated {len(data['roads'])} roads, {len(data['pois'])} POIs and {len(data['boundaryExits'])} boundary exits")
           PY
           git diff --check
       - name: Commit only generated geographic evidence
         run: |
           set -euo pipefail
-          git add -- unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json docs/GEOGRAPHIC_IMPORT_REPORT.md
+          git add -- unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json docs/GEOGRAPHIC_IMPORT_REPORT.md unity/Assets/BanglarTesla/Resources/UI/mohammadpur-minimap.png
           if git diff --cached --quiet; then
             echo 'Imported source is unchanged; no commit needed.'
             exit 0
