@@ -49,10 +49,12 @@ namespace BanglarTesla.Domain.Maps
         public double widthMeters;
         public double? sourceWidthMeters;
         public string widthSource = "estimated:road-class";
-        /// <summary>Whole lane count, or 0 when the source tag was absent. The importer serializes
-        /// integers only: Newtonsoft rejects <c>2.0</c> for an <c>int</c>, so fractional tags are
-        /// normalized upstream rather than coerced here.</summary>
-        public int lanes;
+        /// <summary>Whole lane count when the OSM tag exists; null when absent. The importer
+        /// serializes integers only (Newtonsoft rejects <c>2.0</c> for an <c>int</c>), and the
+        /// nullable type is required because absent tags serialize as <c>null</c>.</summary>
+        public int? lanes;
+        /// <summary>Lane count with the absent case resolved to 0.</summary>
+        public int LaneCount => lanes ?? 0;
         public string oneWay = "no";
         public string surface = "unknown";
         public bool driveable;

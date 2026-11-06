@@ -18,6 +18,10 @@ namespace BanglarTesla.Tests.EditMode.Domain
             Assert.That(dataset.roads.Count, Is.GreaterThan(1000));
             Assert.That(dataset.boundaryExits.Count, Is.GreaterThan(0));
             Assert.That(dataset.pois.Single(poi => poi.id == 13990591896).nameEn, Is.EqualTo("Chanmia Housing"));
+            // Absent OSM lane tags must stay nullable instead of throwing during deserialization.
+            Assert.That(dataset.roads.Any(road => road.lanes is null), Is.True);
+            Assert.That(dataset.roads.Count(road => road.lanes is not null), Is.GreaterThan(0));
+            Assert.That(dataset.roads.All(road => road.LaneCount == (road.lanes ?? 0)), Is.True);
             var graph = new RoadGraph(dataset);
             Assert.That(graph.Nodes.Count, Is.GreaterThan(1000));
             Vector2D busStand = graph.Projection.ToLocal(new GeoPoint(23.7569928, 90.3617359));
