@@ -10,6 +10,7 @@ namespace BanglarTesla.Domain
         private static readonly JsonSerializerSettings JsonSettings = new()
         {
             ContractResolver = new CamelCasePropertyNamesContractResolver(),
+            ObjectCreationHandling = ObjectCreationHandling.Replace,
             Culture = System.Globalization.CultureInfo.InvariantCulture,
         };
         private readonly IKeyValueStorage? storage;
