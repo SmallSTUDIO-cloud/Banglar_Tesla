@@ -86,7 +86,10 @@ namespace BanglarTesla.Presentation
         private Material Material(string name, string html)
         {
             Color color = ColorUtility.TryParseHtmlString(html, out Color parsed) ? parsed : Color.white;
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            Shader? shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader is null)
+                throw new System.InvalidOperationException(
+                    "URP Lit shader was not found. Configure URP before building the rickshaw.");
             var material = new Material(shader) { name = name };
             material.SetColor("_BaseColor", color);
             material.SetFloat("_Smoothness", 0.2f);

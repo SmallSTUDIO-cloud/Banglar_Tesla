@@ -21,6 +21,9 @@ namespace BanglarTesla.Editor
         private const string PanelPath = SettingsFolder + "/BanglarTesla-HudPanel.asset";
         private const string ThemePath =
             "Packages/com.unity.ui/PackageResources/StyleSheets/Generated/DefaultRuntimeTheme.tss";
+        private const string IconPath = "Assets/BanglarTesla/Branding/AppIcon.png";
+        /// <summary>Every runtime material in this project is created from this name via Shader.Find.</summary>
+        private const string LitShaderName = "Universal Render Pipeline/Lit";
 
         [MenuItem("Banglar Tesla/Setup/Configure Unity Project")]
         public static void ConfigureProject()
@@ -66,6 +69,13 @@ namespace BanglarTesla.Editor
             QualitySettings.SetQualityLevel(previousQuality, false);
             EditorUtility.SetDirty(renderer);
             EditorUtility.SetDirty(pipeline);
+            AssetDatabase.SaveAssets();
+
+            // Without this the player build strips URP Lit (nothing in Assets references it --
+            // every material is created at runtime from Shader.Find), and the game dies on
+            // device with "URP Lit shader was not found".
+            EnsureAlwaysIncludedShader(LitShaderName);
+            EnsureAndroidIcons();
             AssetDatabase.SaveAssets();
             EnsurePlayableScene();
             Debug.Log("Banglar Tesla: package identity, Android, URP and the sourced playable scene were configured. Run Editor/PlayMode validation before building.");
@@ -127,14 +137,105 @@ namespace BanglarTesla.Editor
             panel.match = 0.5f;
             if (panel.themeStyleSheet is null)
             {
-                var theme = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(ThemePath);
-                if (theme is not null) panel.themeStyleSheet = theme;
-                else Debug.LogWarning($"Banglar Tesla: UI Toolkit default runtime theme was not found at {ThemePath}. " +
-                                      "Assign a ThemeStyleSheet to the panel before building.");
+                panel.themeStyleSheet = ResolveRuntimeTheme();
+                if (panel.themeStyleSheet is null)
+                    Debug.LogWarning("Banglar Tesla: no UI Toolkit ThemeStyleSheet was found in Packages or Assets. " +
+                                     "The HUD uses its own USS, but assign a theme if default control styling is wrong.");
             }
             EditorUtility.SetDirty(panel);
             AssetDatabase.SaveAssets();
             return panel;
+        }
+
+        /// <summary>
+        /// Adds a shader to Project Settings > Graphics > Always Included Shaders.
+        /// Shader.Find only resolves shaders that actually made it into the player build. This
+        /// project has no material or shader asset referencing URP Lit, so the stripper removes
+        /// it and every runtime-created material fails on device. This is the remedy Unity
+        /// documents on Shader.Find ("add it under Always Included Shaders").
+        /// ProjectSettings/GraphicsSettings.asset is not committed, so it cannot be fixed by hand
+        /// once -- it has to be applied in the build workspace before the player build runs.
+        /// </summary>
+        public static void EnsureAlwaysIncludedShader(string shaderName)
+        {
+            Shader? shader = Shader.Find(shaderName);
+            if (shader is null)
+                throw new System.InvalidOperationException(
+                    $"Shader '{shaderName}' is not in the project. The URP package is missing or was renamed.");
+            GraphicsSettings? settings = AssetDatabase.LoadAssetAtPath<GraphicsSettings>("ProjectSettings/GraphicsSettings.asset");
+            if (settings is null)
+            {
+                Debug.LogError("Banglar Tesla: ProjectSettings/GraphicsSettings.asset could not be loaded; " +
+                               $"'{shaderName}' may be stripped from the player build.");
+                return;
+            }
+            var serialized = new SerializedObject(settings);
+            SerializedProperty? list = serialized.FindProperty("m_AlwaysIncludedShaders");
+            if (list is null)
+            {
+                Debug.LogError("Banglar Tesla: Always Included Shaders could not be edited; " +
+                               $"'{shaderName}' may be stripped from the player build.");
+                return;
+            }
+            for (int index = 0; index < list.arraySize; index++)
+            {
+                if (list.GetArrayElementAtIndex(index).objectReferenceValue == shader)
+                {
+                    Debug.Log($"Banglar Tesla: '{shaderName}' is already in Always Included Shaders.");
+                    return;
+                }
+            }
+            list.InsertArrayElementAtIndex(list.arraySize);
+            list.GetArrayElementAtIndex(list.arraySize - 1).objectReferenceValue = shader;
+            serialized.ApplyModifiedProperties();
+            AssetDatabase.SaveAssets();
+            Debug.Log($"Banglar Tesla: added '{shaderName}' to Always Included Shaders so runtime materials survive stripping.");
+        }
+
+        /// <summary>
+        /// Assigns the launcher icon for every Android icon slot. PlayerSettings in
+        /// ProjectSettings.asset carries no icon, so the build ships Unity's default logo.
+        /// Unity requires one texture per slot returned by GetIconSizes; the same 1024px source is
+        /// reused for every slot and Unity scales it down.
+        /// </summary>
+        public static void EnsureAndroidIcons()
+        {
+            Texture2D? icon = AssetDatabase.LoadAssetAtPath<Texture2D>(IconPath);
+            if (icon is null)
+            {
+                Debug.LogError($"Banglar Tesla: launcher icon not found at {IconPath}; the build will keep Unity's default icon.");
+                return;
+            }
+            int[] sizes = PlayerSettings.GetIconSizes(NamedBuildTarget.Android, IconKind.Application);
+            if (sizes.Length == 0)
+            {
+                Debug.LogError("Banglar Tesla: the Editor reported no Android icon slots; " +
+                               "install Android Build Support or the launcher icon will stay Unity's default.");
+                return;
+            }
+            var textures = new Texture2D[sizes.Length];
+            for (int index = 0; index < textures.Length; index++) textures[index] = icon;
+            PlayerSettings.SetIcons(NamedBuildTarget.Android, textures, IconKind.Application);
+            Debug.Log($"Banglar Tesla: Android launcher icon set from {IconPath} for {textures.Length} icon slots.");
+        }
+
+        /// <summary>
+        /// Finds the UI Toolkit runtime theme without hard-coding a package path. The previous
+        /// hard-coded path pointed at com.unity.ui, which this project does not install.
+        /// </summary>
+        public static ThemeStyleSheet? ResolveRuntimeTheme()
+        {
+            ThemeStyleSheet? direct = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(ThemePath);
+            if (direct is not null) return direct;
+            string[] guids = AssetDatabase.FindAssets("t:ThemeStyleSheet", new[] { "Packages", "Assets" });
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.Contains("DefaultRuntimeTheme") && !path.Contains("RuntimeTheme")) continue;
+                ThemeStyleSheet? found = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(path);
+                if (found is not null) return found;
+            }
+            return null;
         }
 
         [MenuItem("Banglar Tesla/Setup/Validate Project Readiness")]
@@ -152,6 +253,10 @@ namespace BanglarTesla.Editor
             else if (panel.themeStyleSheet is null) issues.Add("HUD PanelSettings has no theme style sheet; UI may not render.");
             if (EditorBuildSettings.scenes.Length == 0)
                 issues.Add("No Unity build scenes exist yet; this project is not build-ready.");
+            if (PlayerSettings.GetIcons(NamedBuildTarget.Android, IconKind.Application).Length == 0)
+                issues.Add("The Android launcher icon is unset; the build would ship Unity's default logo.");
+            Shader? lit = Shader.Find(LitShaderName);
+            if (lit is null) issues.Add($"Shader '{LitShaderName}' is missing; runtime materials cannot be created.");
             if (issues.Count == 0)
             {
                 Debug.Log("Banglar Tesla: static project checks passed. Editor/PlayMode tests and platform builds are still required.");

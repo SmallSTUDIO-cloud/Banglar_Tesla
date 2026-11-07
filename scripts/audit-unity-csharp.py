@@ -62,7 +62,7 @@ BitConverter Boolean BoxCollider BuiltinRenderTextureType Byte Camera Cancellati
 Collider ColliderData Color Color32 Component Console Convert CultureInfo CustomStyleProperty
 Debug Decimal Delegate Dictionary DllImport Double EditorApplication EditorBuildSettings
 EditorBuildSettingsScene EditorSceneManager EditorUtility Enum Enumerable Environment Event
-Exception File FileInfo FileNotFoundException Float Func GameObject Graphics Greater Guid
+Exception File FileInfo FileNotFoundException Float Func GameObject Graphics GraphicsSettings Greater Guid
 HashSet IComparable IConvertible IDictionary IEnumerable IEquatable IFormatProvider IList
 Image IndexFormat Input Int16 Int32 Int64 IntPtr Is JArray JObject JsonConvert
 JsonProperty JsonPropertyAttribute JsonReaderException JsonSerializationException
@@ -71,7 +71,7 @@ LightShadows LightType List Long Marshal Material Math Mathf Matrix4x4 MemberSer
 Mesh MeshFilter MeshRenderer MenuItem MethodImpl MonoBehaviour More NullReferenceException
 Object Int Integer Path Pixels Plane PlayerPrefs PrimitiveType Property Quaternion Random
 Range Rect RenderSettings RenderTexture Renderer RequireComponent Resources SerializeField
-Serializable SerializeReference Shader ShadowCastingMode Single Slider SphereCollider Sprite
+Serializable SerializeReference SerializedObject SerializedProperty Shader ShadowCastingMode Single Slider SphereCollider Sprite
 String StringBuilder StyleLength StyleFloat SuppressMessage Tbmp Test TextAsset Texture2D
 Time Toggle Transform Type UIDocument UIElements UIRenderer UIShader Uri Value Vector2
 Vector2Int Vector3 Vector3Int Vector4 VertexAttribute VertexAttributeDescriptor
