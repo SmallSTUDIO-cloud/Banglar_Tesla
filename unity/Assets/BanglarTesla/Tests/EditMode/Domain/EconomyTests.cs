@@ -10,17 +10,17 @@ namespace BanglarTesla.Tests.EditMode.Domain
         public void FareMatchesReleasedFormula()
         {
             FareBreakdown fare = Economy.ComputeFare(420, 60, 60, 88, 0, 1.25, 12);
-            Assert.Multiple(() =>
-            {
-                Assert.That(fare.Base, Is.EqualTo(30));
-                Assert.That(fare.Distance, Is.EqualTo(92));
-                Assert.That(fare.Time, Is.EqualTo(20));
-                Assert.That(fare.Smooth, Is.EqualTo(19));
-                Assert.That(fare.Tip, Is.EqualTo(21));
-                Assert.That(fare.Total, Is.EqualTo(243));
-                Assert.That(fare.Stars, Is.EqualTo(5));
-                Assert.That(fare.OnTime, Is.True);
-            });
+            // Assert.Multiple is NUnit 3.7+; Unity's bundled NUnit is 3.5, so the
+            // assertions run sequentially. Every assertion is still executed on a
+            // passing run; only the aggregate-failure-reporting behaviour differs.
+            Assert.That(fare.Base, Is.EqualTo(30));
+            Assert.That(fare.Distance, Is.EqualTo(92));
+            Assert.That(fare.Time, Is.EqualTo(20));
+            Assert.That(fare.Smooth, Is.EqualTo(19));
+            Assert.That(fare.Tip, Is.EqualTo(21));
+            Assert.That(fare.Total, Is.EqualTo(243));
+            Assert.That(fare.Stars, Is.EqualTo(5));
+            Assert.That(fare.OnTime, Is.True);
         }
 
         [Test]

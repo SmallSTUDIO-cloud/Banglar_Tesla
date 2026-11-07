@@ -85,18 +85,18 @@ namespace BanglarTesla.Tests.EditMode.Domain
                 DistanceDriven = 120.0, Hits = 2, HardBrakes = 1, Speed = 8.0,
             };
             vehicle.Respawn(4.0, 5.0, 0.5);
-            Assert.Multiple(() =>
-            {
-                Assert.That(vehicle.X, Is.EqualTo(4.0));
-                Assert.That(vehicle.Z, Is.EqualTo(5.0));
-                Assert.That(vehicle.Speed, Is.Zero);
-                Assert.That(vehicle.Battery, Is.EqualTo(42.0));
-                Assert.That(vehicle.Stamina, Is.EqualTo(51.0));
-                Assert.That(vehicle.TurboCharge, Is.EqualTo(33.0));
-                Assert.That(vehicle.DistanceDriven, Is.EqualTo(120.0));
-                Assert.That(vehicle.Hits, Is.EqualTo(2));
-                Assert.That(vehicle.HardBrakes, Is.EqualTo(1));
-            });
+            // Assert.Multiple is NUnit 3.7+; Unity's bundled NUnit is 3.5, so the
+            // assertions run sequentially. Every assertion is still executed on a
+            // passing run; only the aggregate-failure-reporting behaviour differs.
+            Assert.That(vehicle.X, Is.EqualTo(4.0));
+            Assert.That(vehicle.Z, Is.EqualTo(5.0));
+            Assert.That(vehicle.Speed, Is.Zero);
+            Assert.That(vehicle.Battery, Is.EqualTo(42.0));
+            Assert.That(vehicle.Stamina, Is.EqualTo(51.0));
+            Assert.That(vehicle.TurboCharge, Is.EqualTo(33.0));
+            Assert.That(vehicle.DistanceDriven, Is.EqualTo(120.0));
+            Assert.That(vehicle.Hits, Is.EqualTo(2));
+            Assert.That(vehicle.HardBrakes, Is.EqualTo(1));
         }
 
         [Test]
