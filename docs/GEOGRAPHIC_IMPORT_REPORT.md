@@ -39,6 +39,9 @@ The continuous gameplay boundary and visible road-exit barricades are game const
 
 ## Runtime data
 
-- `unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json`
+- `data/mohammadpur/mohammadpur.osm.json` (shared source data; relocated out of the
+  retired Unity tree on 2026-11-07, content unchanged, SHA-256
+  `606d1817fb99c8e235e5d5851845a6ee8cd557fb139a13e6cd5c29a21767e29a`)
+- Attribution: `data/mohammadpur/ODBL_NOTICE.md`
 - Schema version: `1`; source retrieval metadata and query are embedded in the JSON.
 - Keep the accompanying ODbL notice and attribution in web, Android and credits.

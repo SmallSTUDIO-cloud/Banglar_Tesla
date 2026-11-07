@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUTPUT = ROOT / "unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json"
+DEFAULT_OUTPUT = ROOT / "data/mohammadpur/mohammadpur.osm.json"
 DEFAULT_REPORT = ROOT / "docs/GEOGRAPHIC_IMPORT_REPORT.md"
 BOUNDARY_WAY_ID = 318722840
 BOUNDARY_URL = f"https://www.openstreetmap.org/api/0.6/way/{BOUNDARY_WAY_ID}/full.json"

@@ -42,7 +42,7 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          path = Path('unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json')
+          path = Path('data/mohammadpur/mohammadpur.osm.json')
           data = json.loads(path.read_text(encoding='utf-8'))
           assert data['schemaVersion'] == 1
           assert data['source']['license'] == 'ODbL-1.0'
@@ -60,7 +60,7 @@ jobs:
       - name: Commit only generated geographic evidence
         run: |
           set -euo pipefail
-          git add -- unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json docs/GEOGRAPHIC_IMPORT_REPORT.md unity/Assets/BanglarTesla/Resources/UI/mohammadpur-minimap.png
+          git add -- data/mohammadpur/mohammadpur.osm.json docs/GEOGRAPHIC_IMPORT_REPORT.md unity/Assets/BanglarTesla/Resources/UI/mohammadpur-minimap.png
           if git diff --cached --quiet; then
             echo 'Imported source is unchanged; no commit needed.'
             exit 0

@@ -88,15 +88,24 @@ Scope: everything added on this branch outside `unity/`.
 | `tests/map_import/` (2 files) | Tests the OSM importer | No | keep if importer is kept |
 | `.gitignore` Unity block | n/a | Harmless | remove with the rest |
 
-### Shared-resource warning
+### Shared-resource warning — RESOLVED 2026-11-07
 
-`unity/Assets/BanglarTesla/Data/Maps/mohammadpur.osm.json` is **3.9 MB of
-OpenStreetMap-derived Mohammadpur data** (ODbL). It is the raw source from which
-`src/world/mohammadpurData.ts` was derived. Deleting `unity/` wholesale would
-destroy it, which conflicts with "never delete shared resources".
+`mohammadpur.osm.json` was **3.9 MB of OpenStreetMap-derived Mohammadpur data**
+(ODbL) and the raw source from which `src/world/mohammadpurData.ts` was derived.
+Deleting `unity/` wholesale would have destroyed it.
 
-Proposed: relocate to `data/mohammadpur/` (with `ODBL_NOTICE.md`) **before**
-removing `unity/`, so future geo-accurate work keeps its source.
+It has now been relocated, content unchanged, to
+`data/mohammadpur/mohammadpur.osm.json`, together with its
+`ODBL_NOTICE.md` attribution file. SHA-256 is identical before and after:
+
+`606d1817fb99c8e235e5d5851845a6ee8cd557fb139a13e6cd5c29a21767e29a`
+
+Updated consumers: `scripts/import-mohammadpur-osm.py`,
+`scripts/render-mohammadpur-minimap.py`,
+`.github/workflows/import-mohammadpur-map.yml`, `docs/GEOGRAPHIC_IMPORT_REPORT.md`.
+
+Still to relocate in phase 4: `mohammadpur-minimap.png`, which is a produced work
+rendered from this database and is named in the ODbL notice.
 
 ---
 
