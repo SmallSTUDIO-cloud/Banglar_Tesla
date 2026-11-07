@@ -2,7 +2,7 @@
 
 **Status: source-derived Unity preview, not a surveyed or ground-truthed exact map.**
 
-- Retrieved (UTC): `2026-11-06T14:25:27+00:00`
+- Retrieved (UTC): `2026-11-07T17:44:35+00:00`
 - OSM boundary: way `318722840`; ODbL 1.0, © OpenStreetMap contributors.
 - Roads: **1610** (1490 driveable; 571 named).
 - Named points/buildings: **2857**.
@@ -11,8 +11,8 @@
 - Driveable graph component node counts: `[5101, 103, 58, 4, 4, 3, 2, 2]`.
 - Named ways skipped for incomplete geometry: **0**.
 - Origin: `{'lat': 23.76292393643411, 'lon': 90.35741097364341}`; padded bbox: `{'south': 23.7501165, 'north': 23.7763701, 'west': 90.3439034, 'east': 90.37674899999999}`.
-- Boundary payload SHA-256: `d5f969303290b2a507a0ad2f13c08d81a2949950b743a867df01185491ce641d`.
-- Road/POI payload SHA-256: `ce96a736f758ea33a2f4859b6f86dcb05acac7cab34e705791148cf692c466e2`.
+- Boundary payload SHA-256: `462bb1b87dcd64bd263f683e461b0923ebdfd5a2c240aa95b00c24b611b66052`.
+- Road/POI payload SHA-256: `2b44b0481952f57370f3f33dd52a87d72abee3e4065b10faf615547748613eb1`.
 
 ## Landmark lookup
 
@@ -39,9 +39,6 @@ The continuous gameplay boundary and visible road-exit barricades are game const
 
 ## Runtime data
 
-- `data/mohammadpur/mohammadpur.osm.json` (shared source data; relocated out of the
-  retired Unity tree on 2026-11-07, content unchanged, SHA-256
-  `606d1817fb99c8e235e5d5851845a6ee8cd557fb139a13e6cd5c29a21767e29a`)
-- Attribution: `data/mohammadpur/ODBL_NOTICE.md`
+- `data/mohammadpur/mohammadpur.osm.json`
 - Schema version: `1`; source retrieval metadata and query are embedded in the JSON.
 - Keep the accompanying ODbL notice and attribution in web, Android and credits.
