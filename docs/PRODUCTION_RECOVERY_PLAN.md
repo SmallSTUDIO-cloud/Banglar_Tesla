@@ -94,11 +94,24 @@ Scope: everything added on this branch outside `unity/`.
 (ODbL) and the raw source from which `src/world/mohammadpurData.ts` was derived.
 Deleting `unity/` wholesale would have destroyed it.
 
-It has now been relocated, content unchanged, to
-`data/mohammadpur/mohammadpur.osm.json`, together with its
-`ODBL_NOTICE.md` attribution file. SHA-256 is identical before and after:
+It has now been relocated to `data/mohammadpur/mohammadpur.osm.json`, together
+with its `ODBL_NOTICE.md` attribution file, and git recorded the move as a **100%
+rename**, so history follows it.
 
-`606d1817fb99c8e235e5d5851845a6ee8cd557fb139a13e6cd5c29a21767e29a`
+At the moment of the move the file was byte-identical: SHA-256
+`606d1817fb99c8e235e5d5851845a6ee8cd557fb139a13e6cd5c29a21767e29a`,
+3,920,274 bytes either side.
+
+**Note on hashing:** that hash is no longer current. Committing the relocated path
+and the updated importer triggered `.github/workflows/import-mohammadpur-map.yml`,
+which re-ran a live OSM import and committed the result as `3be7dd1`. Only the
+retrieval metadata changed — `retrievedAt` and the two upstream payload checksums.
+The substance is identical: 1610 roads, 2857 POIs, 129 boundary exits, and the Chan
+Mia Housing node is still present. Current file hash:
+`d7286d0e1b7d66489316c391fea314813c2bcb52f1345e1930b3c9ce4a0f6881`.
+
+Do not pin a file hash in documentation that the importer can change on any run.
+Pin the content invariants instead.
 
 Updated consumers: `scripts/import-mohammadpur-osm.py`,
 `scripts/render-mohammadpur-minimap.py`,
