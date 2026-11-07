@@ -2,6 +2,73 @@
 
 All notable changes to this project. This file records what was actually built.
 
+> **Documentation note.** This file was only maintained for `0.1.0`. The entries
+> from `0.2.0` to `0.6.3` were reconstructed from the actual git commit messages
+> of the tagged release commits on `main`, because no release notes were written
+> at the time. Each entry names its commit. Where a commit message is terse, the
+> entry stays terse rather than inventing detail. Version numbers `0.6.4`,
+> `0.6.5` and `0.6.6` were never tagged and never released.
+
+## [0.6.7] — 2026-11-05 — `8379f25` (tag `v0.6.7`)
+
+Debug-signed test APK. Package `com.shostalab.banglartesla`, versionCode 11,
+versionName 0.6.7, minSdk 24. APK 13,546,101 bytes, SHA-256
+`e0b4901f127205ca6d2d79fff8761257e6bd306163c791d7ce8ef275c46c4cff`.
+
+* Dense grocery frontages, mudi dokans and user-supplied education posters,
+  packed into a WebP atlas; no per-shop draw calls or new colliders.
+* Camera anti-clipping rewritten from a full collider scan per frame to a 16 m
+  spatial-cell index. A same-page 4,000-point query microbenchmark measured
+  102.6 ms (full scan) against 4.3 ms (indexed), 432 hits either way.
+* Measured *synthetic* scene cost: Balanced 174 draw calls / 971,989 triangles;
+  Low 130 / 570,181.
+* **Not claimed:** any device frame rate, any real-phone behaviour. All numbers
+  come from headless SwiftShader. See `docs/STREET_DENSITY_PERFORMANCE_PASS.md`.
+
+## [0.6.3] — 2026-11-01 — `6aec0e6` (tag `v0.6.3-test.1-20261101`)
+
+* Street visuals, safe overtakes and ranked progression for the test APK.
+
+## [0.6.2-test.1] — 2026-10-31 — `374a69d` (tag `v0.6.2-test.1-20261031`)
+
+* Optimized Dhaka street feel, packaged as a separate Android test build.
+
+## [0.6.1-test.1] — 2026-10-31 — `7fbcbd4` (tag `v0.6.1-test.1-20261031`)
+
+* Complete Mohammadpur feature pass.
+
+## [0.6.0] — 2026-10-27 — `865b5a6` (tag `v0.6.0`)
+
+* Master Upgrade vNext: Bangla voice gate, five-state weather, DRMC landmark,
+  scrapbook, and character-rig integrity.
+
+## [0.5.1] — 2026-10-26 — `b68a081` (tag `v0.5.1`)
+
+* Master Upgrade v4: Race-Map design, 4-Rickshaw Race, Winner Photo, plus
+  character, NPC and graphics passes.
+* CI: the Android APK workflow was widened from one pinned session branch to all
+  `arena/*` branches.
+
+## [0.5.0] — 2026-10-25 — `056d7c6` (tag `v0.5.0`)
+
+* Rickshaw Blacklist progression, hold-to-boost Turbo, 5-Heat Police Pursuit,
+  OBB physics and a Dynamic Clock.
+
+## [0.4.0] — 2026-10-25 — `6314a17` (tag `v0.4.0`)
+
+* Dhaka audio soundscape, Bangla road rage, breakables and the টান boost.
+
+## [0.3.0] — 2026-10-25 — `d4b4245` (tag `v0.3.0-android-test`)
+
+* Mobile performance: instanced traffic fleet, baked ambient occlusion and shader
+  prewarm, shipped with the v0.3.0 APK.
+* Added the GitHub Pages deployment for the web game.
+
+## [0.2.0] — 2026-10-24 — `9cbdf99` (tag `v0.2.0-android-test`)
+
+* Mohammadpur overhaul: reworked steering, a 7-mode camera, OSM-derived streets,
+  the electric rickshaw, Dokan shopfronts and a performance pass.
+
 ## [0.1.0] — 2026-10-23 — Phase 1 vertical slice
 
 ### Added — engine & shell
