@@ -32,8 +32,11 @@ against the source tree on 2026-11-07 is recorded at the end of this file.
   re-derivation lives in `data/mohammadpur/`.
 - **Scale:** ~33,900 lines across 66 TypeScript files in `src/`.
 
-The Unity/C# migration is an abandoned experiment. It is not part of this
-architecture and no Unity code ships in the production game.
+**Three.js is the sole production engine.** A Unity/C# migration was explored in
+2026 and permanently discontinued; all of its project files, code, workflows and
+documentation have been removed from this repository. No Unity code exists here
+and none is planned. `data/mohammadpur/` holds the OpenStreetMap source data that
+survived the removal because it is shared reference material.
 
 ## S1 — Blocking for a Play Store release
 

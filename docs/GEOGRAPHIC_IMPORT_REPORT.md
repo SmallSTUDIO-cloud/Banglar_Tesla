@@ -1,6 +1,6 @@
 # Mohammadpur geographic import report
 
-**Status: source-derived Unity preview, not a surveyed or ground-truthed exact map.**
+**Status: source-derived map data, not a surveyed or ground-truthed exact map.**
 
 - Retrieved (UTC): `2026-11-07T17:44:35+00:00`
 - OSM boundary: way `318722840`; ODbL 1.0, © OpenStreetMap contributors.

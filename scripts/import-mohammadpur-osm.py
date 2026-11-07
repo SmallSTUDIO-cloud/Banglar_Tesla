@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import a source-attributed Mohammadpur road/POI database for the Unity game.
+"""Import a source-attributed Mohammadpur road/POI database for Banglar Tesla.
 
 Network access is intentionally confined to this explicit importer, never game runtime.
 Use --boundary-input/--overpass-input for reproducible offline imports and tests.
@@ -400,7 +400,7 @@ def build_dataset(
 def markdown_report(report: dict[str, Any], dataset: dict[str, Any]) -> str:
     lines = [
         "# Mohammadpur geographic import report", "",
-        "**Status: source-derived Unity preview, not a surveyed or ground-truthed exact map.**", "",
+        "**Status: source-derived map data, not a surveyed or ground-truthed exact map.**", "",
         f"- Retrieved (UTC): `{report['retrievedAt']}`",
         f"- OSM boundary: way `{BOUNDARY_WAY_ID}`; ODbL 1.0, © OpenStreetMap contributors.",
         f"- Roads: **{report['roadCount']}** ({report['driveableRoadCount']} driveable; {report['namedRoadCount']} named).",

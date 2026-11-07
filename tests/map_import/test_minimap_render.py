@@ -1,4 +1,4 @@
-"""Offline contracts for the source-derived Unity minimap renderer."""
+"""Offline contracts for the source-derived Mohammadpur minimap renderer."""
 from __future__ import annotations
 
 import importlib.util

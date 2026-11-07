@@ -13,7 +13,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = ROOT / "data/mohammadpur/mohammadpur.osm.json"
-DEFAULT_OUTPUT = ROOT / "unity/Assets/BanglarTesla/Resources/UI/mohammadpur-minimap.png"
+DEFAULT_OUTPUT = ROOT / "data/mohammadpur/mohammadpur-minimap.png"
 Color = tuple[int, int, int, int]
 
 
