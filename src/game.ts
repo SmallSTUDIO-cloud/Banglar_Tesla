@@ -3313,6 +3313,14 @@ export class Game implements UIBridge {
     return { ok: true, id: 'already-owned' };
   }
 
+  /**
+   * Detaches the camera from the rickshaw so a fixed viewpoint can be held, used
+   * by the screenshot harness and the on-device benchmark.
+   */
+  debugSetFreeCamera(enabled: boolean): void {
+    this.debugFreeCamera = enabled;
+  }
+
   debugSetQuality(quality: QualityPreset): { quality: string; shadows: boolean } {
     this.settings.set({ quality, shadows: QUALITY[quality].shadows });
     this.applySettings();

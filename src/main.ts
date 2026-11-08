@@ -41,6 +41,15 @@ async function boot(): Promise<void> {
 
     await game.init();
     game.start();
+
+    // Opt-in on-device benchmark (`?bench=1`). Loaded lazily so normal boots pay
+    // nothing for it, and run after the first frames so startup work is excluded.
+    if (new URLSearchParams(window.location.search).get('bench') === '1') {
+      void import('./core/perfBench').then(async (bench) => {
+        await new Promise((r) => window.setTimeout(r, 1500));
+        await bench.runDeviceBenchmark(game, { preset: bench.benchPresetFromUrl() });
+      });
+    }
   } catch (err) {
     console.error('[boot] failed', err);
     const msg = document.createElement('div');
