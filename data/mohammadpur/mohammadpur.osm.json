@@ -11,9 +11,9 @@
     "boundaryUrl": "https://www.openstreetmap.org/api/0.6/way/318722840/full.json",
     "overpassUrl": "https://overpass-api.de/api/interpreter",
     "boundaryWayId": 318722840,
-    "retrievedAt": "2026-11-08T17:11:52+00:00",
-    "boundarySha256": "23c92c5a4be2ed980f8056a9e2d31a9c9f23e8e186fb674229e8fc889f356e57",
-    "overpassSha256": "0c9a80e177db940b7f459b0e6afd064ce38245780abcacc4753d0f7b7db84d09",
+    "retrievedAt": "2026-11-08T19:15:39+00:00",
+    "boundarySha256": "5f58df2c685ed2fa791dde619aa9d93b472a583b4e6cdc6dfbf60a973f42335c",
+    "overpassSha256": "b2e59dbf006c0804d7cd4f289bde3ca19d8ebcb3b7c37d43440ae80df86aa4ca",
     "query": "[out:json][timeout:180];\n(\n  way[\"highway\"](23.7501165,90.3439034,23.7763701,90.3767490);\n  node[\"name\"](23.7501165,90.3439034,23.7763701,90.3767490);\n  way[\"name\"](23.7501165,90.3439034,23.7763701,90.3767490);\n);\nout body;\n>;\nout skel qt;"
   },
   "bounds": {
