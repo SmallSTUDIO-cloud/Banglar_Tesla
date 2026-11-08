@@ -114,3 +114,40 @@ produced with fixed-string or correctly-escaped patterns.
 
 **Checks run at the same time:** `tsc --noEmit` clean; 236/236 unit tests across
 40 files; 5/5 Android pipeline tests; `vite build` successful.
+
+## v0.7.0 geographic-accuracy pass (2026-11-08)
+
+Full detail, measurements and provenance in
+[`GEOGRAPHIC_ACCURACY.md`](./GEOGRAPHIC_ACCURACY.md).
+
+**Fixed:** "Town Hall Kacha Bazar" and "Krishi Market Corner" were HUD labels
+pinned to arbitrary fractions along a road segment. Town Hall was ~39 m west of
+the real market on the wrong segment; Krishi was ~55–75 m away on **Ring Road**
+instead of Humayun Road. Both are now anchored to verified OSM features
+(223068917 and 494999392) and pinned by regression tests. Place ids were kept,
+so existing race waypoints still resolve.
+
+**Added:** a landmark registry with provenance gates that fail on fabricated
+coordinates; market-apron vendor clustering (18 carts, ≥1.36 m off the asphalt);
+named Bengali entrance boards.
+
+**Open — blocks "milestone complete":**
+
+| Issue | Detail |
+|---|---|
+| No visual verification | Chromium cannot be downloaded in this environment, so the new boards, cart clustering and marker moves were **never inspected in a browser**. Validated numerically only. |
+| No Android device test | No performance claim is made for mid-range hardware. |
+
+**Pre-existing, left alone deliberately:**
+
+- 12 of 14 `PLACES` markers sit **inside** the carriageway (−1.7 to −2.6 m),
+  because `makePlaceOnSegment` offsets by `halfWidth × 0.58`. They are marker
+  points, not geometry; changing them would move mission pickups. The two new
+  landmark-anchored places are the only ones clear of the asphalt.
+- `vnext-race-timing.test.ts` was already failing its 5 s default timeout on
+  untouched source (measured 5.26 / 5.36 / 6.99 s); it now declares 60 s.
+- `src/audio/audio.ts:735` tests for a place id `'shia'` that never existed in
+  `PLACES` (the id is `mosque`), so that branch is dead.
+- Geneva Camp has two conflicting polygons in the OSM extract; only the northern
+  `place=quarter` node is used, and the conflict is documented rather than
+  silently picked.

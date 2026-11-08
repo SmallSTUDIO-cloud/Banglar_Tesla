@@ -7,6 +7,7 @@
  */
 
 import { clamp } from '../core/mathx';
+import { landmarkById, type Landmark } from './landmarks';
 import {
   MOHAMMADPUR_EDGES,
   MOHAMMADPUR_NODES,
@@ -406,16 +407,84 @@ function makePlaceOnSegment(
   };
 }
 
+/**
+ * Project `(x, z)` onto the nearest point of a named road segment.
+ * Returns the projection parameter plus the signed lateral offset, where a
+ * positive value means the point lies on the segment's `leftX`/`leftZ` side.
+ */
+function projectOntoSegment(
+  x: number,
+  z: number,
+  segmentId: string,
+): { along: number; lateral: number; segment: RoadSegment } {
+  const s = segmentById(segmentId) ?? ROAD_SEGMENTS[0];
+  const dx = x - s.ax;
+  const dz = z - s.az;
+  const along = Math.max(0, Math.min(s.length, dx * s.ux + dz * s.uz));
+  const lateral = (x - (s.ax + s.ux * along)) * s.leftX + (z - (s.az + s.uz * along)) * s.leftZ;
+  return { along, lateral, segment: s };
+}
+
+/**
+ * Build a named place from a *verified* OSM landmark instead of an arbitrary
+ * fraction along a road.
+ *
+ * The marker sits on the sidewalk apron directly outside the carriageway on the
+ * side the real feature occupies, so it never intrudes on a traffic lane while
+ * still reading as the shopfront the player drives past.
+ */
+function makePlaceAtLandmark(
+  id: string,
+  nameKey: string,
+  landmarkId: string,
+  kind: PlaceDef['kind'] = 'both',
+): PlaceDef {
+  const lm: Landmark = landmarkById(landmarkId) ?? {
+    id: landmarkId,
+    nameEn: landmarkId,
+    nameBn: landmarkId,
+    category: 'road',
+    x: 0,
+    z: 0,
+    source: { osmId: 0, osmType: 'node', lat: 0, lon: 0 },
+    confidence: 'approx',
+  };
+  const { along, lateral, segment: s } = projectOntoSegment(lm.x, lm.z, lm.frontageSegmentId ?? '');
+  // Prefer the polygon-voted side; fall back to the point's own side, and to
+  // the segment's left if the point sits exactly on the centreline.
+  const side: 1 | -1 = lm.frontageSide ?? (lateral >= 0 ? 1 : -1);
+  // Just clear of the asphalt: half the carriageway plus most of the sidewalk.
+  const apron = s.halfWidth + s.sidewalk * 0.55;
+  const heading = side === 1 ? Math.atan2(s.ux, s.uz) : Math.atan2(-s.ux, -s.uz);
+  const px = s.ax + s.ux * along + s.leftX * apron * side;
+  const pz = s.az + s.uz * along + s.leftZ * apron * side;
+  return {
+    id,
+    nameKey,
+    x: Math.round(px * 10) / 10,
+    z: Math.round(pz * 10) / 10,
+    kind,
+    heading,
+    marker: 3.2,
+    segmentId: s.id,
+  };
+}
+
 export const PLACES: PlaceDef[] = [
   makePlaceOnSegment('stand', 'place.stand', 'asad_1', 0.26, 1, 'both'),
-  makePlaceOnSegment('bazaar', 'place.bazaar', 'asad_3', 0.68, 1, 'both'),
+  // v0.7.0: Town Hall Bazar was previously pinned to an arbitrary point on
+  // asad_3, ~39 m west of the real market. Now anchored to OSM way 223068917
+  // (amenity=marketplace, addr:street=Asad Avenue).
+  makePlaceAtLandmark('bazaar', 'place.bazaar', 'town_hall_bazar', 'both'),
   makePlaceOnSegment('tea', 'place.tea', 'nurjahan_1', 0.52, 1, 'both'),
   makePlaceOnSegment('school', 'place.school', 'iqbal_1', 0.55, 1, 'both'),
   makePlaceOnSegment('garage', 'place.garage', 'shershah_1', 0.48, -1, 'both'),
   makePlaceOnSegment('pharmacy', 'place.pharmacy', 'asad_4', 0.62, 1, 'both'),
   makePlaceOnSegment('launch', 'place.launch', 'satmasjid_1', 0.58, 1, 'both'),
   makePlaceOnSegment('mosque', 'place.mosque', 'ring_2', 0.72, 1, 'both'),
-  makePlaceOnSegment('market', 'place.market', 'ring_3', 0.45, -1, 'both'),
+  // v0.7.0: "Krishi Market Corner" was previously placed on Ring Road, 55-75 m
+  // from the real wholesale market. Now anchored to OSM way 494999392.
+  makePlaceAtLandmark('market', 'place.market', 'krishi_market', 'both'),
   makePlaceOnSegment('bridge', 'place.bridge', 'babar_2', 0.52, 1, 'both'),
   makePlaceOnSegment('library', 'place.library', 'tajmahal_3', 0.5, 1, 'both'),
   makePlaceOnSegment('salimullah', 'place.salimullah', 'salimullah_1', 0.54, -1, 'both'),

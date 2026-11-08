@@ -19,6 +19,7 @@ import type { Collider } from './city';
 import type { BreakableKind, BreakableProp } from './destruction';
 import { Bucket } from './geo';
 import { ROAD_SEGMENTS, isClearOfRoads } from './layout';
+import { planMarketApron, planMarketSignage } from './marketApron';
 import { SignAtlas, clothTexture } from './textures';
 
 export interface VendorSpot {
@@ -470,6 +471,78 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
         vendorSpot: spot,
       });
     }
+  }
+
+  // --- Market apron crowds (v0.7.0) ---------------------------------------
+  // Concentrate extra carts on the sidewalk apron outside the two markets we
+  // can locate authoritatively in OSM. `planMarketApron` owns the geographic
+  // reasoning and is unit-tested; this loop only builds meshes, and still runs
+  // every candidate through `canPlaceStall` so no cart overlaps another.
+  for (const stall of planMarketApron()) {
+    if (!canPlaceStall(stall.x, stall.z, 1.35)) continue;
+    const stallId = 1000 + breakableStalls.length;
+    setAllTags(stallId);
+    if (stall.kind === 'veg') buildFruitOrVegCart(stall.x, stall.z, stall.yaw, false);
+    else if (stall.kind === 'fruit') buildFruitOrVegCart(stall.x, stall.z, stall.yaw, true);
+    else if (stall.kind === 'tea') buildTeaTong(stall.x, stall.z, stall.yaw);
+    else if (stall.kind === 'fuchka') buildFuchkaStall(stall.x, stall.z, stall.yaw);
+    else buildJhalmuriStall(stall.x, stall.z, stall.yaw);
+    setAllTags(-1);
+
+    const stallCol = colliders[colliders.length - 1];
+    const spot = vendorSpots[vendorSpots.length - 1];
+    stallCol.breakableId = stallId;
+    const bKind: BreakableKind =
+      stall.kind === 'veg' || stall.kind === 'fruit'
+        ? 'market'
+        : (stall.kind as 'tea' | 'fuchka' | 'jhalmuri');
+    breakableStalls.push({
+      id: stallId,
+      kind: bKind,
+      x: stall.x,
+      z: stall.z,
+      yaw: stall.yaw,
+      collider: stallCol,
+      slices: [],
+      vendorSpot: spot,
+    });
+  }
+
+  // --- Market entrance boards (v0.7.0) -------------------------------------
+  // Named Bengali boards so the two authoritative bazaars are identifiable from
+  // the street itself rather than only from the HUD. A board is two posts plus
+  // a textured panel; geometry is deliberately tiny (one quad per market).
+  for (const sign of planMarketSignage()) {
+    const uv = signAtlas.landmarkSlot(sign.landmarkId);
+    if (!uv) continue;
+    const s = Math.sin(sign.yaw);
+    const c = Math.cos(sign.yaw);
+    const at = (ox: number, oz: number) => ({
+      x: sign.x + ox * c + oz * s,
+      z: sign.z - ox * s + oz * c,
+    });
+    // Two uprights either side of the panel.
+    for (const side of [-1, 1]) {
+      const post = at(side * 2.35, 0);
+      metal.box({ x: post.x, y: 1.75, z: post.z }, { x: 0.16, y: 3.5, z: 0.16 }, '#2b3b33', {
+        y: sign.yaw,
+      });
+    }
+    // Panel, facing the road (the apron side is -z in local space).
+    const panel = at(0, 0);
+    signs.quad(
+      { x: panel.x, y: 3.05, z: panel.z },
+      4.9,
+      1.15,
+      '#ffffff',
+      { y: sign.yaw },
+      uv,
+    );
+    // Small header beam so the panel does not read as a floating decal.
+    solid.box({ x: panel.x, y: 3.7, z: panel.z }, { x: 5.1, y: 0.14, z: 0.22 }, '#2b3b33', {
+      y: sign.yaw,
+    });
+    addPropCollider(sign.x, sign.z, 2.5, 0.35, 3.7, sign.yaw);
   }
 
   // Mohammadpur Bus Stand Passenger Waiting Shelter (`bus_stand` sidewalk pocket)
