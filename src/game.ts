@@ -45,8 +45,8 @@ import { SignAtlas, releaseScratchCanvas, setTextureQuality } from './world/text
 import {
   PLACES,
   findRoute,
+  placeApproachPose,
   placeById,
-  segmentById,
   snapToNearestRoad,
   surfaceAtWorld,
   type RoutePlan,
@@ -269,7 +269,7 @@ export class Game implements UIBridge {
 
     this.colliderDebug = new DevColliderDebugView(this.scene);
 
-    const props = buildProps(this.signAtlas);
+    const props = buildProps(this.signAtlas, this.city.colliders, this.city.treeSites);
     this.scene.add(props.group);
     this.city.registerShadowCasters(props.group);
     this.city.colliders.push(...props.colliders);
@@ -3215,17 +3215,10 @@ export class Game implements UIBridge {
   }
 
   private placeApproachPose(placeId: string): { x: number; z: number; yaw: number } | null {
-    const place = placeById(placeId);
-    if (!place) return null;
-    const seg = segmentById(place.segmentId);
-    if (seg) {
-      return {
-        x: place.x - seg.ux * 2.2,
-        z: place.z - seg.uz * 2.2,
-        yaw: place.heading,
-      };
-    }
-    return { x: place.x, z: place.z, yaw: place.heading };
+    // Delegates to the layout helper, which lands on the place's own segment.
+    // Previously this offset along the road from the marker, which put the
+    // rickshaw on the sidewalk once markers moved onto the frontage apron.
+    return placeApproachPose(placeId);
   }
 
   debugTeleportToPickup(): void {

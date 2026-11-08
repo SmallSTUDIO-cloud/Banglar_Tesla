@@ -19,7 +19,7 @@ import type { Collider } from './city';
 import type { BreakableKind, BreakableProp } from './destruction';
 import { Bucket } from './geo';
 import { ROAD_SEGMENTS, isClearOfRoads } from './layout';
-import { planMarketApron, planMarketSignage } from './marketApron';
+import { APRON_MIN_CLEARANCE, planMarketApron, planMarketSignage } from './marketApron';
 import { SignAtlas, clothTexture } from './textures';
 
 export interface VendorSpot {
@@ -36,7 +36,18 @@ export interface PropsResult {
   breakableStalls: BreakableProp[];
 }
 
-export function buildProps(signAtlas: SignAtlas): PropsResult {
+export function buildProps(
+  signAtlas: SignAtlas,
+  /**
+   * Footprints already placed by the city builder (buildings). Used purely as a
+   * rejection test so no vendor cart or market board can be drawn *inside* a
+   * building — geometry that renders as an interpenetrating, floating prop.
+   * Optional so existing callers/tests keep working.
+   */
+  existingObstacles: readonly Collider[] = [],
+  /** Street-tree sites, so a market board is never mounted through a tree. */
+  treeSites: readonly { x: number; z: number }[] = [],
+): PropsResult {
   const group = new THREE.Group();
   group.name = 'mohammadpur-props';
   const colliders: Collider[] = [];
@@ -83,6 +94,42 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
     }
     placedStalls.push({ x, z, r });
     return true;
+  };
+
+  /**
+   * True when an oriented footprint overlaps a building already placed by the
+   * city builder.
+   *
+   * Samples a 3x3 grid across the footprint rather than testing the footprint's
+   * axis-aligned envelope. The envelope is far too conservative for long thin
+   * geometry: a 4.9 m market board lying parallel to a wall only 0.9 m away has
+   * a huge AABB that clips the building even though nothing intersects. The
+   * grid matches the point-sampling approach already used by
+   * `isFootprintClearOfCorridor`.
+   */
+  const overlapsBuilding = (
+    x: number,
+    z: number,
+    halfX: number,
+    halfZ: number,
+    yaw: number,
+  ): boolean => {
+    if (existingObstacles.length === 0) return false;
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    for (let ix = -1; ix <= 1; ix++) {
+      for (let iz = -1; iz <= 1; iz++) {
+        const lx = ix * halfX;
+        const lz = iz * halfZ;
+        const px = x + lx * c + lz * s;
+        const pz = z - lx * s + lz * c;
+        for (const col of existingObstacles) {
+          if (col.disabled) continue;
+          if (px > col.minX && px < col.maxX && pz > col.minZ && pz < col.maxZ) return true;
+        }
+      }
+    }
+    return false;
   };
 
   const setAllTags = (tag: number): void => {
@@ -480,6 +527,7 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
   // every candidate through `canPlaceStall` so no cart overlaps another.
   for (const stall of planMarketApron()) {
     if (!canPlaceStall(stall.x, stall.z, 1.35)) continue;
+    if (overlapsBuilding(stall.x, stall.z, 0.95, 0.62, stall.yaw)) continue;
     const stallId = 1000 + breakableStalls.length;
     setAllTags(stallId);
     if (stall.kind === 'veg') buildFruitOrVegCart(stall.x, stall.z, stall.yaw, false);
@@ -515,34 +563,61 @@ export function buildProps(signAtlas: SignAtlas): PropsResult {
   for (const sign of planMarketSignage()) {
     const uv = signAtlas.landmarkSlot(sign.landmarkId);
     if (!uv) continue;
+    const PANEL_W = 4.2;
+    const PANEL_T = 0.4;
+    const halfPanel = PANEL_W * 0.5 + 0.15;
+    // The planned spot is on the proven-clear vendor apron, but a dense
+    // frontage can still leave it wedged in a gap between two buildings. Slide
+    // the board along the same frontage until it lands somewhere it is neither
+    // inside a building nor on top of a cart. Geography is preserved: it stays
+    // on this market's own street frontage.
+    let px = 0;
+    let pz = 0;
+    let placed = false;
+    for (const off of [0, 2.2, -2.2, 4.4, -4.4, 6.6, -6.6, 8.8, -8.8]) {
+      const cx = sign.x + sign.dirX * off;
+      const cz = sign.z + sign.dirZ * off;
+      if (!isClearOfRoads(cx, cz, APRON_MIN_CLEARANCE)) continue;
+      if (overlapsBuilding(cx, cz, halfPanel, PANEL_T, sign.yaw)) continue;
+      const clash = placedStalls.some((p) => Math.hypot(cx - p.x, cz - p.z) < p.r + 1.6);
+      if (clash) continue;
+      // A tree trunk straight through the panel is the kind of thing only a
+      // rendered frame reveals, so reject the spot numerically too.
+      if (treeSites.some((t) => Math.hypot(cx - t.x, cz - t.z) < halfPanel + 1.2)) continue;
+      px = cx;
+      pz = cz;
+      placed = true;
+      break;
+    }
+    if (!placed) continue;
     const s = Math.sin(sign.yaw);
     const c = Math.cos(sign.yaw);
     const at = (ox: number, oz: number) => ({
-      x: sign.x + ox * c + oz * s,
-      z: sign.z - ox * s + oz * c,
+      x: px + ox * c + oz * s,
+      z: pz - ox * s + oz * c,
     });
     // Two uprights either side of the panel.
     for (const side of [-1, 1]) {
-      const post = at(side * 2.35, 0);
+      const post = at((side * PANEL_W) / 2, 0);
       metal.box({ x: post.x, y: 1.75, z: post.z }, { x: 0.16, y: 3.5, z: 0.16 }, '#2b3b33', {
         y: sign.yaw,
       });
     }
-    // Panel, facing the road (the apron side is -z in local space).
+    // Panel, facing the road.
     const panel = at(0, 0);
     signs.quad(
       { x: panel.x, y: 3.05, z: panel.z },
-      4.9,
+      PANEL_W,
       1.15,
       '#ffffff',
       { y: sign.yaw },
       uv,
     );
     // Small header beam so the panel does not read as a floating decal.
-    solid.box({ x: panel.x, y: 3.7, z: panel.z }, { x: 5.1, y: 0.14, z: 0.22 }, '#2b3b33', {
+    solid.box({ x: panel.x, y: 3.7, z: panel.z }, { x: PANEL_W + 0.2, y: 0.14, z: 0.22 }, '#2b3b33', {
       y: sign.yaw,
     });
-    addPropCollider(sign.x, sign.z, 2.5, 0.35, 3.7, sign.yaw);
+    addPropCollider(px, pz, PANEL_W * 0.5, PANEL_T, 3.7, sign.yaw);
   }
 
   // Mohammadpur Bus Stand Passenger Waiting Shelter (`bus_stand` sidewalk pocket)

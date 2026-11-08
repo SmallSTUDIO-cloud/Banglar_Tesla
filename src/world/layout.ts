@@ -332,6 +332,35 @@ export function isFootprintClearOfCorridor(
 }
 
 /** Nearest drivable point + left-hand lane heading on the Mohammadpur street network. */
+/**
+ * Drivable pose for approaching a place: on the place's OWN segment, in the
+ * near lane just inside the curb.
+ *
+ * Deliberately not `snapToNearestRoad`: that snaps to whichever centreline is
+ * closest, which near a junction can be a different (crossing) street — 9.2 m
+ * from the marker at Town Hall Bazar, i.e. outside `MISSION.acceptRadius`, so a
+ * teleport there could never trigger the pickup.
+ */
+export function placeApproachPose(placeId: string): { x: number; z: number; yaw: number } | null {
+  const place = placeById(placeId);
+  if (!place) return null;
+  const seg = segmentById(place.segmentId);
+  if (!seg) return { x: place.x, z: place.z, yaw: place.heading };
+  const dx = place.x - seg.ax;
+  const dz = place.z - seg.az;
+  const along = clamp(dx * seg.ux + dz * seg.uz, 0, seg.length);
+  const lateral = (place.x - (seg.ax + seg.ux * along)) * seg.leftX +
+    (place.z - (seg.az + seg.uz * along)) * seg.leftZ;
+  const side = lateral >= 0 ? 1 : -1;
+  // Stay on the asphalt, half a metre inside the curb, on the marker's side.
+  const laneOffset = (seg.halfWidth - 0.5) * side;
+  return {
+    x: seg.ax + seg.ux * along + seg.leftX * laneOffset,
+    z: seg.az + seg.uz * along + seg.leftZ * laneOffset,
+    yaw: place.heading,
+  };
+}
+
 export function snapToNearestRoad(
   x: number,
   z: number,
@@ -393,7 +422,13 @@ function makePlaceOnSegment(
   const along = clamp(tAlong, 0.22, 0.78) * s.length;
   const cx = s.ax + s.ux * along;
   const cz = s.az + s.uz * along;
-  const curb = s.halfWidth * 0.58 * side;
+  // v0.7.0: sit just outside the curb instead of at 0.58 x half-width, which
+  // is *inside* the carriageway. The curb line is chosen over mid-sidewalk on
+  // purpose: it is unambiguous of the asphalt, still well within
+  // MISSION.acceptRadius of a vehicle, and as far as possible from the building
+  // frontage, so a marker cannot end up buried in a shopfront (which mid-
+  // sidewalk placement caused at the bus stand).
+  const curb = (s.halfWidth + PLACE_CURB_CLEARANCE) * side;
   const heading = side === 1 ? Math.atan2(s.ux, s.uz) : Math.atan2(-s.ux, -s.uz);
   return {
     id,
@@ -469,6 +504,9 @@ function makePlaceAtLandmark(
     segmentId: s.id,
   };
 }
+
+/** How far outside the carriageway a place marker sits, in metres. */
+export const PLACE_CURB_CLEARANCE = 0.35;
 
 export const PLACES: PlaceDef[] = [
   makePlaceOnSegment('stand', 'place.stand', 'asad_1', 0.26, 1, 'both'),

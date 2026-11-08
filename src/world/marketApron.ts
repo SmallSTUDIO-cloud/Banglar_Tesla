@@ -65,15 +65,24 @@ export interface MarketSignPlan {
   x: number;
   z: number;
   yaw: number;
+  /** Unit vector along the frontage road, so a caller may nudge the board
+   * along the street to a spot that is not inside a building. */
+  dirX: number;
+  dirZ: number;
 }
 
-/** Setback of the entrance board behind the apron line, in metres. */
-const SIGN_SETBACK = 2.4;
+/** Gap between the last vendor cart and the entrance board, in metres. */
+const SIGN_GAP = 3.6;
 
 /**
- * Entrance boards for the two authoritative markets. The board is set back
- * further from the road than the vendor line so it frames the market entrance
- * without standing between the road and the carts.
+ * Entrance boards for the two authoritative markets.
+ *
+ * The board shares the vendor apron line rather than sitting further back.
+ * That band is already proven clear of the carriageway *and* in front of the
+ * building frontage, so the board cannot end up embedded in a shopfront — the
+ * earlier 2.4 m extra setback put it straight inside a 12 m building at Town
+ * Hall, which only showed up once it was rendered. Along the road it is placed
+ * just past the last cart so it frames the market without touching one.
  */
 export function planMarketSignage(): MarketSignPlan[] {
   const plan: MarketSignPlan[] = [];
@@ -83,8 +92,9 @@ export function planMarketSignage(): MarketSignPlan[] {
     const seg = segmentById(place.segmentId) ?? ROAD_SEGMENTS[0];
     const lateralSign =
       (place.x - seg.ax) * seg.leftX + (place.z - seg.az) * seg.leftZ >= 0 ? 1 : -1;
-    // Push further out than the place marker, i.e. away from the carriageway.
-    const offset = seg.halfWidth + seg.sidewalk * 0.55 + SIGN_SETBACK;
+    const apronOffset = (seg.halfWidth + seg.sidewalk * 0.62) * lateralSign;
+    const yaw = Math.atan2(-seg.leftX * lateralSign, -seg.leftZ * lateralSign);
+
     let along = 0;
     let bestD = Infinity;
     for (let t = 0; t <= seg.length; t += 0.5) {
@@ -94,15 +104,24 @@ export function planMarketSignage(): MarketSignPlan[] {
         along = t;
       }
     }
-    const bx = seg.ax + seg.ux * along + seg.leftX * offset * lateralSign;
-    const bz = seg.az + seg.uz * along + seg.leftZ * offset * lateralSign;
+
+    // End of the vendor row, then just past it.
+    const halfSpan = ((APRON_KINDS.length - 1) / 2) * APRON_SPACING;
+    let boardAlong = along + halfSpan + SIGN_GAP;
+    if (boardAlong > seg.length - 1.5) boardAlong = along - halfSpan - SIGN_GAP;
+    if (boardAlong < 1.5 || boardAlong > seg.length - 1.5) continue;
+
+    const bx = seg.ax + seg.ux * boardAlong + seg.leftX * apronOffset;
+    const bz = seg.az + seg.uz * boardAlong + seg.leftZ * apronOffset;
     if (distanceToRoadCarriageway(bx, bz) < APRON_MIN_CLEARANCE) continue;
     plan.push({
       placeId,
       landmarkId: placeId === 'bazaar' ? 'town_hall_bazar' : 'krishi_market',
       x: bx,
       z: bz,
-      yaw: Math.atan2(-seg.leftX * lateralSign, -seg.leftZ * lateralSign),
+      yaw,
+      dirX: seg.ux,
+      dirZ: seg.uz,
     });
   }
   return plan;

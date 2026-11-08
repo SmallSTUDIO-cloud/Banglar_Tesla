@@ -24,7 +24,8 @@
     "benchmark": "node tests/e2e/benchmark-suite.mjs",
     "shots": "node tests/e2e/shoot.mjs",
     "perf": "node tests/e2e/perf.mjs",
-    "test:vnext-repair": "node tests/e2e/verify-vnext-repair.mjs"
+    "test:vnext-repair": "node tests/e2e/verify-vnext-repair.mjs",
+    "test:geography": "node tests/e2e/verify-geography.mjs"
   },
   "dependencies": {
     "three": "0.186.1"

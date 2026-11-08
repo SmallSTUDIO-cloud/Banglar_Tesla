@@ -124,12 +124,12 @@ never be labelled as a specific market.
 
 ## 7. Not verified (be explicit)
 
-- **No browser screenshots were captured.** Chromium could not be downloaded in
-  this environment (`playwright install chromium` fails with a download error),
-  so the visual result of the new boards, cart clustering and marker moves has
-  **not** been inspected. Geometry is validated numerically and by unit tests
-  only. This remains outstanding and should be done before the milestone is
-  called complete.
+- ~~No browser screenshots were captured.~~ **Resolved.** The repository already
+  ships a headless screenshot harness (`tests/e2e/shoot.mjs`) built on
+  `@sparticuz/chromium` + `puppeteer-core` with a SwiftShader software GL path,
+  and it works here. An earlier session tried `playwright install chromium`,
+  which fails on a blocked download, and wrongly concluded screenshots were
+  impossible. See section 9 for the frames that were captured and inspected.
 - **No Android device test was performed.** Nothing here claims verified
   performance on a mid-range phone.
 - Buildings were **not** rewired: `city.ts` already enforces corridor clearance
@@ -151,3 +151,125 @@ never be labelled as a specific market.
   declares a 60 s timeout matching the simulation it actually performs.
 - `src/audio/audio.ts` references a place id `'shia'` that does not exist in
   `PLACES` (the id is `mosque`), so that branch is dead.
+
+
+## 9. Visual verification (2026-11-08)
+
+### How it was captured
+
+Screenshots come from the repo's own harness, not from a downloaded browser:
+
+```
+npm run build
+npm run shots market:townhall-front,market:townhall-street,market:townhall-air,\
+               market:krishi-front,market:krishi-street,market:krishi-air,passenger
+```
+
+`tests/e2e/shoot.mjs` gained a `market:<view>` action with six fixed
+gameplay-eye viewpoints derived from the verified landmark coordinates, so
+frames are repeatable. Output lands in `artifacts/` and is committed as
+evidence. Rendering is software GL (SwiftShader), so these frames prove
+*geometry and placement*, not frame rate.
+
+### Defects the screenshots found (all fixed)
+
+Neither of these was catchable by the original numeric tests, which is exactly
+why the inspection step matters:
+
+| Defect | How it looked | Cause | Fix |
+| --- | --- | --- | --- |
+| Town Hall board embedded **inside a 12.2 m building** | Board invisible from the street; only the roof line hinted at it | Board was set back a further 2.4 m from the vendor line, straight into the shopfront | Board now shares the proven-clear vendor apron line; added a footprint-vs-building rejection test |
+| Krishi board had **a street tree growing through the panel** | Trunk bisecting the sign | Board spot was clear of buildings but not of trees | Board slides along its own frontage to the nearest spot clear of buildings *and* trees |
+
+A third defect was found while fixing those: the first rejection test used the
+footprint's axis-aligned envelope, which is far too conservative for a 4.2 m
+board lying parallel to a wall — it rejected Town Hall's valid spot and dropped
+the board entirely. Replaced with a 3x3 point grid over the oriented footprint,
+matching the approach already used by `isFootprintClearOfCorridor`.
+
+### What the frames confirm
+
+- **Town Hall Bazar** — the Bengali board (টাউন হল বাজার / TOWN HALL BAZAR) stands on
+  its posts on the sidewalk, in front of the shutter line, clear of the
+  carriageway; vendor carts and the general shopfront signage line the frontage;
+  buildings form a continuous street wall on both sides; road surface clean with
+  no building or cart intrusion.
+- **Krishi Market** — green কৃষি মার্কেট / KRISHI MARKET board legible on the
+  Humayun Road frontage, clear of the tree that previously cut through it; carts
+  on the sidewalk apron; both sides built up.
+- **Aerial views** — no building sits in any carriageway or junction; road
+  corridors read as continuous asphalt between building blocks.
+- **Passenger/mission frame** — a live duty mission resolves and runs
+  ("নূরজাহান রোড চায়ের টং", 70 m, timer counting), confirming the marker
+  relocation did not break pickup or the HUD.
+
+### Still not verified
+
+- **Android device performance.** No device test was performed and no frame-rate
+  claim is made. Software-GL screenshots say nothing about a mid-range phone.
+- The generic shopfront signs, awnings and interiors are procedural placeholders;
+  they were not audited against real Mohammadpur businesses and are not claimed
+  to be geographically accurate.
+
+## 10. Legacy marker audit (all 12 relocated)
+
+`makePlaceOnSegment` offset markers by `halfWidth * 0.58` — *inside* the
+carriageway — leaving 12 of 14 markers in a traffic lane (−1.6 to −2.6 m clear).
+Markers are now placed just outside the curb line
+(`halfWidth + PLACE_CURB_CLEARANCE`, 0.35 m).
+
+Curb line was chosen over mid-sidewalk deliberately: mid-sidewalk is closer to
+the building frontage, and the first attempt at mid-sidewalk buried the bus-stand
+marker inside a building. The curb line is furthest from the frontage and still
+only ~0.4 m from the asphalt.
+
+| id | road | before | after | approach pose |
+| --- | --- | --- | --- | --- |
+| stand | Asad Avenue | −2.56 | +0.40 | −0.50 |
+| bazaar | Asad Avenue | −2.56 | +1.54 | −0.50 |
+| tea | Nurjahan Road | −1.81 | +0.39 | −0.50 |
+| school | Iqbal Road | −1.76 | +0.34 | −0.50 |
+| garage | Sher Shah Suri Road | −1.93 | +0.36 | −0.50 |
+| pharmacy | Asad Avenue | −2.56 | +0.32 | −0.50 |
+| launch | Satmasjid Road | −2.39 | +0.34 | −0.50 |
+| mosque | Ring Road | −2.35 | +0.33 | −0.50 |
+| market | Humayun Road | −1.76 | +1.21 | −0.50 |
+| bridge | Babar Road | −1.89 | +0.36 | −0.50 |
+| library | Tajmahal Road | −1.93 | +0.37 | −0.50 |
+| salimullah | Salimullah Road | −1.76 | +0.34 | −0.50 |
+| humayun | Humayun Road | −1.76 | +0.34 | −0.50 |
+| zakir | Zakir Hossain Road | −1.64 | +0.39 | −0.50 |
+
+Signed distance to the nearest carriageway edge, in metres, measured from the
+road graph (negative = inside the asphalt). "Before" is the coordinate the old
+`halfWidth × 0.58` rule produced.
+
+`bazaar` is landmark-anchored and was already correct; `market` keeps its
+landmark anchor and therefore its larger clearance.
+
+**Why relocation was safe.** Consumers were audited before moving anything:
+
+| Consumer | Behaviour | Risk | Outcome |
+| --- | --- | --- | --- |
+| Mission pickup/drop | `dist < MISSION.acceptRadius` (5.8 m) | Marker could drift out of reach | Marker sits 0.61 m off the asphalt, so a vehicle passing is ~1.2 m away |
+| `placeApproachPose` (debug teleport) | Offsets 2.2 m **along** the road from the marker | After relocation this would land on the sidewalk | Rewritten to use the place's own segment, in the near lane 0.5 m inside the curb |
+| Free-ride POI toast | `< 8 m` | Radius covers the new position | Fine |
+| Rival encounters | `< 17 m` | Radius covers the new position | Fine |
+| Race gates | Snap to carriageway centreline, radius ≥ 10 m | Insensitive to marker offset | Fine |
+| Audio vendor proximity | Uses `PLACES` positions | Reads live coordinates | Fine |
+
+A related latent bug was fixed in the same change: the old teleport used
+`snapToNearestRoad`, which snaps to whichever centreline is *closest* — near the
+Town Hall junction that is a crossing street, **9.24 m** away and therefore
+outside the 5.8 m accept radius, so a teleport there could never trigger the
+pickup.
+
+**Regression tests added first** (`tests/unit/place-frontage.test.ts`, 72
+assertions): every marker must be on the asphalt-adjacent apron, must stay
+within `acceptRadius` reach of a vehicle, and its approach pose must land on the
+carriageway. These encoded the constraints *before* any coordinate moved.
+
+**Automated live-scene validator** (`npm run test:geography`): boots the built
+game headlessly and asserts, against 849 real building colliders, that no place
+marker and no market board is inside a building, plus that boards and carts are
+off the carriageway. This is what caught the buried board and marker defects.

@@ -166,6 +166,41 @@ for (const shot of shots) {
     }, shot);
     await new Promise((r) => setTimeout(r, 900));
     await page.screenshot({ path: path.join(out, `shot-${shot}.png`) });
+  } else if (shot.startsWith('market:')) {
+    // v0.7.0 geographic-accuracy views. Coordinates are the *verified* OSM
+    // landmark positions (see src/world/landmarks.ts): Town Hall Bazar at
+    // (64.93, 98.11) fronting asad_4, Krishi Market at (-176.16, -134.28)
+    // fronting humayun_1. Each view is a fixed gameplay-eye viewpoint so shots
+    // are repeatable across runs.
+    await page.evaluate((view) => {
+      const g = window.__banglarTesla;
+      g.debugStartMode('free');
+      g.debugSetPhase('golden', 'sunny');
+      g.ui.show(null);
+      g.debugFreeCamera = true;
+      const views = {
+        // Town Hall Bazar: eye on Asad Avenue looking at the vendor line/board.
+        // Looking along the vendor row toward the entrance board at (82.6, 102.4).
+        // Eye on the carriageway centre opposite the board at (82.6, 102.4).
+        'townhall-front': [[86, 2.2, 96.5], [82.6, 2.6, 102.6], 62],
+        'townhall-street': [[90, 2.4, 96], [58, 1.9, 108], 60],
+        'townhall-air': [[56, 34, 68], [74, 0, 108], 55],
+        // Krishi Market: vendor row ends at the board near (-158.5, -131).
+        // Eye opposite the board at (-152.2, -133.1), clear of the street tree.
+        'krishi-front': [[-147, 2.2, -126.5], [-152.4, 2.6, -133.3], 62],
+        'krishi-street': [[-146, 2.3, -124], [-182, 1.9, -128], 60],
+        'krishi-air': [[-158, 34, -98], [-177, 0, -129], 55],
+      };
+      const v = views[view];
+      if (!v) return;
+      const [eye, target, fov] = v;
+      g.camera.position.set(...eye);
+      g.camera.lookAt(...target);
+      g.camera.fov = fov;
+      g.camera.updateProjectionMatrix();
+    }, shot.slice('market:'.length));
+    await new Promise((r) => setTimeout(r, 1100));
+    await page.screenshot({ path: path.join(out, `shot-${shot.replace(':', '-')}.png`) });
   } else if (shot === 'garage') {
     await page.evaluate(() => window.__banglarTesla.debugOpenGarageForTest());
     await new Promise((r) => setTimeout(r, 1500));

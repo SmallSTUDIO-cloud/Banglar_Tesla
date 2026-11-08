@@ -151,3 +151,29 @@ named Bengali entrance boards.
 - Geneva Camp has two conflicting polygons in the OSM extract; only the northern
   `place=quarter` node is used, and the conflict is documented rather than
   silently picked.
+
+### v0.7.0 follow-up (2026-11-08) — visual verification & marker audit
+
+Full record: [`GEOGRAPHIC_ACCURACY.md`](./GEOGRAPHIC_ACCURACY.md) sections 9-10.
+
+**Resolved:** screenshots **are** obtainable — the repo's own harness
+(`npm run shots`, `@sparticuz/chromium` + SwiftShader) works in this environment.
+The earlier "cannot capture screenshots" conclusion was wrong; it came from
+trying `playwright install chromium`, whose download is blocked, instead of the
+harness already in the tree.
+
+**Defects found by inspection and fixed:**
+
+| Defect | Fix |
+| --- | --- |
+| Town Hall market board embedded inside a 12.2 m building | Board moved onto the vendor apron line; building-rejection test added |
+| Krishi board had a street tree through the panel | Board slides along its own frontage past both buildings and trees |
+| 12 of 14 place markers sat inside the carriageway | All now just outside the curb line |
+| Debug teleport could land 9.24 m away (outside the 5.8 m accept radius) via `snapToNearestRoad` | Replaced with a place-own-segment approach pose |
+| First building-rejection test used an AABB, dropping valid boards | Replaced with a 3x3 oriented-footprint sample grid |
+
+**New automated gate:** `npm run test:geography` boots the built game headlessly
+and validates markers/boards against the live 849-collider building set.
+
+**Still open:** no Android device test; no performance claim. Procedural
+shopfront names are placeholders, not real businesses.
