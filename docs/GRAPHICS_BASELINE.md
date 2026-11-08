@@ -116,14 +116,28 @@ a software rasteriser on a 2-core container. No figure from it is evidence about
 **No Android performance claim is made in this document.**
 
 To unblock, the measurement has to run on the real device. `src/core/perfBench.ts` exists
-for exactly that:
+for exactly that. There are two ways in:
 
-1. Open the game on the phone.
-2. Add `?bench=1` to the URL (append `&preset=balanced` to measure one preset only).
+**A. Test APK (recommended — no server, no URL editing).** A debug-signed APK is published
+as a GitHub pre-release tagged `v0.6.7-test.bench-graphics-baseline`. Install it, then:
+
+1. Open the app and reach the main menu.
+2. **Tap the version label at the bottom of the menu five times quickly.**
 3. Wait. Three presets × 280 frames; roughly 15–45 s on a working phone.
-4. The device report appears over the game: GPU name, vendor, core count, DPR, viewport,
-   max texture size, then frame timing, scene cost and memory per preset.
-5. **Copy results** and paste them back.
+4. **Copy results** and paste them back.
+
+The Android wrapper loads a fixed `https://appassets.androidplatform.net/index.html` with no
+query string, so `?bench=1` cannot be typed there; the tap gesture exists for that reason and
+works identically in the browser. This APK is a measurement build only — it changes no
+renderer, geometry, material or gameplay code, and `versionName` stays `0.6.7`. It is not
+production-signed, and installing over an older v0.6.7 build may fail because the CI debug
+key differs, so uninstall the previous app first.
+
+**B. Browser.** Open the web build on the phone and append `?bench=1` (add
+`&preset=balanced` to measure a single preset).
+
+Either way the device report shows GPU name, vendor, core count, DPR, viewport, max texture
+size, then frame timing, scene cost and memory per preset.
 
 The panel is the only artefact needed to decide the gate. It reports the real GPU string, so
 a run on an emulator or a desktop browser is self-evident and cannot be mistaken for a phone.

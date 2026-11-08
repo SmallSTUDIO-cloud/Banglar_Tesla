@@ -42,14 +42,18 @@ async function boot(): Promise<void> {
     await game.init();
     game.start();
 
-    // Opt-in on-device benchmark (`?bench=1`). Loaded lazily so normal boots pay
-    // nothing for it, and run after the first frames so startup work is excluded.
-    if (new URLSearchParams(window.location.search).get('bench') === '1') {
+    // Opt-in on-device benchmark. Loaded lazily so normal boots pay nothing for
+    // it, and run after the first frames so startup work is excluded. Two ways in:
+    // `?bench=1` for a browser, and a hidden 5-tap gesture on the menu version
+    // label for the Android wrapper, whose entry URL has no query string.
+    const startBench = (): void => {
       void import('./core/perfBench').then(async (bench) => {
         await new Promise((r) => window.setTimeout(r, 1500));
         await bench.runDeviceBenchmark(game, { preset: bench.benchPresetFromUrl() });
       });
-    }
+    };
+    if (new URLSearchParams(window.location.search).get('bench') === '1') startBench();
+    window.addEventListener('bt:bench', startBench);
   } catch (err) {
     console.error('[boot] failed', err);
     const msg = document.createElement('div');

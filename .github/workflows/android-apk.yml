@@ -70,13 +70,15 @@ jobs:
           if-no-files-found: error
       # A uniquely marked push publishes only after all verification and artifact upload.
       # A debug-signed APK must never be presented as a production-signed release.
-      - name: Publish v0.6.7 debug test prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish-v0.6.7-debug]')
+      - name: Publish graphics-baseline debug test prerelease
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish-bench-apk]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=v0.6.7
+          # Deliberately NOT a semver release tag: this is a measurement build for
+          # the hybrid-graphics hardware gate. versionName stays 0.6.7.
+          TAG=v0.6.7-test.bench-graphics-baseline
           APK=artifacts/banglar-tesla-v0.6.7-debug.apk
           if gh release view "$TAG" >/dev/null 2>&1 || git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "Refusing to overwrite existing tag or release $TAG" >&2
@@ -84,6 +86,7 @@ jobs:
           fi
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
           SIZE="$(stat -c%s "$APK")"
+          NOTES="**Debug-signed TEST APK built solely to take the hybrid-graphics hardware measurement. Not a feature or production release.** Package com.shostalab.banglartesla; versionCode 11; versionName 0.6.7; minSdk 24. Built from commit $GITHUB_SHA. APK size: $SIZE bytes. SHA-256: $SHA. Produced by the official Android SDK 34 / Gradle pipeline after unit and web-bundle checks; signature, alignment, identity and bundled assets verified by scripts/build-apk.py. **What is new:** the device benchmark (src/core/perfBench.ts) is bundled. Nothing about rendering, world geometry, materials or gameplay was changed in this build. **How to run the measurement:** open the app, reach the main menu, and tap the version label at the bottom of the menu five times quickly. The benchmark then runs low, balanced and high, and shows a results panel with the real GPU name, frame timing, draw calls, triangles, texture memory and JS heap. Use Copy results to paste them back. It restores your quality setting when finished. **Please report:** the whole results panel text. It prints the actual GPU string, so a run on an emulator or a desktop browser is self-evident and cannot be mistaken for a phone. **Not verified:** performance on any physical Android device. That is the entire purpose of this build; no performance claim is made until the numbers come back. Installing over an older v0.6.7 build may fail because the CI debug key differs - uninstall the previous app first. This is NOT production-signed. The matching web game is deployed separately through the main-branch GitHub Pages workflow."
           gh release create "$TAG" "$APK" --target "$GITHUB_SHA" \
-            --prerelease --title 'Banglar Tesla v0.6.7 — debug test APK (latest features)' \
-            --notes "Debug-signed TEST APK from commit $GITHUB_SHA. Package com.shostalab.banglartesla; versionCode 11; versionName 0.6.7; minSdk 24. APK size: $SIZE bytes. SHA-256: $SHA. Built by the official Android SDK 34 / Gradle 8.7 pipeline after unit and web-bundle checks; APK signature, alignment, identity and bundled assets verified by scripts/build-apk.py. Includes the reviewed Living Mohammadpur traffic and market pedestrian behavior, streetscape and shopfront additions, supplied posters, and camera clipping optimization. Five before/after scenes had mixed visible density; improvement was not proven. Physical Android-device performance and installation remain untested. This is NOT a production-signed update and may not install over an app signed with a different key. The matching web game is deployed separately through the main-branch GitHub Pages workflow."
+            --prerelease --title 'Banglar Tesla v0.6.7 - device benchmark test APK (graphics baseline)' \
+            --notes "$NOTES"

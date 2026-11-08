@@ -479,8 +479,30 @@ export class AppUI {
       },
     });
 
+    // Hidden entry point for the device benchmark. The Android wrapper loads a
+    // fixed URL with no query string, so `?bench=1` cannot be typed there; five
+    // quick taps on the version label work everywhere. It only dispatches an
+    // event — main.ts does the lazy import, so nothing loads unless used.
+    let versionTaps = 0;
+    let lastTap = 0;
+    const versionSpan = h('span', {
+      text: `v${APP_VERSION}`,
+      attrs: { id: 'menu-version' },
+      on: {
+        click: () => {
+          const now = Date.now();
+          versionTaps = now - lastTap > 2000 ? 1 : versionTaps + 1;
+          lastTap = now;
+          if (versionTaps >= 5) {
+            versionTaps = 0;
+            window.dispatchEvent(new CustomEvent('bt:bench'));
+          }
+        },
+      },
+    });
+
     const meta = h('div', { class: 'menu-meta' },
-      h('span', { text: `v${APP_VERSION}` }),
+      versionSpan,
       h('span', { text: '·' }),
       h('span', { text: t('menu.district') }),
       h('span', { text: '·' }),
