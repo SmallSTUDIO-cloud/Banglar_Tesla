@@ -18,8 +18,10 @@ import { mulberry32 } from '../core/mathx';
 import type { Collider } from './city';
 import type { BreakableKind, BreakableProp } from './destruction';
 import { Bucket } from './geo';
-import { ROAD_SEGMENTS, isClearOfRoads } from './layout';
+import { ROAD_SEGMENTS, isClearOfRoads, snapToNearestRoad } from './layout';
 import { APRON_MIN_CLEARANCE, planMarketApron, planMarketSignage } from './marketApron';
+import { planCorridorActivity, planCorridorSignage } from './corridorIdentity';
+import { STOREFRONTS } from './storefronts';
 import { SignAtlas, clothTexture } from './textures';
 
 export interface VendorSpot {
@@ -618,6 +620,111 @@ export function buildProps(
       y: sign.yaw,
     });
     addPropCollider(px, pz, PANEL_W * 0.5, PANEL_T, 3.7, sign.yaw);
+  }
+
+  // --- Corridor identity boards & activity (v0.7.0) ------------------------
+  // Ring Road and Tajmahal Road get their own name-plates and a landmark-anchored
+  // vendor mix, so each corridor reads as a distinct place rather than generic
+  // Mohammadpur. Same board construction as the markets; same clearance rules.
+  const boardSpecs = [
+    ...planMarketSignage().map((s) => ({ signId: s.landmarkId, x: s.x, z: s.z, yaw: s.yaw })),
+    ...planCorridorSignage().map((s) => ({ signId: s.signId, x: s.x, z: s.z, yaw: s.yaw })),
+  ];
+  for (const spec of boardSpecs) {
+    const uv = signAtlas.landmarkSlot(spec.signId);
+    if (!uv) continue;
+    const PANEL_W = 4.2;
+    const PANEL_T = 0.4;
+    let px = 0;
+    let pz = 0;
+    let placedBoard = false;
+    for (const off of [0, 2.2, -2.2, 4.4, -4.4, 6.6, -6.6]) {
+      const cx = spec.x + Math.cos(spec.yaw) * 0 + off * -Math.sin(spec.yaw);
+      const cz = spec.z + off * Math.cos(spec.yaw);
+      if (!isClearOfRoads(cx, cz, APRON_MIN_CLEARANCE)) continue;
+      if (overlapsBuilding(cx, cz, PANEL_W * 0.5 + 0.15, PANEL_T, spec.yaw)) continue;
+      if (treeSites.some((t) => Math.hypot(cx - t.x, cz - t.z) < PANEL_W * 0.5 + 1.35)) continue;
+      if (placedStalls.some((p) => Math.hypot(cx - p.x, cz - p.z) < p.r + 1.6)) continue;
+      px = cx;
+      pz = cz;
+      placedBoard = true;
+      break;
+    }
+    if (!placedBoard) continue;
+    const sY = Math.sin(spec.yaw);
+    const cY = Math.cos(spec.yaw);
+    const at = (ox: number, oz: number) => ({ x: px + ox * cY + oz * sY, z: pz - ox * sY + oz * cY });
+    for (const side of [-1, 1]) {
+      const post = at((side * PANEL_W) / 2, 0);
+      metal.box({ x: post.x, y: 1.75, z: post.z }, { x: 0.16, y: 3.5, z: 0.16 }, '#2b3b33', { y: spec.yaw });
+    }
+    const panel = at(0, 0);
+    signs.quad({ x: panel.x, y: 3.05, z: panel.z }, PANEL_W, 1.15, '#ffffff', { y: spec.yaw }, uv);
+    solid.box({ x: panel.x, y: 3.7, z: panel.z }, { x: PANEL_W + 0.2, y: 0.14, z: 0.22 }, '#2b3b33', { y: spec.yaw });
+    addPropCollider(px, pz, PANEL_W * 0.5, PANEL_T, 3.7, spec.yaw);
+  }
+
+  // Corridor street activity, anchored on the landmark each corridor is known
+  // for (college and mosque traffic on Ring Road; the graveyard/Eidgah end of
+  // Tajmahal Road). Every cart still passes canPlaceStall + building/tree checks.
+  for (const spot of planCorridorActivity()) {
+    if (!canPlaceStall(spot.x, spot.z, 1.35)) continue;
+    if (overlapsBuilding(spot.x, spot.z, 0.95, 0.62, spot.yaw)) continue;
+    if (treeSites.some((t) => Math.hypot(spot.x - t.x, spot.z - t.z) < 1.7)) continue;
+    const stallId = 1000 + breakableStalls.length;
+    setAllTags(stallId);
+    if (spot.kind === 'veg') buildFruitOrVegCart(spot.x, spot.z, spot.yaw, false);
+    else if (spot.kind === 'tea') buildTeaTong(spot.x, spot.z, spot.yaw);
+    else if (spot.kind === 'fuchka') buildFuchkaStall(spot.x, spot.z, spot.yaw);
+    else buildJhalmuriStall(spot.x, spot.z, spot.yaw);
+    setAllTags(-1);
+    const stallCol = colliders[colliders.length - 1];
+    const vendorSpot = vendorSpots[vendorSpots.length - 1];
+    stallCol.breakableId = stallId;
+    const bKind: BreakableKind =
+      spot.kind === 'veg' ? 'market' : (spot.kind as 'tea' | 'fuchka' | 'jhalmuri');
+    breakableStalls.push({
+      id: stallId, kind: bKind, x: spot.x, z: spot.z, yaw: spot.yaw,
+      collider: stallCol, slices: [], vendorSpot,
+    });
+  }
+
+  // --- Verified named storefront boards (v0.7.0) ---------------------------
+  // Each board carries the REAL business name for that OSM feature and appears
+  // only at that feature's projected position. Generic shopfront signs stay
+  // generic, so no building is ever labelled as a business it is not.
+  for (const shop of STOREFRONTS) {
+    const uv = signAtlas.storefrontSlot(shop.id);
+    if (!uv) continue;
+    // Snap the board onto the sidewalk apron of the nearest road, on the side
+    // the shop actually fronts.
+    const snap = snapToNearestRoad(shop.x, shop.z);
+    const seg = snap.segment;
+    const side =
+      (shop.x - seg.ax) * seg.leftX + (shop.z - seg.az) * seg.leftZ >= 0 ? 1 : -1;
+    const apron = seg.halfWidth + seg.sidewalk * 0.55;
+    const along = Math.max(
+      2,
+      Math.min(seg.length - 2, (shop.x - seg.ax) * seg.ux + (shop.z - seg.az) * seg.uz),
+    );
+    const bx = seg.ax + seg.ux * along + seg.leftX * apron * side;
+    const bz = seg.az + seg.uz * along + seg.leftZ * apron * side;
+    const yaw = Math.atan2(-seg.leftX * side, -seg.leftZ * side);
+    // Same rejection rules as every other board.
+    if (!isClearOfRoads(bx, bz, APRON_MIN_CLEARANCE)) continue;
+    if (overlapsBuilding(bx, bz, 1.6, 0.28, yaw)) continue;
+    if (treeSites.some((t) => Math.hypot(bx - t.x, bz - t.z) < 2.4)) continue;
+    // Bracketed signboard on the shopfront instead of a full gantry: this is a
+    // shop fascia, not a landmark entrance, so it must stay small and low.
+    signs.quad(
+      { x: bx, y: 3.0, z: bz },
+      3.2,
+      0.78,
+      '#ffffff',
+      { y: yaw },
+      uv,
+    );
+    solid.box({ x: bx, y: 3.46, z: bz }, { x: 3.3, y: 0.1, z: 0.16 }, '#2b2b2b', { y: yaw });
   }
 
   // Mohammadpur Bus Stand Passenger Waiting Shelter (`bus_stand` sidewalk pocket)

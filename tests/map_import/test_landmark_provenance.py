@@ -46,8 +46,16 @@ def parse_registry() -> list[dict]:
         block = text[start:end]
         rec: dict = {}
         rec["id"] = re.search(r"id: '([a-z_]+)'", block).group(1)
-        rec["nameEn"] = re.search(r"nameEn: '([^']+)'", block).group(1)
-        rec["nameBn"] = re.search(r"nameBn: '([^']+)'", block).group(1)
+        # Name literals may use single or double quotes (e.g. Queen's College
+        # contains an apostrophe and is written double-quoted).
+        def quoted(field: str) -> str:
+            m = re.search(rf"{field}: (['\"])(.*?)\1,", block)
+            if not m:
+                raise AssertionError(f"could not parse {field} in record {rec.get('id')}")
+            return m.group(2)
+
+        rec["nameEn"] = quoted("nameEn")
+        rec["nameBn"] = quoted("nameBn")
         rec["x"] = float(re.search(r"\n    x: (-?[\d.]+),", block).group(1))
         rec["z"] = float(re.search(r"\n    z: (-?[\d.]+),", block).group(1))
         src = re.search(

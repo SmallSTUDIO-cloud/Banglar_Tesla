@@ -131,19 +131,22 @@ so existing race waypoints still resolve.
 coordinates; market-apron vendor clustering (18 carts, ≥1.36 m off the asphalt);
 named Bengali entrance boards.
 
-**Open — blocks "milestone complete":**
+**Open:**
 
 | Issue | Detail |
 |---|---|
-| No visual verification | Chromium cannot be downloaded in this environment, so the new boards, cart clustering and marker moves were **never inspected in a browser**. Validated numerically only. |
-| No Android device test | No performance claim is made for mid-range hardware. |
+| No Android device test | No performance claim is made for mid-range hardware. Software-GL screenshots prove geometry, not frame rate. |
 
-**Pre-existing, left alone deliberately:**
+> Visual verification is no longer open: it was resolved later the same day.
+> See the "visual verification & marker audit" section below.
 
-- 12 of 14 `PLACES` markers sit **inside** the carriageway (−1.7 to −2.6 m),
-  because `makePlaceOnSegment` offsets by `halfWidth × 0.58`. They are marker
-  points, not geometry; changing them would move mission pickups. The two new
-  landmark-anchored places are the only ones clear of the asphalt.
+**Pre-existing issues, and what happened to them:**
+
+- 12 of 14 `PLACES` markers were **inside** the carriageway (−1.6 to −2.6 m),
+  because `makePlaceOnSegment` offset by `halfWidth × 0.58`. **Fixed** — all 12
+  were relocated to the curb line after auditing every consumer; `bazaar` and
+  `market` were landmark-anchored, already correct, and left alone. See
+  `GEOGRAPHIC_ACCURACY.md` section 10.
 - `vnext-race-timing.test.ts` was already failing its 5 s default timeout on
   untouched source (measured 5.26 / 5.36 / 6.99 s); it now declares 60 s.
 - `src/audio/audio.ts:735` tests for a place id `'shia'` that never existed in
@@ -177,3 +180,31 @@ and validates markers/boards against the live 849-collider building set.
 
 **Still open:** no Android device test; no performance claim. Procedural
 shopfront names are placeholders, not real businesses.
+
+### v0.7.0 corridor character (2026-11-08) — Ring Road & Tajmahal Road
+
+Full record: [`GEOGRAPHIC_ACCURACY.md`](./GEOGRAPHIC_ACCURACY.md) section 11.
+
+**Docs corrected in this pass:**
+
+| Was | Now |
+|---|---|
+| "12 of 14 markers sit inside the carriageway… left untouched" (section 8) | 12 were relocated to the curb line; `bazaar`/`market` were landmark-anchored and already correct |
+| Marker clearance quoted as "0.32–0.40 m" and, separately, "0.99–1.54 m" | 12 relocated markers: **+0.32 to +0.40 m**. 2 landmark-anchored markers: **+1.54 m** (bazaar) and **+1.21 m** (market). All 14 validated. |
+| Section 10 titled "all 12 relocated" | "12 relocated, all 14 validated", with the distinction spelled out |
+| "No matching OSM feature for the Shia mosque" | **Wrong.** Way 438545522 "Shia Jame Masjid" exists, 7.9 m from Ring Road |
+| "Open — blocks milestone complete: no visual verification" | Resolved; screenshots captured and inspected |
+
+**Added:** Ring Road / Tajmahal Road identity — Shia Jame Masjid, Mohammadpur
+Graveyard and Eidgah structures; corridor and storefront boards for 8 real named
+businesses; corridor-specific vendor activity.
+
+**Defect caught by rendering:** the mosque was seated after infill and overlapped
+a 15.25 m building by 5.6 x 2.9 m. Fixed by reserving landmark parcels before
+building generation; `test:geography` now asserts zero structure overlap.
+
+**Not built on purpose:** Tokyo Square and Queen's College are real but lie west
+of the playable world edge (−218). Marked `outsideWorld`; no geometry created.
+
+**Still open:** no Android device test and no FPS claim. Draw calls measured at
+169 with the corridor work merged into existing buckets (zero added draw calls).

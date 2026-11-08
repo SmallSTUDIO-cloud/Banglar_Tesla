@@ -22,6 +22,7 @@ import { clamp, mulberry32 } from '../core/mathx';
 import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
+import { planCorridorStructures } from './corridorIdentity';
 import { PosterAtlas } from './posterAtlas';
 import { EDUCATION_POSTERS, educationPosterTexture, snackPacketAtlas } from './streetPrint';
 import { DAMAGE_ZONES, roadDamageAt } from './roadDamage';
@@ -115,6 +116,19 @@ export interface CityResult {
   treeCount: number;
   treeSites: readonly { x: number; z: number }[];
   utilityPoleSites: readonly { x: number; z: number }[];
+  /**
+   * Verified corridor landmark structures actually built this session (Ring Road
+   * and Tajmahal Road). Exposed so the live geography validator can assert they
+   * never overlap a building. Empty when none could be seated.
+   */
+  landmarkStructures: readonly {
+    landmarkId: string;
+    kind: string;
+    x: number;
+    z: number;
+    halfX: number;
+    halfZ: number;
+  }[];
   interiorCount: number;
   courtyardCount: number;
   courtyardSites: readonly { x: number; z: number }[];
@@ -843,6 +857,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   }
   const placedBuildings: PlacedFootprint[] = [];
 
+
   // Static parcel broad phase: test only neighboring center cells before SAT.
   // This changes neither the ordered candidate set nor the overlap rule; it
   // avoids repeatedly scanning every apartment while filling narrow lots.
@@ -858,6 +873,25 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     if (!cell) { cell = []; parcelCells.set(key, cell); }
     cell.push(footprint);
   };
+
+  // --- Reserve verified landmark parcels before any building is generated ---
+  // Corridor landmarks (Ring Road Shia Jame Masjid, Tajmahal Road graveyard and
+  // Eidgah) are real places whose parcels procedural infill would otherwise
+  // occupy: seating the mosque *after* the frontage existed left it overlapping
+  // a 15.25 m block by 5.6 x 2.9 m. Registering the footprint through
+  // `addFootprint` (so the parcel broad phase sees it too) makes the landmark
+  // take precedence over generated infill, which is the correct ordering.
+  const corridorStructures = planCorridorStructures();
+  for (const st of corridorStructures) {
+    addFootprint({
+      x: st.x,
+      z: st.z,
+      halfX: st.halfX,
+      halfZ: st.halfZ,
+      yaw: st.yaw,
+      radius: Math.hypot(st.halfX, st.halfZ),
+    });
+  }
 
   // Bounding circles used to reject neighboring angled facades with large
   // empty wedges between their real footprints. A SAT test allows close,
@@ -1817,35 +1851,101 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       cx: tree.x, cz: tree.z, halfX: trunkHalf, halfZ: trunkHalf, yaw: 0 });
   }
 
-  // Iconic Mohammadpur Mosque Landmarks (Shia Mosque near Ring×Tajmahal & Satmasjid near Satmasjid Rd)
-  for (const mSpec of [
-    { x: -188, z: -34, color: '#f3efe4', dome: '#1e7b5a' },
-    { x: -34, z: 254, color: '#e6d3b5', dome: '#c59b48' },
-  ]) {
-    if (isFootprintClearOfCorridor(mSpec.x, mSpec.z, 12, 12, 0, 1.0)) {
-      const sIdx = sectorIndex(mSpec.x, mSpec.z);
-      const bDet = sectorDetails[sIdx];
-      bDet.box({ x: mSpec.x, y: 4.2, z: mSpec.z }, { x: 11.5, y: 8.4, z: 11.5 }, mSpec.color);
-      bDet.cone({ x: mSpec.x, y: 10.6, z: mSpec.z }, 3.8, 4.4, mSpec.dome);
+  // ---- Corridor landmark structures (v0.7.0 identity layer) --------------
+  // Ring Road and Tajmahal Road previously had no recognisable landmark at all.
+  // Each structure below is seated from a verified OSM feature (see
+  // `corridorIdentity.ts`), merged into the existing per-sector detail buckets so
+  // this adds NO draw calls, no new material and no new geometry family — which
+  // is what keeps it affordable on mid-range Android.
+  //
+  // Placement was already validated against road corridors before this point;
+  // the `isFootprintClearOfCorridor` re-check here is a belt-and-braces guard so
+  // no structure can ever be built into a carriageway.
+  const builtLandmarkStructures: CityResult['landmarkStructures'] = [];
+  for (const st of corridorStructures) {
+    if (!isFootprintClearOfCorridor(st.x, st.z, st.halfX * 2, st.halfZ * 2, st.yaw, 0.5)) continue;
+    (builtLandmarkStructures as unknown as Array<Record<string, unknown>>).push({
+      landmarkId: st.landmarkId,
+      kind: st.kind,
+      x: st.x,
+      z: st.z,
+      halfX: st.halfX,
+      halfZ: st.halfZ,
+    });
+    const bDet = sectorDetails[sectorIndex(st.x, st.z)];
+    const hx = st.halfX;
+    const hz = st.halfZ;
+
+    if (st.kind === 'mosque') {
+      // Compact neighbourhood mosque: prayer hall, dome, four corner minarets.
+      const bodyH = 6.4;
+      bDet.box({ x: st.x, y: bodyH / 2, z: st.z }, { x: hx * 2, y: bodyH, z: hz * 2 }, st.body, { y: st.yaw });
+      bDet.box({ x: st.x, y: bodyH + 0.15, z: st.z }, { x: hx * 2 + 0.2, y: 0.3, z: hz * 2 + 0.2 }, st.body, { y: st.yaw });
+      bDet.cone({ x: st.x, y: bodyH + 2.3, z: st.z }, Math.min(hx, hz) * 0.78, 2.6, st.accent);
       for (const [ox, oz] of [
-        [-5.2, -5.2],
-        [5.2, -5.2],
-        [-5.2, 5.2],
-        [5.2, 5.2],
+        [-hx + 0.5, -hz + 0.5],
+        [hx - 0.5, -hz + 0.5],
+        [-hx + 0.5, hz - 0.5],
+        [hx - 0.5, hz - 0.5],
       ]) {
-        bDet.cylinder({ x: mSpec.x + ox, y: 7.5, z: mSpec.z + oz }, 0.65, 15.0, mSpec.color);
-        bDet.cone({ x: mSpec.x + ox, y: 15.9, z: mSpec.z + oz }, 0.85, 1.9, mSpec.dome);
+        const mx = st.x + ox * Math.cos(st.yaw) + oz * Math.sin(st.yaw);
+        const mz = st.z - ox * Math.sin(st.yaw) + oz * Math.cos(st.yaw);
+        bDet.cylinder({ x: mx, y: bodyH * 0.72, z: mz }, 0.42, bodyH * 1.44, st.body);
+        bDet.cone({ x: mx, y: bodyH * 1.44 + 0.55, z: mz }, 0.56, 1.25, st.accent);
       }
-      colliders.push({
-        minX: mSpec.x - 6,
-        maxX: mSpec.x + 6,
-        minZ: mSpec.z - 6,
-        maxZ: mSpec.z + 6,
-        height: 15,
-        cameraBlocking: true,
-        kind: 'building',
+    } else if (st.kind === 'commercial') {
+      // Tokyo Square: stepped commercial mass with a signage band.
+      const h1 = 13.2;
+      bDet.box({ x: st.x, y: h1 / 2, z: st.z }, { x: hx * 2, y: h1, z: hz * 2 }, st.body, { y: st.yaw });
+      bDet.box({ x: st.x, y: h1 * 0.62, z: st.z }, { x: hx * 2 + 0.5, y: 1.5, z: hz * 2 + 0.5 }, st.accent, { y: st.yaw });
+      bDet.box({ x: st.x, y: h1 + 0.2, z: st.z }, { x: hx * 1.5, y: 0.4, z: hz * 1.5 }, '#9c9383', { y: st.yaw });
+      // Ground-floor colonnade, cheap: two lintel boxes.
+      bDet.box({ x: st.x, y: 3.1, z: st.z }, { x: hx * 2 + 0.7, y: 0.35, z: hz * 2 + 0.7 }, '#b9b2a3', { y: st.yaw });
+    } else if (st.kind === 'college') {
+      // Queen's College: long institutional block, low-pitch roof, portico.
+      const h2 = 10.6;
+      bDet.box({ x: st.x, y: h2 / 2, z: st.z }, { x: hx * 2, y: h2, z: hz * 2 }, st.body, { y: st.yaw });
+      bDet.box({ x: st.x, y: h2 + 0.55, z: st.z }, { x: hx * 2 + 0.6, y: 0.9, z: hz * 2 + 0.6 }, st.accent, { y: st.yaw });
+      // Entrance portico facing the road.
+      bDet.box({ x: st.x, y: 2.9, z: st.z }, { x: 4.6, y: 5.8, z: 1.4 }, '#eef0ec', { y: st.yaw });
+      bDet.box({ x: st.x, y: 6.1, z: st.z }, { x: 5.4, y: 0.45, z: 2.0 }, st.accent, { y: st.yaw });
+    } else if (st.kind === 'grave-yard') {
+      // Low boundary wall plus a scatter of headstones. No new materials.
+      const wallH = 1.15;
+      bDet.box({ x: st.x, y: wallH / 2, z: st.z }, { x: hx * 2, y: wallH, z: 0.22 }, st.body, { y: st.yaw });
+      bDet.box({ x: st.x, y: wallH / 2, z: st.z }, { x: 0.22, y: wallH, z: hz * 2 }, st.body, { y: st.yaw });
+      for (let i = 0; i < 7; i++) {
+        const ox = -hx + 1.4 + (i % 3) * (hx * 0.85);
+        const oz = -hz + 1.6 + Math.floor(i / 3) * (hz * 0.62);
+        const gx = st.x + ox * Math.cos(st.yaw) + oz * Math.sin(st.yaw);
+        const gz = st.z - ox * Math.sin(st.yaw) + oz * Math.cos(st.yaw);
+        bDet.box({ x: gx, y: 0.34, z: gz }, { x: 0.5, y: 0.68, z: 0.28 }, st.accent, { y: st.yaw });
+      }
+    } else {
+      // Eidgah: open prayer ground — paved slab, low wall, mihrab arch.
+      bDet.quad({ x: st.x, y: 0.06, z: st.z }, hx * 2, hz * 2, st.body, {
+        x: -Math.PI / 2,
+        y: st.yaw,
       });
+      bDet.box({ x: st.x, y: 0.55, z: st.z }, { x: hx * 2, y: 1.1, z: 0.2 }, st.accent, { y: st.yaw });
+      bDet.box({ x: st.x, y: 0.55, z: st.z }, { x: 0.2, y: 1.1, z: hz * 2 }, st.accent, { y: st.yaw });
+      // Mihrab niche: two piers plus a lintel.
+      for (const side of [-1, 1]) {
+        const px2 = st.x + side * 1.5;
+        bDet.box({ x: px2, y: 1.6, z: st.z }, { x: 0.45, y: 3.2, z: 0.5 }, st.body);
+      }
+      bDet.box({ x: st.x, y: 3.4, z: st.z }, { x: 3.6, y: 0.45, z: 0.55 }, st.accent);
     }
+
+    colliders.push({
+      minX: st.x - hx - 0.3,
+      maxX: st.x + hx + 0.3,
+      minZ: st.z - hz - 0.3,
+      maxZ: st.z + hz + 0.3,
+      height: st.kind === 'commercial' ? 13.2 : st.kind === 'college' ? 11 : 8,
+      cameraBlocking: true,
+      kind: 'building',
+    });
   }
 
   // Overhead Dhaka utility cables chunked by 6x6 sector so off-screen wires
@@ -2240,6 +2340,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     potholeDepthAt,
     roadDamageAt,
     heightAt,
+    landmarkStructures: builtLandmarkStructures,
     lampPositions,
     signAnchors,
     spawn: { ...WORLD.playerSpawn },

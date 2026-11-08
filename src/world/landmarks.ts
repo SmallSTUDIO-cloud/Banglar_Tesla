@@ -61,7 +61,7 @@ export interface Landmark {
   nameEn: string;
   nameBn: string;
   /** Coarse category used to pick signage and street activity. */
-  category: 'market' | 'camp' | 'mosque' | 'road';
+  category: 'market' | 'camp' | 'mosque' | 'road' | 'civic' | 'ground';
   /** Projected OSM coordinate, in game units. */
   x: number;
   z: number;
@@ -78,6 +78,13 @@ export interface Landmark {
   frontageSide?: 1 | -1;
   /** Road segment the frontage opens onto. */
   frontageSegmentId?: string;
+  /**
+   * True when the feature is real but lies outside the playable world extent
+   * (x -218..242, z -256..248). Such a landmark is kept for provenance and for
+   * any future map expansion, but no geometry is built for it — building outside
+   * the world would put a structure in empty void.
+   */
+  outsideWorld?: boolean;
   /**
    * Human-readable provenance / uncertainty note. Required whenever
    * `confidence` is `approx`, and used to explain known OSM data conflicts.
@@ -138,7 +145,78 @@ export const LANDMARKS: Landmark[] = [
     z: 110.02,
     source: { osmId: 3030299890, osmType: 'node', lat: 23.7596499, lon: 90.3654123 },
     confidence: 'verified',
-    note: 'OSM node 3030299890 "Town Hall Mosque", part of the Town Hall Bazar complex on Asad Avenue. Deliberately NOT labelled a Shia mosque: the separate Shia mosque near Ring Road x Tajmahal Road is a different place and has no matching feature in this extract.',
+    note: 'OSM node 3030299890 "Town Hall Mosque", part of the Town Hall Bazar complex on Asad Avenue.',
+  },
+
+  // ------------------------------------------------ Ring Road corridor (v0.7.0)
+  {
+    id: 'shia_jame_masjid',
+    nameEn: 'Shia Jame Masjid',
+    nameBn: 'শিয়া জামে মসজিদ',
+    category: 'mosque',
+    x: -201.32,
+    z: 11.79,
+    source: { osmId: 438545522, osmType: 'way', lat: 23.762105275, lon: 90.359111125 },
+    confidence: 'verified',
+    frontageSide: -1,
+    frontageSegmentId: 'ring_2',
+    note: 'OSM way 438545522 "Shia Jame Masjid", tagged landuse=religious, 7.9 m west of Ring Road on ring_2 — the segment already flagged as the "Ring Road Shia Mosque Overpass crest" in city.ts. All 5 polygon vertices agree on the same side of the road. This CORRECTS an earlier claim in docs/GEOGRAPHIC_ACCURACY.md that no matching feature existed in the extract.',
+  },
+  {
+    id: 'tokyo_square',
+    nameEn: 'Tokyo Square',
+    nameBn: 'টোকিও স্কয়ার',
+    category: 'civic',
+    x: -226.46,
+    z: -101.73,
+    source: { osmId: 367227689, osmType: 'way', lat: 23.764942675, lon: 90.3584258 },
+    confidence: 'verified',
+    frontageSide: 1,
+    frontageSegmentId: 'ring_3',
+    outsideWorld: true,
+    note: 'OSM way 367227689 "টোকিও স্কোয়ার", tagged building=commercial. Corroborated by node 5477461196 (টোকিও স্কয়ার, shop=mall) and node 11993579518 (Tokyo Square Convention Center) both within ~15 m. All 5 polygon vertices agree on the side. OUTSIDE THE PLAYABLE WORLD (x = -226.5 vs west edge -218), so no geometry is built; Ring Road identity therefore comes from its in-bounds commercial strip instead.',
+  },
+  {
+    id: 'queens_college',
+    nameEn: "Queen's College",
+    nameBn: 'কুইন্স কলেজ',
+    category: 'civic',
+    x: -233.09,
+    z: -139.8,
+    source: { osmId: 293506381, osmType: 'way', lat: 23.7658943, lon: 90.35824485 },
+    confidence: 'verified',
+    frontageSide: 1,
+    frontageSegmentId: 'ring_4',
+    outsideWorld: true,
+    note: "OSM way 293506381 \"Queen's College\", tagged amenity=college on Ring Road. All 5 polygon vertices agree on the side. Note OSM also has separate north-campus features (369590077/369590726) ~700 m away which are a different campus and are not used here.",
+  },
+
+  // ------------------------------------------- Tajmahal Road corridor (v0.7.0)
+  {
+    id: 'mohammadpur_graveyard',
+    nameEn: 'Mohammadpur Graveyard',
+    nameBn: 'মোহাম্মাদপুর কবরস্থান',
+    category: 'ground',
+    x: -50.56,
+    z: -37.45,
+    source: { osmId: 439202876, osmType: 'way', lat: 23.763335975, lon: 90.363221575 },
+    confidence: 'verified',
+    frontageSide: -1,
+    frontageSegmentId: 'tajmahal_4',
+    note: 'OSM way 439202876 "মোহাম্মাদপুর কবরস্থান", tagged amenity=grave_yard, 10.6 m from Tajmahal Road. All 5 polygon vertices agree on the side. Note the extract also contains রায়েরবাজার কবরস্থান (325439119) far to the south-west; that is a different burial ground and is not used.',
+  },
+  {
+    id: 'mohammadpur_eidgah',
+    nameEn: 'Mohammadpur Eidgah Ground',
+    nameBn: 'মোহাম্মাদপুর ঈদগাহ মাঠ',
+    category: 'ground',
+    x: -25.76,
+    z: -37.66,
+    source: { osmId: 297224497, osmType: 'way', lat: 23.763341325, lon: 90.36389775 },
+    confidence: 'verified',
+    frontageSide: -1,
+    frontageSegmentId: 'tajmahal_4',
+    note: 'OSM way 297224497 "মোহাম্মাদপুর ঈদগাহ", tagged landuse=recreation_ground; the open Eid prayer ground immediately east of the graveyard. All 5 polygon vertices agree on the side. Only the ground is modelled — no invented structures.',
   },
 ];
 

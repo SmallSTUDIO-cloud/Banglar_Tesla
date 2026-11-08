@@ -92,12 +92,31 @@ describe('landmark registry', () => {
 });
 
 describe('landmark placement', () => {
-  it('every landmark projects inside the playable world', () => {
+  it('every landmark is inside the playable world OR marked outsideWorld', () => {
     for (const landmark of LANDMARKS) {
-      expect(landmark.x).toBeGreaterThan(WORLD.minX);
-      expect(landmark.x).toBeLessThan(WORLD.maxX);
-      expect(landmark.z).toBeGreaterThan(WORLD.minZ);
-      expect(landmark.z).toBeLessThan(WORLD.maxZ);
+      const inside =
+        landmark.x > WORLD.minX &&
+        landmark.x < WORLD.maxX &&
+        landmark.z > WORLD.minZ &&
+        landmark.z < WORLD.maxZ;
+      if (!inside) {
+        // A landmark beyond the map edge must say so explicitly, so nothing
+        // attempts to build geometry into empty void.
+        expect(landmark.outsideWorld, `${landmark.id} is outside the world but not marked`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it('only marks landmarks outsideWorld when they really are', () => {
+    for (const landmark of LANDMARKS.filter((l) => l.outsideWorld)) {
+      const inside =
+        landmark.x > WORLD.minX &&
+        landmark.x < WORLD.maxX &&
+        landmark.z > WORLD.minZ &&
+        landmark.z < WORLD.maxZ;
+      expect(inside, `${landmark.id} marked outsideWorld but is inside`).toBe(false);
     }
   });
 });

@@ -106,8 +106,34 @@ const report = await page.evaluate(() => {
     })
     .filter(Boolean);
 
+  // Corridor landmark structures must never overlap an existing building.
+  const structures = g.city.landmarkStructures || [];
+  const structureOverlaps = [];
+  for (const st of structures) {
+    for (const c of buildings) {
+      // Skip the structure's own collider (matched by centre).
+      const ccx = (c.minX + c.maxX) / 2;
+      const ccz = (c.minZ + c.maxZ) / 2;
+      if (Math.hypot(ccx - st.x, ccz - st.z) < 0.2) continue;
+      const ox = Math.min(st.x + st.halfX, c.maxX) - Math.max(st.x - st.halfX, c.minX);
+      const oz = Math.min(st.z + st.halfZ, c.maxZ) - Math.max(st.z - st.halfZ, c.minZ);
+      // A neighbouring block that merely touches edges is fine; >0.3 m of real
+      // overlap means the landmark was built into an existing building.
+      if (ox > 0.3 && oz > 0.3) {
+        structureOverlaps.push({
+          landmarkId: st.landmarkId,
+          overlapX: +ox.toFixed(2),
+          overlapZ: +oz.toFixed(2),
+        });
+      }
+    }
+  }
+
   return {
     markerCount: g.city.placeAnchors.size,
+    landmarkStructureCount: structures.length,
+    landmarkStructures: structures.map((s) => s.landmarkId),
+    structureOverlaps,
     markersInGeometry: markers,
     boardColliderCount: boardColliders.length,
     boardsInBuildings,
@@ -122,6 +148,8 @@ report.ok =
   report.markersInGeometry.length === 0 &&
   report.boardsInBuildings.length === 0 &&
   report.boardColliderCount >= 2 &&
+  report.structureOverlaps.length === 0 &&
+  report.landmarkStructureCount >= 3 &&
   pageErrors.length === 0;
 
 console.log(JSON.stringify(report, null, 2));
