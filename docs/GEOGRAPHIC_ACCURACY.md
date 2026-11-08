@@ -80,6 +80,42 @@ Place markers and entrance boards are then placed on the sidewalk apron
 (`halfWidth + sidewalk × 0.55`), which puts them **outside** the asphalt while
 still reading as the shopfront the player drives past.
 
+## 4a. The road network is NOT derived from OSM (measured 2026-11-08)
+
+`src/world/mohammadpurData.ts` previously claimed that "core road connectivity,
+street alignments, junction topology" were derived from OpenStreetMap. **That
+claim was false** and has been corrected in the file header. Measured against
+`mohammadpur.osm.json`:
+
+| | Real OSM extract | Game graph |
+| --- | --- | --- |
+| Ways | 1,610 | 70 segments |
+| Road length inside playable bounds | 16.2 km | 5.5 km (**34 %**) |
+| Vertices | 8,273 | 42 hand-typed nodes |
+| Curvature | real | none — straight chords |
+
+What *is* accurate:
+
+- Every one of the 70 segment midpoints lies within **25 m** of a real OSM road
+  polyline (median **5 m**, max 19 m). The corridors are real corridors.
+- Road **names** are real and verified in the extract.
+
+What is not:
+
+- Geometry is a straight-line skeleton, so junctions do not land where real
+  junctions do and curves are lost.
+- **Two thirds of the network length is missing** — the dense residential galis
+  and internal lanes that give Mohammadpur its fabric. This is why the world
+  reads as a coarse lattice rather than a Dhaka neighbourhood.
+- 21 of the 70 segments are explicitly procedural (`approx_lane`).
+
+Landmark coordinates are unaffected by this and remain exact (§2, 5 mm).
+
+A side-by-side render of the real projected network against the game graph is
+committed at `artifacts/map-compare.png` (regenerate with the script noted in
+that folder's history). **Do not describe the map as a faithful reproduction of
+Mohammadpur until the road graph is generated from the OSM extract.**
+
 ## 5. Known OSM data conflicts (documented, not silently resolved)
 
 - **Geneva Camp has two conflicting polygons.** Way 302622554 and node

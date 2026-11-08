@@ -2,17 +2,33 @@
  * Offline Mohammadpur (Dhaka-1207) street-network & landmark dataset.
  *
  * Licensing & Honesty Note:
- * - Core road connectivity, street alignments, junction topology, road classes,
- *   and landmark locations are derived from OpenStreetMap data for Mohammadpur,
- *   Dhaka ("Data © OpenStreetMap contributors, licensed under ODbL 1.0",
- *   https://www.openstreetmap.org/copyright), projected around (23.7624°N,
- *   90.3646°E) at a compact 0.36x urban gameplay scale so players experience
- *   continuous Dhaka street density without multi-kilometre empty stretches.
- * - Segments with `source: 'osm'` correspond to verified OpenStreetMap ways
- *   (OSM way IDs recorded below). Segments with `source: 'approx_lane'` are
- *   clearly marked procedural residential connectors / narrow galis added for
- *   loop continuity and tactical jam detours, never mislabelled as exact survey
- *   ways. All buildings, shopfronts and props are procedural approximations.
+ *
+ * This is **not** a survey-accurate reproduction of Mohammadpur's street
+ * network, and it must not be described as one.
+ *
+ * - **Node coordinates below are hand-placed**, not generated from OSM. They
+ *   were placed by eye to trace real OSM road corridors, then connected into
+ *   straight chords. Measured against `data/mohammadpur/mohammadpur.osm.json`
+ *   (1610 ways / 8273 vertices / 16.2 km of road inside the playable bounds):
+ *     - every one of the 70 segment midpoints lies within 25 m of a real road
+ *       polyline (median 5 m), so the corridors are real;
+ *     - the graph is a straight-line approximation with no curvature;
+ *     - it contains 5.5 km against 16.2 km real, i.e. **~34 % of network
+ *       length**. The dense residential galis that give Mohammadpur its fabric
+ *       are absent, which is why the world reads as a coarse lattice.
+ * - Segments marked `source: 'osm'` follow a real corridor but carry no verified
+ *   per-vertex survey geometry; the `osmWayId` records which way the corridor
+ *   came from. Segments marked `source: 'approx_lane'` (21 of 70) are purely
+ *   procedural connectors added for loop continuity and jam detours.
+ * - Road *names* are real (verified in the OSM extract, several only tagged in
+ *   Bengali: সাতমসজিদ রোড, ইকবাল রোড, বাবর রোড). Road *geometry* is not.
+ * - Only landmark coordinates in `src/world/landmarks.ts` are exact: they are
+ *   re-derived from stored OSM lat/lon to within 5 mm by unit tests.
+ * - All buildings, shopfronts and props are procedural approximations.
+ *
+ * Data © OpenStreetMap contributors, ODbL 1.0
+ * (https://www.openstreetmap.org/copyright), projected around (23.7624°N,
+ * 90.3646°E) at a compact 0.36x urban gameplay scale.
  */
 
 export type OsmSourceKind = 'osm' | 'approx_lane';
