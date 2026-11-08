@@ -38,6 +38,8 @@ import { SafeDetourProgress, isUnsafeClosePass } from './gameplay/roadDecisions'
 import { GameTimeSystem } from './world/timeSystem';
 import { DriverMirrors } from './vehicle/driverMirrors';
 import { WheelSplashes } from './world/wheelSplashes';
+import { poiById, type Poi } from './world/poiRegistry';
+import { buildRoute, straightDistance, type RouteResult } from './world/mapRouting';
 import { ArcadeVfxSystem, classifyCrashTier } from './world/arcadeVfx';
 import { DevColliderDebugView } from './world/colliderDebug';
 import { Showroom } from './world/showroom';
@@ -99,6 +101,10 @@ export class Game implements UIBridge {
   readonly input: InputManager;
   readonly audio = audio;
   readonly settings: SettingsStore;
+  /** Map destination set by the player, or null. Never warps the rickshaw. */
+  private destination: Poi | null = null;
+  private destinationRoute: RouteResult | null = null;
+  private destinationRouteAt = 0;
   readonly state: GameState;
   readonly ui: AppUI;
   readonly devPerf: DevPerfOverlay;
@@ -1345,6 +1351,13 @@ export class Game implements UIBridge {
     // -------- HUD
     this.hudTick += dt;
     this.updateHud(derived.isElectric);
+
+    // Destination guidance: re-path against the live graph and refresh the
+    // distance readout. The map is open => skip, the overlay covers the HUD.
+    if (this.destination) {
+      this.refreshDestinationRoute();
+      this.updateDestinationGuidance();
+    }
 
     // -------- persistence
     this.lastSave += dt;
@@ -3043,6 +3056,59 @@ export class Game implements UIBridge {
     this.chase.setMode(mode);
     this.player.setCockpitVisibility(this.mode !== 'menu' && mode === 'cockpit');
     this.ui.updateCameraBadge(mode);
+  }
+
+  /** Live pose for the map screen. Read-only. */
+  getMapPlayerPose(): { x: number; z: number; yaw: number } {
+    return { x: this.controller.x, z: this.controller.z, yaw: this.controller.yaw };
+  }
+
+  currentDestinationId(): string | null {
+    return this.destination?.id ?? null;
+  }
+
+  /**
+   * Sets a map destination. The route is recomputed from the player's current
+   * position against the live road graph; nothing about the world changes and
+   * the rickshaw is never moved.
+   */
+  setMapDestination(poiId: string): void {
+    const poi = poiById(poiId);
+    if (!poi) return;
+    this.destination = poi;
+    this.refreshDestinationRoute(true);
+    this.updateDestinationGuidance();
+    this.ui.updateDestinationHud({ nameBn: poi.nameBn, distance: this.destinationRoute?.distance });
+  }
+
+  clearMapDestination(): void {
+    this.destination = null;
+    this.destinationRoute = null;
+    this.ui.updateDestinationHud(null);
+  }
+
+  private refreshDestinationRoute(force = false): void {
+    if (!this.destination) {
+      this.destinationRoute = null;
+      return;
+    }
+    // Re-path at most a few times a second; the graph is small, but the HUD must
+    // stay smooth while driving.
+    const now = performance.now();
+    if (!force && now - this.destinationRouteAt < 400) return;
+    this.destinationRouteAt = now;
+    const pose = this.getMapPlayerPose();
+    this.destinationRoute = buildRoute({ x: pose.x, z: pose.z }, { x: this.destination.x, z: this.destination.z });
+  }
+
+  /** Keeps the HUD chip's distance live without rebuilding the DOM. */
+  private updateDestinationGuidance(): void {
+    if (!this.destination) return;
+    const pose = this.getMapPlayerPose();
+    const remaining = this.destinationRoute
+      ? this.destinationRoute.distance
+      : straightDistance({ x: pose.x, z: pose.z }, { x: this.destination.x, z: this.destination.z });
+    this.ui.updateDestinationHud({ nameBn: this.destination.nameBn, distance: remaining });
   }
 
   hasSave(): boolean {
