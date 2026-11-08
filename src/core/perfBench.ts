@@ -26,6 +26,7 @@
 import type * as THREE from 'three';
 import type { Game } from '../game';
 import type { QualityPreset } from './config';
+import { APP_BUILD, APP_BUILD_LABEL } from './version';
 
 /** The benchmarked street section: Asad Avenue through Town Hall Bazar. */
 export const BENCH_SECTION = {
@@ -67,6 +68,7 @@ export interface BenchRun {
 }
 
 export interface BenchReport {
+  build: string;
   device: {
     userAgent: string;
     hardwareConcurrency: number | null;
@@ -227,6 +229,7 @@ async function runPreset(game: Game, preset: QualityPreset): Promise<BenchRun> {
 function reportToText(report: BenchReport): string {
   const lines: string[] = [];
   lines.push('BANGLAR TESLA — DEVICE BENCHMARK');
+  lines.push(`build:     ${report.build}  (sha ${APP_BUILD})`);
   lines.push(`generated: ${report.generatedAt}`);
   lines.push(`section:   ${report.section}`);
   lines.push('');
@@ -323,6 +326,7 @@ export async function runDeviceBenchmark(
   const presets = opts.preset ? [opts.preset] : PRESETS;
 
   const report: BenchReport = {
+    build: APP_BUILD_LABEL,
     device: deviceInfo(game, canvas),
     section: BENCH_SECTION.name,
     runs: [],

@@ -119,7 +119,16 @@ To unblock, the measurement has to run on the real device. `src/core/perfBench.t
 for exactly that. There are two ways in:
 
 **A. Test APK (recommended — no server, no URL editing).** A debug-signed APK is published
-as a GitHub pre-release tagged `v0.6.7-test.bench-graphics-baseline`. Install it, then:
+as a GitHub pre-release tagged `v0.6.7-test.bench-<short sha>`.
+
+> **Checking which build you are running.** The Android wrapper reports the same version
+> string for every build, so `v0.6.7` alone identifies nothing. The main-menu footer shows
+> the short commit SHA beside the version (`v0.6.7 · 72d259d`). **If your menu footer shows
+> no SHA, you are running an older APK**, not this one. The SHA is also printed at the top of
+> the benchmark report. Android refuses to install over an app signed with a different debug
+> key, so uninstall any previous version first.
+
+Install it, then:
 
 1. Open the app and reach the main menu.
 2. **Tap the version label at the bottom of the menu five times quickly.**
@@ -167,11 +176,17 @@ gameplay. New in this commit, and nothing else:
 | `src/core/perfBench.ts` | on-device harness (new, lazy-loaded chunk) |
 | `src/game.ts` | `debugSetFreeCamera()` public setter (the only `src/` change to existing code) |
 | `src/main.ts` | opt-in `?bench=1` hook after `start()` |
+| `src/core/version.ts`, `src/build.d.ts`, `vite.config.ts` | build SHA stamp, shown in the menu and the benchmark report |
 | `docs/GRAPHICS_BASELINE.md` | this document |
 
-The `?bench=1` path is a dynamic `import()`, so it ships as a separate 2.60 kB gzip chunk
+The `?bench=1` path is a dynamic `import()`, so it ships as a separate 2.67 kB gzip chunk
 and is not downloaded on a normal boot. It never writes to saved settings: the player's
 quality preset is captured before the run and restored afterwards.
+
+Build identity is injected at build time (`vite.config.ts` → `__BT_BUILD__`, surfaced by
+`src/core/version.ts`). It was added after the first test APK proved unidentifiable on a
+phone: same `versionCode 11`, same `versionName 0.6.7`, same menu text as the previous
+release, so a failed install-over looked identical to a successful one.
 
 ## 6. Next steps (gated on §4)
 

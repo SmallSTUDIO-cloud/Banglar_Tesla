@@ -7,7 +7,7 @@
 import { t, getLocale, setLocale, STRING_KEYS, type Locale } from '../core/i18n';
 import { formatDistance, formatTaka, clamp, clamp01 } from '../core/mathx';
 import { QUALITY, type CameraMode, type QualityPreset } from '../core/config';
-import { APP_VERSION } from '../core/version';
+import { APP_VERSION, APP_BUILD } from '../core/version';
 import type { Settings, SettingsStore } from '../core/settings';
 import type { GameState } from '../core/gameState';
 import type { InputManager } from '../core/input';
@@ -503,6 +503,10 @@ export class AppUI {
 
     const meta = h('div', { class: 'menu-meta' },
       versionSpan,
+      h('span', { text: '·' }),
+      // Build identity: the only way to tell two APKs apart, since the wrapper
+      // always reports the same version label.
+      h('span', { text: APP_BUILD, attrs: { id: 'menu-build', title: 'build' } }),
       h('span', { text: '·' }),
       h('span', { text: t('menu.district') }),
       h('span', { text: '·' }),
