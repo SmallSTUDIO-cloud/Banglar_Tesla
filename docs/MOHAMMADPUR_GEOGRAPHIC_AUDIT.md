@@ -161,8 +161,8 @@ distance, not vertex distance):
 | within 25 m | **57 / 70** |
 | within 50 m | 68 / 70 |
 
-So the corridors trace real streets — 57 of 70 are within one carriageway width
-and a bit of a real road, and the worst is 52.6 m. **Yes, the corridors are real.**
+So the corridors trace real streets — 57 of 70 midpoints are within 25 m of a
+real road, and the worst is 52.6 m. **Yes, the corridors are real.**
 
 The header of `mohammadpurData.ts` claims "every one of the 70 segment midpoints
 lies within 25 m of a real road polyline (median 5 m)". **That does not
