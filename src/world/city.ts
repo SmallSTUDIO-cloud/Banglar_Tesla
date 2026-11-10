@@ -389,18 +389,20 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     const trimEnd = Math.max(trimStart, seg.length - 8.5);
     if (seg.kind !== 'gali' && trimEnd - trimStart > 8) {
       for (let d = trimStart; d <= trimEnd - 2.5; d += 6.2) {
-        const px = seg.ax + seg.ux * (d + 1.4);
-        const pz = seg.az + seg.uz * (d + 1.4);
+        const pf1 = placementAt(seg, (d + 1.4), 0);
+        const px = pf1.x;
+        const pz = pf1.z;
         bRoad.box({ x: px, y: 0.016, z: pz }, { x: 0.13, y: 0.003, z: 2.6 }, '#e6e2d3', { y: yaw });
       }
     }
     if (seg.kind === 'main' && trimEnd - trimStart > 8) {
       const innerLen = trimEnd - trimStart;
-      const imx = seg.ax + seg.ux * (trimStart + innerLen * 0.5);
-      const imz = seg.az + seg.uz * (trimStart + innerLen * 0.5);
+      const pf2 = placementAt(seg, (trimStart + innerLen * 0.5), 0);
+      const imx = pf2.x;
+      const imz = pf2.z;
       for (const side of [-1, 1]) {
-        const ex = imx + seg.leftX * (seg.halfWidth - 0.38) * side;
-        const ez = imz + seg.leftZ * (seg.halfWidth - 0.38) * side;
+        const ex = imx + pf2.leftX * (seg.halfWidth - 0.38) * side;
+        const ez = imz + pf2.leftZ * (seg.halfWidth - 0.38) * side;
         bRoad.box({ x: ex, y: 0.016, z: ez }, { x: 0.11, y: 0.003, z: innerLen }, '#e0b94c', { y: yaw });
       }
     }
@@ -411,13 +413,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       { dist: seg.length - 9.2, active: seg.kind === 'main' && seg.length > 34 },
     ]) {
       if (!end.active) continue;
-      const zx = seg.ax + seg.ux * end.dist;
-      const zz = seg.az + seg.uz * end.dist;
+      const pf3 = placementAt(seg, end.dist, 0);
+      const zx = pf3.x;
+      const zz = pf3.z;
       const stripes = Math.floor((seg.width - 1.4) / 0.85);
       for (let s = 0; s < stripes; s++) {
         const off = -((stripes - 1) * 0.5) * 0.85 + s * 0.85;
         bRoad.box(
-          { x: zx + seg.leftX * off, y: 0.017, z: zz + seg.leftZ * off },
+          { x: zx + pf3.leftX * off, y: 0.017, z: zz + pf3.leftZ * off },
           { x: 0.42, y: 0.003, z: 2.1 },
           '#ece8da',
           { y: yaw },
@@ -434,12 +437,15 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       const kerbCenter = (seg.halfWidth + 0.09) * side;
       for (let i = 0; i < steps; i++) {
         const along = (i + 0.5) * actualLen;
-        const sx = seg.ax + seg.ux * along + seg.leftX * lateralCenter;
-        const sz = seg.az + seg.uz * along + seg.leftZ * lateralCenter;
-        const s0x = seg.ax + seg.ux * (along - actualLen * 0.44) + seg.leftX * lateralCenter;
-        const s0z = seg.az + seg.uz * (along - actualLen * 0.44) + seg.leftZ * lateralCenter;
-        const s1x = seg.ax + seg.ux * (along + actualLen * 0.44) + seg.leftX * lateralCenter;
-        const s1z = seg.az + seg.uz * (along + actualLen * 0.44) + seg.leftZ * lateralCenter;
+        const pf4 = placementAt(seg, along, lateralCenter);
+        const sx = pf4.x;
+        const sz = pf4.z;
+        const pf5 = placementAt(seg, (along - actualLen * 0.44), lateralCenter);
+        const s0x = pf5.x;
+        const s0z = pf5.z;
+        const pf6 = placementAt(seg, (along + actualLen * 0.44), lateralCenter);
+        const s1x = pf6.x;
+        const s1z = pf6.z;
         // Skip slab if ANY part of it would intrude into a crossing carriageway or junction!
         if (
           distanceToRoadCarriageway(sx, sz) < seg.sidewalk * 0.38 ||
@@ -455,8 +461,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           { y: yaw },
         );
         // Black-and-white / yellow-and-black painted Dhaka concrete kerb stone!
-        const kx = seg.ax + seg.ux * along + seg.leftX * kerbCenter;
-        const kz = seg.az + seg.uz * along + seg.leftZ * kerbCenter;
+        const pf7 = placementAt(seg, along, kerbCenter);
+        const kx = pf7.x;
+        const kz = pf7.z;
         const kerbCol = seg.kind === 'main' ? (i % 2 === 0 ? '#e6ebe8' : '#23282d') : '#7b756b';
         bWalk.box({ x: kx, y: 0.055, z: kz }, { x: 0.18, y: 0.11, z: actualLen + 0.02 }, kerbCol, { y: yaw });
       }
@@ -476,8 +483,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     const crestH = CREST_HEIGHT_BY_SEG[seg.id] ?? 0;
     if (crestH > 0 && seg.length >= 46) {
       const cd = seg.length * 0.5;
-      const cxp = seg.ax + seg.ux * cd;
-      const czp = seg.az + seg.uz * cd;
+      const pf8 = placementAt(seg, cd, 0);
+      const cxp = pf8.x;
+      const czp = pf8.z;
       const crestDepth = Math.min(26, seg.length - 20);
       humps.push({
         x: cxp,
@@ -508,8 +516,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       }
       // Low painted concrete culvert guard-kerbs strictly outside the carriageway!
       for (const side of [-1, 1] as const) {
-        const px = cxp + seg.leftX * (seg.halfWidth + 0.32) * side;
-        const pz = czp + seg.leftZ * (seg.halfWidth + 0.32) * side;
+        const px = cxp + pf8.leftX * (seg.halfWidth + 0.32) * side;
+        const pz = czp + pf8.leftZ * (seg.halfWidth + 0.32) * side;
         if (isClearOfRoads(px, pz, 0.15)) {
           bWalk.box(
             { x: px, y: crestH * 0.55 + 0.24, z: pz },
@@ -530,8 +538,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     // Speed breakers on busy approaches (never inside junctions or on culvert crests)
     if (crestH === 0 && seg.length > 44 && (seg.jamProne || seg.kind === 'medium') && rng() < 0.46) {
       const hd = seg.length * (0.42 + rng() * 0.16);
-      const hx = seg.ax + seg.ux * hd;
-      const hz = seg.az + seg.uz * hd;
+      const pf9 = placementAt(seg, hd, 0);
+      const hx = pf9.x;
+      const hz = pf9.z;
       const hHeight = seg.kind === 'main' ? 0.058 : 0.065;
       humps.push({
         x: hx,
@@ -553,7 +562,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       for (let c = 0; c < chevronCount; c++) {
         const off = -((chevronCount - 1) * 0.5) * 0.9 + c * 0.9;
         bRoad.box(
-          { x: hx + seg.leftX * off, y: hHeight + 0.012, z: hz + seg.leftZ * off },
+          { x: hx + pf9.leftX * off, y: hHeight + 0.012, z: hz + pf9.leftZ * off },
           { x: 0.38, y: 0.005, z: 1.25 },
           c % 2 === 0 ? '#f2be38' : '#f2efe4',
           { y: yaw },
@@ -566,8 +575,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     for (let m = 0; m < numManholes; m++) {
       const d = 12 + ((m + 0.45) / numManholes) * Math.max(8, seg.length - 24);
       const off = (rng() - 0.5) * (seg.width * 0.42);
-      const mxp = seg.ax + seg.ux * d + seg.leftX * off;
-      const mzp = seg.az + seg.uz * d + seg.leftZ * off;
+      const pf10 = placementAt(seg, d, off);
+      const mxp = pf10.x;
+      const mzp = pf10.z;
       // Outer concrete collar + dark cast-iron WASA manhole lid + waffle inner ring (flush at y = 0.018!)
       bWalk.cylinder({ x: mxp, y: 0.013, z: mzp }, 0.52, 0.012, '#6d6960');
       bMetal.cylinder({ x: mxp, y: 0.017, z: mzp }, 0.40, 0.012, '#3a342f');
@@ -578,8 +588,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
       // Roadside cast-iron storm-drain grate right next to the left/right curb!
       const side = m % 2 === 0 ? 1 : -1;
-      const gx = seg.ax + seg.ux * d + seg.leftX * (seg.halfWidth - 0.34) * side;
-      const gz = seg.az + seg.uz * d + seg.leftZ * (seg.halfWidth - 0.34) * side;
+      const pf11 = placementAt(seg, d, (seg.halfWidth - 0.34) * side);
+      const gx = pf11.x;
+      const gz = pf11.z;
       bMetal.box({ x: gx, y: 0.016, z: gz }, { x: 0.46, y: 0.01, z: 0.78 }, '#22262a', { y: yaw });
       for (let sl = -2; sl <= 2; sl++) {
         const sx = gx + seg.ux * sl * 0.13;
@@ -593,8 +604,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     for (let w = 0; w < wearCount; w++) {
       const d = 10 + rng() * Math.max(6, seg.length - 20);
       const off = (rng() - 0.5) * (seg.width * 0.65);
-      const wx = seg.ax + seg.ux * d + seg.leftX * off;
-      const wz = seg.az + seg.uz * d + seg.leftZ * off;
+      const pf12 = placementAt(seg, d, off);
+      const wx = pf12.x;
+      const wz = pf12.z;
       const roll = rng();
       if (roll < 0.38) {
         // Dark fresh bitumen repair patch + tar seam border
@@ -609,8 +621,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       } else if (roll < 0.66) {
         // Repaired zigzag tar road crack
         for (let c = 0; c < 4; c++) {
-          const cx = wx + seg.ux * c * 0.55 + seg.leftX * ((c % 2 === 0 ? 1 : -1) * 0.14);
-          const cz = wz + seg.uz * c * 0.55 + seg.leftZ * ((c % 2 === 0 ? 1 : -1) * 0.14);
+          const cx = wx + pf12.ux * c * 0.55 + pf12.leftX * ((c % 2 === 0 ? 1 : -1) * 0.14);
+          const cz = wz + pf12.uz * c * 0.55 + pf12.leftZ * ((c % 2 === 0 ? 1 : -1) * 0.14);
           bRoad.box(
             { x: cx, y: 0.0165, z: cz },
             { x: 0.07, y: 0.003, z: 0.68 },
@@ -627,8 +639,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       } else {
         // Glossy roadside rainwater / tea-wash puddle near the curb!
         const side = rng() < 0.5 ? 1 : -1;
-        const px = seg.ax + seg.ux * d + seg.leftX * (seg.halfWidth - 0.85) * side;
-        const pz = seg.az + seg.uz * d + seg.leftZ * (seg.halfWidth - 0.85) * side;
+        const pf13 = placementAt(seg, d, (seg.halfWidth - 0.85) * side);
+        const px = pf13.x;
+        const pz = pf13.z;
         bPuddle.cylinder({ x: px, y: 0.017, z: pz }, 0.72 + rng() * 0.55, 0.003, '#3b4a56');
       }
     }
@@ -643,20 +656,22 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       for (let k = 0; k < 7; k++) {
         const along = damage.begin + span * (k + .5) / 7;
         const off = (k % 3 - 1) * seg.halfWidth * .38;
-        const x = seg.ax + seg.ux * along + seg.leftX * off;
-        const z = seg.az + seg.uz * along + seg.leftZ * off;
+        const pf14 = placementAt(seg, along, off);
+        const x = pf14.x;
+        const z = pf14.z;
         bRoad.box({ x, y: .0155, z }, { x: 1.7, y: .003, z: 2.5 },
           k % 2 ? '#646266' : '#595b60', { y: yaw + (k % 2 ? .13 : -.09) });
         for (let seam = 0; seam < 3; seam++) {
-          bRoad.box({ x: x + seg.leftX * (seam - 1) * .48, y: .018, z: z + seg.leftZ * (seam - 1) * .48 },
+          bRoad.box({ x: x + pf14.leftX * (seam - 1) * .48, y: .018, z: z + pf14.leftZ * (seam - 1) * .48 },
             { x: .035, y: .002, z: 1.0 }, '#25272b', { y: yaw + (seam % 2 ? .35 : -.32) });
         }
       }
       for (const fraction of [.36, .67]) {
         const along = damage.begin + span * fraction;
         const off = fraction < .5 ? -.9 : .9;
-        const x = seg.ax + seg.ux * along + seg.leftX * off;
-        const z = seg.az + seg.uz * along + seg.leftZ * off;
+        const pf15 = placementAt(seg, along, off);
+        const x = pf15.x;
+        const z = pf15.z;
         if (PLACES.some((place) => Math.hypot(place.x - x, place.z - z) < 12)) continue;
         const radius = .63, depth = .055;
         const basin = potholeSurface(radius, potholes.length + 37, false);
@@ -674,8 +689,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     if (regularPotholeCount < 8 && seg.kind !== 'gali' && seg.length > 58) {
       const d = seg.length * 0.56;
       const off = Math.min(1.15, seg.halfWidth * 0.32);
-      const px = seg.ax + seg.ux * d + seg.leftX * off;
-      const pz = seg.az + seg.uz * d + seg.leftZ * off;
+      const pf16 = placementAt(seg, d, off);
+      const px = pf16.x;
+      const pz = pf16.z;
       if (        Math.hypot(px - WORLD.playerSpawn.x, pz - WORLD.playerSpawn.z) > 20 &&
         PLACES.every((place) => Math.hypot(place.x - px, place.z - pz) > 16) &&
         potholes.every((hole) => Math.hypot(hole.x - px, hole.z - pz) > 35)) {
@@ -702,13 +718,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     for (let d = 11, idx = 0; d <= seg.length - 11; d += lampSpacing, idx++) {
       const side: 1 | -1 = seg.kind === 'main' ? (idx % 2 === 0 ? 1 : -1) : 1;
       const curbDist = seg.halfWidth + Math.min(seg.sidewalk * 0.72, 1.55);
-      const lx = seg.ax + seg.ux * d + seg.leftX * curbDist * side;
-      const lz = seg.az + seg.uz * d + seg.leftZ * curbDist * side;
+      const pf17 = placementAt(seg, d, curbDist * side);
+      const lx = pf17.x;
+      const lz = pf17.z;
       if (!isClearOfRoads(lx, lz, 0.95)) continue;
 
       // Inward normal toward road centre: (-leftX * side, -leftZ * side)
-      const inX = -seg.leftX * side;
-      const inZ = -seg.leftZ * side;
+      const inX = -pf17.leftX * side;
+      const inZ = -pf17.leftZ * side;
       const armYaw = Math.atan2(inX, inZ);
 
       // Galvanized streetlamp column + concrete plinth + overhanging cobra-head LED luminaire
@@ -760,8 +777,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
       // Concrete DESCO utility pole + transformer crossbar on opposite/same sidewalk for overhead wires
       const poleSide: 1 | -1 = -side as 1 | -1;
-      const ex = seg.ax + seg.ux * d + seg.leftX * curbDist * poleSide;
-      const ez = seg.az + seg.uz * d + seg.leftZ * curbDist * poleSide;
+      const pf18 = placementAt(seg, d, curbDist * poleSide);
+      const ex = pf18.x;
+      const ez = pf18.z;
       if (isClearOfRoads(ex, ez, 0.95)) {
         bWalk.box({ x: ex, y: 3.6, z: ez }, { x: 0.22, y: 7.2, z: 0.22 }, '#8a857c', { y: yaw });
         // Only the concrete column is solid, not its crossbar, wires or paper
@@ -776,14 +794,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         // Occasional high-mounted meter/service cabinet on the EXISTING pole;
         // no ground obstacle or footprint added to the pedestrian corridor.
         if (lampBreakId % 4 === 2) {
-          const px = ex - seg.leftX * poleSide * 0.15;
-          const pz = ez - seg.leftZ * poleSide * 0.15;
-          const cabinetYaw = Math.atan2(-seg.leftX * poleSide, -seg.leftZ * poleSide);
+          const px = ex - pf18.leftX * poleSide * 0.15;
+          const pz = ez - pf18.leftZ * poleSide * 0.15;
+          const cabinetYaw = Math.atan2(-pf18.leftX * poleSide, -pf18.leftZ * poleSide);
           const detail = sectorDetails[sectorIndex(ex, ez)];
           detail.box({ x: px, y: 3.05, z: pz },
             { x: 0.43, y: 0.52, z: 0.24 }, '#777d76', { y: cabinetYaw });
-          detail.box({ x: px - seg.leftX * poleSide * 0.126, y: 3.05,
-            z: pz - seg.leftZ * poleSide * 0.126 },
+          detail.box({ x: px - pf18.leftX * poleSide * 0.126, y: 3.05,
+            z: pz - pf18.leftZ * poleSide * 0.126 },
             { x: 0.28, y: 0.30, z: 0.016 }, '#4c5754', { y: cabinetYaw });
         }
         bMetal.box({ x: ex, y: 6.85, z: ez }, { x: 1.15, y: 0.08, z: 0.08 }, '#41474e', { y: yaw });
@@ -797,7 +815,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         // Occasional pasted teaching/community notice, tightly flush to the
         // pole. No separate collider, transparent foliage or runtime update.
         if (lampBreakId % 7 === 1 && posterCount < 90) {
-          const faceX = -seg.leftX * poleSide, faceZ = -seg.leftZ * poleSide;
+          const faceX = -pf18.leftX * poleSide, faceZ = -pf18.leftZ * poleSide;
           const posterYaw = Math.atan2(faceX, faceZ);
           sectorPosters[sectorIndex(ex, ez)].quad(
             { x: ex + faceX * 0.128, y: 2.12, z: ez + faceZ * 0.128 },
@@ -807,7 +825,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         // Selected utility poles carry a small printed edition of the supplied
         // poster. The larger wall editions below retain full reading size.
         if (lampBreakId % 23 === 4 && educationPosterCount < 12) {
-          const nx = -seg.leftX * poleSide, nz = -seg.leftZ * poleSide;
+          const nx = -pf18.leftX * poleSide, nz = -pf18.leftZ * poleSide;
           const boardYaw = Math.atan2(nx, nz);
           const design = educationPosterCount % 2;
           const w = design === 0 ? 0.72 : 0.86;
@@ -825,8 +843,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       // mesh until buildings are placed, so trunks cannot end up inside infill.
       const td = d + lampSpacing * 0.48;
       if (td <= seg.length - 10) {
-        const tx = seg.ax + seg.ux * td + seg.leftX * (curbDist + 0.18) * side;
-        const tz = seg.az + seg.uz * td + seg.leftZ * (curbDist + 0.18) * side;
+        const pf19 = placementAt(seg, td, (curbDist + 0.18) * side);
+        const tx = pf19.x;
+        const tz = pf19.z;
         if (isClearOfRoads(tx, tz, 1.15)) {
           const height = 3.2 + rng() * 1.4;
           const flowering = rng() < 0.22;
@@ -1525,19 +1544,22 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const infillBySector = new Uint8Array(SECTOR_COUNT);
   for (const seg of ROAD_SEGMENTS) {
     if (infillCount >= 112) break;
-    const yaw = Math.atan2(seg.ux, seg.uz);
+    const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
-      for (let along = 9.5; along < seg.length - 9.5 && infillCount < 112; along += 5.2) {
+      for (let along = 9.5; along < arc - 9.5 && infillCount < 112; along += 5.2) {
         const width = 4.55, depth = 6.4;
         const frontDist = seg.halfWidth + seg.sidewalk + 1.0;
-        const cx = seg.ax + seg.ux * along + seg.leftX * (frontDist + depth / 2) * side;
-        const cz = seg.az + seg.uz * along + seg.leftZ * (frontDist + depth / 2) * side;
+        // Local polyline frame; identical on straight and collinear segments.
+        const frame = placementAt(seg, along, (frontDist + depth / 2) * side);
+        const cx = frame.x;
+        const cz = frame.z;
+        const yaw = frame.yaw;
         if (!canPlaceBuilding(cx, cz, depth, width, yaw)) continue;
         const sec = sectorIndex(cx, cz);
         // Distribute the frontage pass across the city instead of consuming
         // the whole budget on the first long road's empty parcels.
         if (infillBySector[sec] >= 8) continue;
-        const faceX = -seg.leftX * side, faceZ = -seg.leftZ * side;
+        const faceX = -frame.leftX * side, faceZ = -frame.leftZ * side;
         const frontX = cx + faceX * (depth / 2 + 0.025);
         const frontZ = cz + faceZ * (depth / 2 + 0.025);
         const faceYaw = Math.atan2(faceX, faceZ);
@@ -1657,16 +1679,18 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   const courtyardBySector = new Uint8Array(SECTOR_COUNT);
   for (const seg of ROAD_SEGMENTS) {
     if (courtyardCount >= 36) break;
-    const yaw = Math.atan2(seg.ux, seg.uz);
+    const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
-      for (let along = 18; along < seg.length - 18 && courtyardCount < 36; along += 9.5) {
+      for (let along = 18; along < arc - 18 && courtyardCount < 36; along += 9.5) {
         const width = 5.2, depth = 3.4;
         const distance = seg.halfWidth + seg.sidewalk + 1.25 + depth / 2;
-        const x = seg.ax + seg.ux * along + seg.leftX * distance * side;
-        const z = seg.az + seg.uz * along + seg.leftZ * distance * side;
+        const frame = placementAt(seg, along, distance * side);
+        const x = frame.x;
+        const z = frame.z;
+        const yaw = frame.yaw;
         const sec = sectorIndex(x, z);
         if (courtyardBySector[sec] >= 3 || !canPlaceBuilding(x, z, depth, width, yaw)) continue;
-        const frontX = -seg.leftX * side, frontZ = -seg.leftZ * side;
+        const frontX = -frame.leftX * side, frontZ = -frame.leftZ * side;
         const d = sectorDetails[sec];
         // Terracotta/brick pavers break the monotonous gray ground plane;
         // a narrow shop counter and woven roof identify the occupied parcel.
@@ -1810,19 +1834,21 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   // clear junction sightline and every authored mission/POI forecourt.
   for (const seg of ROAD_SEGMENTS) {
     if (infillCount >= 126) break;
-    const yaw = Math.atan2(seg.ux, seg.uz);
+    const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
-      for (let along = 9; along < seg.length - 9 && infillCount < 126; along += 3.4) {
+      for (let along = 9; along < arc - 9 && infillCount < 126; along += 3.4) {
         const width = 3.05, depth = 4.6;
         const distance = seg.halfWidth + seg.sidewalk + 0.85 + depth / 2;
-        const cx = seg.ax + seg.ux * along + seg.leftX * distance * side;
-        const cz = seg.az + seg.uz * along + seg.leftZ * distance * side;
+        const frame = placementAt(seg, along, distance * side);
+        const cx = frame.x;
+        const cz = frame.z;
+        const yaw = frame.yaw;
         const sec = sectorIndex(cx, cz);
         if (infillBySector[sec] >= 12 ||
             PLACES.some(p => Math.hypot(cx - p.x, cz - p.z) < 10) ||
             GRAPH_NODES.some(n => Math.hypot(cx - n.x, cz - n.z) < n.outerRadius + 4) ||
             !canPlaceBuilding(cx, cz, depth, width, yaw)) continue;
-        const fx = -seg.leftX * side, fz = -seg.leftZ * side;
+        const fx = -frame.leftX * side, fz = -frame.leftZ * side;
         const faceYaw = Math.atan2(fx, fz);
         const x = cx + fx * (depth / 2 + 0.03);
         const z = cz + fz * (depth / 2 + 0.03);
@@ -2266,14 +2292,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     const seg = ROAD_SEGMENTS[si];
     const perSeg = seg.jamProne ? 4 : seg.kind === 'main' ? 3 : 2;
     for (let k = 0; k < perSeg && litterItems.length < 136; k++) {
-      const along = 6 + rng() * Math.max(4, seg.length - 12);
+      // Arc length, so a curved road is not under-sampled at its far end.
+      const along = 6 + rng() * Math.max(4, arcLengthOf(seg) - 12);
       const side: 1 | -1 = rng() < 0.5 ? 1 : -1;
       const lat = (seg.halfWidth - 0.35 + rng() * 0.65) * side;
+      const frame = placementAt(seg, along, lat);
       litterItems.push({
-        baseX: seg.ax + seg.ux * along + seg.leftX * lat,
-        baseZ: seg.az + seg.uz * along + seg.leftZ * lat,
-        ux: seg.ux,
-        uz: seg.uz,
+        baseX: frame.x,
+        baseZ: frame.z,
+        ux: frame.ux,
+        uz: frame.uz,
         baseYaw: rng() * Math.PI * 2,
         phase: rng() * Math.PI * 2,
         scale: 0.75 + rng() * 0.65,
