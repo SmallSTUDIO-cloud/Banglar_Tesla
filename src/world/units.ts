@@ -2,10 +2,16 @@
  * World unit contract.
  *
  * This project mixes two length spaces, and before this module that mix was
- * implicit. Getting it wrong is not hypothetical: at the time of writing, road
- * `width` is authored in real metres while node positions and segment `length`
- * are compressed by 0.36, so `asad_4` is drawn **2.35x too wide relative to its
- * own length** (measured in docs/ASAD_AVENUE_ARCHITECTURE_REVIEW.md §4.2).
+ * implicit. Getting it wrong is not hypothetical: road `width` is authored in
+ * real metres while node positions and segment `length` are compressed by
+ * `WORLD_SCALE`, and a metre value dropped straight into the compressed space
+ * comes out **`1 / WORLD_SCALE` = 2.7778x too wide relative to the road's own
+ * length**.
+ *
+ * The live example: `asad_4` is stored 12.2 u wide over a 79.12 u chord
+ * (aspect 0.1542), where a correctly converted 12.2 m is 4.392 u (aspect
+ * 0.0555) — a ratio of exactly `1 / WORLD_SCALE`. Both the derivation and the
+ * live graph values are pinned by `tests/unit/units.test.ts`.
  *
  * The rule this module encodes:
  *

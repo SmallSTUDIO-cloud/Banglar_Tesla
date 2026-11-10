@@ -17,6 +17,7 @@ import {
   worldUnitsBetween,
 } from '../../src/world/units';
 import { PROJECTION, projectOsm } from '../../src/world/landmarks';
+import { segmentById } from '../../src/world/layout';
 
 /**
  * The unit contract exists because this project stores two different length
@@ -125,9 +126,21 @@ describe('world unit contract', () => {
       const realAspect = widthAsAuthoredMeters / lengthMeters;
 
       expect(lengthMeters).toBeCloseTo(219.778, 2);
-      // This is the measured 2.35x distortion from the architecture review §4.2.
-      expect(drawnAspect / realAspect).toBeCloseTo(METERS_PER_WORLD_UNIT, 2);
-      expect(drawnAspect / realAspect).toBeGreaterThan(2.3);
+      // The distortion is exactly 1 / WORLD_SCALE = 2.7778x. (An earlier draft
+      // of this comment cited "2.35x" from the architecture review, which used an
+      // unsourced 14.4 m denominator inconsistent with its own 12.2 m numerator.
+      // The exact, derivable figure is 1 / WORLD_SCALE, asserted below.)
+      expect(drawnAspect / realAspect).toBeCloseTo(METERS_PER_WORLD_UNIT, 9);
+      expect(drawnAspect / realAspect).toBeCloseTo(1 / WORLD_SCALE, 9);
+    });
+
+    it('keeps the hardcoded asad_4 figures in step with the live graph', () => {
+      // The distortion test above deliberately hardcodes 79.12 / 12.2 as a
+      // canary. That is only honest if the canary still describes the real graph,
+      // so assert it does — otherwise the numbers above could rot silently.
+      const seg = segmentById('asad_4')!;
+      expect(seg.length).toBeCloseTo(79.12, 2);
+      expect(seg.width).toBeCloseTo(12.2, 6);
     });
 
     it('converting a width to world units removes the distortion', () => {
