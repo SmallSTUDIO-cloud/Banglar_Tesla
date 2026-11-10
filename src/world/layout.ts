@@ -8,7 +8,13 @@
 
 import { clamp } from '../core/mathx';
 import { landmarkById, type Landmark } from './landmarks';
-import type { Vec2 } from './roadGeometry';
+import {
+  arcLengthOf,
+  nearestOf,
+  poseAt,
+  projectOntoPolyline,
+  type Vec2,
+} from './roadGeometry';
 import {
   MOHAMMADPUR_EDGES,
   MOHAMMADPUR_NODES,
@@ -427,33 +433,28 @@ export function snapToNearestRoad(
   z: number,
   allowGali = true,
 ): { x: number; z: number; yaw: number; segment: RoadSegment } {
-  let bestSeg = ROAD_SEGMENTS[0];
-  let bestDist = Infinity;
-  let bestX = x;
-  let bestZ = z;
-  for (const s of ROAD_SEGMENTS) {
-    if (!allowGali && s.kind === 'gali') continue;
-    const margin = Math.min(4, s.length * 0.2);
-    const vx = x - s.ax;
-    const vz = z - s.az;
-    const proj = clamp(vx * s.ux + vz * s.uz, margin, s.length - margin);
-    const cx = s.ax + s.ux * proj;
-    const cz = s.az + s.uz * proj;
-    const d = Math.hypot(x - cx, z - cz);
-    if (d < bestDist) {
-      bestDist = d;
-      bestSeg = s;
-      bestX = cx;
-      bestZ = cz;
-    }
+  // Selection and clamping live in `roadGeometry.nearestOf` so they can be
+  // tested against synthetic curved geometry. The margin is unchanged: the same
+  // junction clearance the previous chord implementation used.
+  const snap = nearestOf(ROAD_SEGMENTS, x, z, {
+    marginOf: (s) => Math.min(4, s.length * 0.2),
+    skip: (s) => !allowGali && s.kind === 'gali',
+  });
+
+  if (!snap) {
+    // Every segment was excluded (only reachable if the graph had no non-gali
+    // road). Preserve the previous fallback rather than throwing.
+    const fallback = ROAD_SEGMENTS[0];
+    return { x, z, yaw: Math.atan2(fallback.ux, fallback.uz), segment: fallback };
   }
-  // Offset slightly onto the Bangladesh left-hand lane
-  const laneOffset = Math.min(1.6, bestSeg.halfWidth * 0.42);
+
+  // Offset slightly onto the Bangladesh left-hand lane, along the *local* normal
+  const laneOffset = Math.min(1.6, snap.segment.halfWidth * 0.42);
   return {
-    x: bestX + bestSeg.leftX * laneOffset,
-    z: bestZ + bestSeg.leftZ * laneOffset,
-    yaw: Math.atan2(bestSeg.ux, bestSeg.uz),
-    segment: bestSeg,
+    x: snap.pose.x + snap.pose.leftX * laneOffset,
+    z: snap.pose.z + snap.pose.leftZ * laneOffset,
+    yaw: Math.atan2(snap.pose.ux, snap.pose.uz),
+    segment: snap.segment,
   };
 }
 
@@ -480,9 +481,13 @@ function makePlaceOnSegment(
   kind: PlaceDef['kind'] = 'both',
 ): PlaceDef {
   const s = segmentById(segmentId) ?? ROAD_SEGMENTS[0];
-  const along = clamp(tAlong, 0.22, 0.78) * s.length;
-  const cx = s.ax + s.ux * along;
-  const cz = s.az + s.uz * along;
+  // Fraction of the *arc* length, so a curved segment places the marker the same
+  // proportion of the way along the road it actually is. For the straight and
+  // collinear segments in the graph today this equals the chord fraction exactly.
+  const along = clamp(tAlong, 0.22, 0.78) * arcLengthOf(s);
+  const frame = poseAt(s, along);
+  const cx = frame.x;
+  const cz = frame.z;
   // v0.7.0: sit just outside the curb instead of at 0.58 x half-width, which
   // is *inside* the carriageway. The curb line is chosen over mid-sidewalk on
   // purpose: it is unambiguous of the asphalt, still well within
@@ -490,12 +495,13 @@ function makePlaceOnSegment(
   // frontage, so a marker cannot end up buried in a shopfront (which mid-
   // sidewalk placement caused at the bus stand).
   const curb = (s.halfWidth + PLACE_CURB_CLEARANCE) * side;
-  const heading = side === 1 ? Math.atan2(s.ux, s.uz) : Math.atan2(-s.ux, -s.uz);
+  // Local tangent: the chord tangent is wrong anywhere but the chord's own axis.
+  const heading = side === 1 ? Math.atan2(frame.ux, frame.uz) : Math.atan2(-frame.ux, -frame.uz);
   return {
     id,
     nameKey,
-    x: Math.round((cx + s.leftX * curb) * 10) / 10,
-    z: Math.round((cz + s.leftZ * curb) * 10) / 10,
+    x: Math.round((cx + frame.leftX * curb) * 10) / 10,
+    z: Math.round((cz + frame.leftZ * curb) * 10) / 10,
     kind,
     heading,
     marker: 3.2,
@@ -514,11 +520,11 @@ function projectOntoSegment(
   segmentId: string,
 ): { along: number; lateral: number; segment: RoadSegment } {
   const s = segmentById(segmentId) ?? ROAD_SEGMENTS[0];
-  const dx = x - s.ax;
-  const dz = z - s.az;
-  const along = Math.max(0, Math.min(s.length, dx * s.ux + dz * s.uz));
-  const lateral = (x - (s.ax + s.ux * along)) * s.leftX + (z - (s.az + s.uz * along)) * s.leftZ;
-  return { along, lateral, segment: s };
+  // Polyline projection: on a curved centreline the chord projection picks the
+  // wrong `along` and the wrong lateral sign for points on the inside of a bend.
+  // For a straight segment this is bit-identical to the previous chord maths.
+  const proj = projectOntoPolyline(s, x, z);
+  return { along: proj.s, lateral: proj.lateral, segment: s };
 }
 
 /**
@@ -551,9 +557,12 @@ function makePlaceAtLandmark(
   const side: 1 | -1 = lm.frontageSide ?? (lateral >= 0 ? 1 : -1);
   // Just clear of the asphalt: half the carriageway plus most of the sidewalk.
   const apron = s.halfWidth + s.sidewalk * 0.55;
-  const heading = side === 1 ? Math.atan2(s.ux, s.uz) : Math.atan2(-s.ux, -s.uz);
-  const px = s.ax + s.ux * along + s.leftX * apron * side;
-  const pz = s.az + s.uz * along + s.leftZ * apron * side;
+  // `along` is an arc position from the polyline projection, so the apron point
+  // must be built from the local span frame rather than the chord frame.
+  const frame = poseAt(s, along);
+  const heading = side === 1 ? Math.atan2(frame.ux, frame.uz) : Math.atan2(-frame.ux, -frame.uz);
+  const px = frame.x + frame.leftX * apron * side;
+  const pz = frame.z + frame.leftZ * apron * side;
   return {
     id,
     nameKey,

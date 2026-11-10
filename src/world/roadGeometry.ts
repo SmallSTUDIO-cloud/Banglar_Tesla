@@ -369,3 +369,72 @@ export function projectOntoPolyline(
 export function renderStrips(seg: SegmentGeometry): readonly RoadSpan[] {
   return spansOf(seg);
 }
+
+/* ------------------------------------------------- nearest-point selection */
+
+/** Result of searching a set of segments for the closest centreline point. */
+export interface SegmentSnap<T> {
+  segment: T;
+  /** Arc position of the closest point, already clamped by `marginOf`. */
+  s: number;
+  /** Signed lateral offset of the query point from the centreline (left positive). */
+  lateral: number;
+  /** Frame at `s`, after clamping — use this rather than the segment chord frame. */
+  pose: RoadPose;
+  /** Straight-line distance from the query point to the clamped centreline point. */
+  dist: number;
+}
+
+/**
+ * Find the segment whose centreline passes closest to `(x, z)`.
+ *
+ * Extracted from `layout.ts#snapToNearestRoad` so the selection logic can be
+ * tested against **synthetic curved geometry**, which cannot be injected into the
+ * real road graph. The algorithm is identical to the original:
+ *
+ *   1. project onto the centreline,
+ *   2. clamp the arc position to `[margin, arcLength - margin]` so callers never
+ *      snap onto a junction disc,
+ *   3. measure the distance to the *clamped* point,
+ *   4. keep the closest.
+ *
+ * The only change is that steps 1 and 3 use the polyline rather than the chord,
+ * and the returned frame is the local span frame rather than the chord tangent.
+ *
+ * `marginOf` is supplied by the caller because the margin is a gameplay concern
+ * (junction clearance), not a geometry one.
+ */
+export function nearestOf<T extends SegmentGeometry>(
+  segments: readonly T[],
+  x: number,
+  z: number,
+  opts: {
+    marginOf: (segment: T) => number;
+    /** Return true to exclude a segment from the search. */
+    skip?: (segment: T) => boolean;
+  },
+): SegmentSnap<T> | null {
+  let best: SegmentSnap<T> | null = null;
+
+  for (const segment of segments) {
+    if (opts.skip?.(segment)) continue;
+
+    const margin = opts.marginOf(segment);
+    const arc = arcLengthOf(segment);
+    // Guard the degenerate case where two margins would overlap on a very short
+    // segment: prefer the start marker rather than inverting the range.
+    const lo = Math.min(margin, arc * 0.5);
+    const hi = Math.max(lo, arc - margin);
+
+    const projected = projectOntoPolyline(segment, x, z);
+    const s = Math.max(lo, Math.min(hi, projected.s));
+    const pose = poseAt(segment, s);
+    const dist = Math.hypot(x - pose.x, z - pose.z);
+
+    if (!best || dist < best.dist) {
+      best = { segment, s, lateral: projected.lateral, pose, dist };
+    }
+  }
+
+  return best;
+}

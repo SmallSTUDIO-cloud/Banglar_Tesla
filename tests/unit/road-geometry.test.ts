@@ -456,3 +456,180 @@ describe('minimap road polyline', () => {
     }
   });
 });
+
+/* ========================================================================== *
+ * P2 — curve-aware projection layer
+ * ========================================================================== */
+
+import { ROAD_SEGMENTS as SEGMENTS, snapToNearestRoad } from '../../src/world/layout';
+import { nearestOf } from '../../src/world/roadGeometry';
+
+/** The pre-P2 chord implementation, kept verbatim as the equivalence reference. */
+function legacySnap(x: number, z: number, allowGali = true) {
+  const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+  let bestSeg = SEGMENTS[0];
+  let bestDist = Infinity;
+  let bestX = x;
+  let bestZ = z;
+  for (const s of SEGMENTS) {
+    if (!allowGali && s.kind === 'gali') continue;
+    const margin = Math.min(4, s.length * 0.2);
+    const vx = x - s.ax;
+    const vz = z - s.az;
+    const proj = clamp(vx * s.ux + vz * s.uz, margin, s.length - margin);
+    const cx = s.ax + s.ux * proj;
+    const cz = s.az + s.uz * proj;
+    const d = Math.hypot(x - cx, z - cz);
+    if (d < bestDist) {
+      bestDist = d;
+      bestSeg = s;
+      bestX = cx;
+      bestZ = cz;
+    }
+  }
+  const laneOffset = Math.min(1.6, bestSeg.halfWidth * 0.42);
+  return {
+    x: bestX + bestSeg.leftX * laneOffset,
+    z: bestZ + bestSeg.leftZ * laneOffset,
+    yaw: Math.atan2(bestSeg.ux, bestSeg.uz),
+    segmentId: bestSeg.id,
+  };
+}
+
+describe('P2 snapToNearestRoad is a provable no-op on the current graph', () => {
+  it('matches the legacy chord implementation across a world-space grid', () => {
+    let compared = 0;
+    let worstDist = 0;
+    for (let x = -300; x <= 340; x += 9.5) {
+      for (let z = -190; z <= 250; z += 9.5) {
+        const got = snapToNearestRoad(x, z);
+        const want = legacySnap(x, z, true);
+        expect(got.segment.id, `segment at (${x}, ${z})`).toBe(want.segmentId);
+        const d = Math.hypot(got.x - want.x, got.z - want.z);
+        worstDist = Math.max(worstDist, d);
+        expect(d, `position at (${x}, ${z})`).toBeLessThan(1e-9);
+        expect(Math.abs(got.yaw - want.yaw), `yaw at (${x}, ${z})`).toBeLessThan(1e-9);
+        compared++;
+      }
+    }
+    // Guard against a vacuous pass: the grid must actually have been walked.
+    // (-300..340 step 9.5) x (-190..250 step 9.5) = 68 x 47 = 3196 points.
+    expect(compared).toBe(3196);
+    expect(worstDist).toBeLessThan(1e-9);
+  });
+
+  it('matches the legacy implementation with gali excluded', () => {
+    let compared = 0;
+    for (let x = -260; x <= 320; x += 17) {
+      for (let z = -150; z <= 220; z += 17) {
+        const got = snapToNearestRoad(x, z, false);
+        const want = legacySnap(x, z, false);
+        expect(got.segment.id, `(${x}, ${z})`).toBe(want.segmentId);
+        expect(Math.hypot(got.x - want.x, got.z - want.z), `(${x}, ${z})`).toBeLessThan(1e-9);
+        compared++;
+      }
+    }
+    expect(compared).toBeGreaterThan(600);
+  });
+
+  it('settles on a point clear of both junction ends', () => {
+    for (const seg of SEGMENTS) {
+      for (const frac of [0.05, 0.3, 0.5, 0.8, 0.97]) {
+        const p = offsetPoint(seg, arcLengthOf(seg) * frac, 0);
+        const snap = snapToNearestRoad(p.x, p.z);
+        const margin = Math.min(4, seg.length * 0.2);
+        const proj = projectOntoPolyline(snap.segment, p.x, p.z);
+        if (snap.segment.id !== seg.id) continue; // nearer neighbour wins
+        const clamped = projectOntoPolyline(snap.segment, snap.x, snap.z);
+        expect(clamped.s, seg.id).toBeGreaterThanOrEqual(margin - 1e-6);
+        expect(clamped.s, seg.id).toBeLessThanOrEqual(
+          arcLengthOf(seg) - margin + 1e-6 + 1.6,
+        );
+        expect(proj.s).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+});
+
+describe('P2 curved geometry: chord projection fails, polyline projection holds', () => {
+  /**
+   * A synthetic 90° corner with a 20-unit arm length, deliberately sharp. On the
+   * *inside* of the bend a point is far closer to the polyline than the chord, so
+   * a chord projection both mis-measures the distance and picks the wrong segment.
+   */
+  const corner = makeSynthetic([
+    { x: 0, z: 0 },
+    { x: 20, z: 0 },
+    { x: 20, z: 20 },
+  ]);
+
+  it('measures distance to the true road, not the chord', () => {
+    // A point just inside the corner, 2 units from each arm.
+    const x = 18;
+    const z = 2;
+    const poly = projectOntoPolyline(corner, x, z);
+    const trueDist = Math.hypot(x - poly.x, z - poly.z);
+
+    // Chord distance: project onto the straight line (0,0)->(20,20).
+    const ux = corner.ux;
+    const uz = corner.uz;
+    const t = Math.max(0, Math.min(corner.length, x * ux + z * uz));
+    const chordDist = Math.hypot(x - ux * t, z - uz * t);
+
+    // The chord says the point is ~11 units off the road; it is actually ~2.
+    expect(chordDist).toBeGreaterThan(10);
+    expect(trueDist).toBeCloseTo(2, 6);
+    expect(trueDist).toBeLessThan(chordDist / 5);
+  });
+
+  it('selects the nearer of two segments it straddles', () => {
+    const near = makeSynthetic([
+      { x: 0, z: 0 },
+      { x: 20, z: 0 },
+    ]);
+    const far = makeSynthetic([
+      { x: 0, z: 10 },
+      { x: 20, z: 10 },
+    ]);
+    const snap = nearestOf([near, far], 10, 3, { marginOf: () => 0 });
+    expect(snap).not.toBeNull();
+    expect(snap!.segment).toBe(near);
+    // Left normal for (ux,uz)=(1,0) is (uz,-ux)=(0,-1), i.e. it points toward -z.
+    // So a query point at +z lies on the RIGHT of the direction of travel.
+    expect(snap!.lateral).toBeCloseTo(-3, 9);
+  });
+
+  it('never returns a point off the polyline', () => {
+    const segs = [corner];
+    for (let x = -6; x <= 26; x += 2) {
+      for (let z = -6; z <= 26; z += 2) {
+        const snap = nearestOf(segs, x, z, { marginOf: () => 0 })!;
+        const re = projectOntoPolyline(corner, snap.pose.x, snap.pose.z);
+        // The reported pose lies on the centreline.
+        expect(Math.hypot(snap.pose.x - re.x, snap.pose.z - re.z)).toBeLessThan(1e-9);
+        // And it is the true closest point.
+        const direct = projectOntoPolyline(corner, x, z);
+        expect(snap.dist).toBeCloseTo(Math.hypot(x - direct.x, z - direct.z), 9);
+      }
+    }
+  });
+
+  it('reports the local tangent, not the chord tangent, at the corner', () => {
+    // (18,10) is 2 units from the second arm but 10 from the first, so the
+    // winner is unambiguous. (18,2) would be an exact tie — both arms are 2 away
+    // — which is why it is not used here.
+    const snap = nearestOf([corner], 18, 10, { marginOf: () => 0 })!;
+    // Closest point is on the second arm, whose tangent points +z.
+    expect(snap.pose.ux).toBeCloseTo(0, 9);
+    expect(snap.pose.uz).toBeCloseTo(1, 9);
+    // The chord tangent points diagonally (+x, +z), which would be wrong here.
+    expect(Math.abs(corner.ux - 0)).toBeGreaterThan(0.5);
+  });
+
+  it('clamps to the margin on a curved segment using arc length', () => {
+    const snap = nearestOf([corner], 20, 19, { marginOf: () => 4 })!;
+    // arc length 40, so the arc position must be <= 36.
+    expect(snap.s).toBeLessThanOrEqual(36 + 1e-9);
+    expect(snap.s).toBeGreaterThanOrEqual(4 - 1e-9);
+  });
+});
