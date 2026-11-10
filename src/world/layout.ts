@@ -287,12 +287,14 @@ export function pointToSegmentDistance(
   pz: number,
   s: RoadSegment,
 ): { dist: number; t: number; cx: number; cz: number } {
-  const vx = px - s.ax;
-  const vz = pz - s.az;
-  const proj = clamp(vx * s.ux + vz * s.uz, 0, s.length);
-  const cx = s.ax + s.ux * proj;
-  const cz = s.az + s.uz * proj;
-  return { dist: Math.hypot(px - cx, pz - cz), t: proj / s.length, cx, cz };
+  // Polyline projection. `t` stays a normalised fraction of the road's own
+  // length, now the arc length, so its meaning ("how far along, 0..1") is
+  // unchanged while the point it refers to follows the drawn centreline.
+  const proj = projectOntoPolyline(s, px, pz);
+  const cx = proj.x;
+  const cz = proj.z;
+  const arc = arcLengthOf(s);
+  return { dist: Math.hypot(px - cx, pz - cz), t: arc === 0 ? 0 : proj.s / arc, cx, cz };
 }
 
 /**
@@ -306,10 +308,10 @@ export function distanceToRoadCarriageway(x: number, z: number): number {
   let minSigned = 999;
   for (let i = 0; i < bucket.segments.length; i++) {
     const s = bucket.segments[i];
-    const vx = x - s.ax;
-    const vz = z - s.az;
-    const proj = clamp(vx * s.ux + vz * s.uz, 0, s.length);
-    const d = Math.hypot(x - (s.ax + s.ux * proj), z - (s.az + s.uz * proj)) - s.halfWidth;
+    // Polyline projection so a curved carriageway is measured against the road
+    // that is actually drawn. Straight segments are bit-identical.
+    const proj = projectOntoPolyline(s, x, z);
+    const d = Math.hypot(x - proj.x, z - proj.z) - s.halfWidth;
     if (d < minSigned) minSigned = d;
   }
   for (let i = 0; i < bucket.nodes.length; i++) {
@@ -330,10 +332,9 @@ export function distanceToRoadCorridor(x: number, z: number): number {
   let minSigned = 999;
   for (let i = 0; i < bucket.segments.length; i++) {
     const s = bucket.segments[i];
-    const vx = x - s.ax;
-    const vz = z - s.az;
-    const proj = clamp(vx * s.ux + vz * s.uz, 0, s.length);
-    const d = Math.hypot(x - (s.ax + s.ux * proj), z - (s.az + s.uz * proj)) - (s.halfWidth + s.sidewalk);
+    // Polyline projection, matching distanceToRoadCarriageway.
+    const proj = projectOntoPolyline(s, x, z);
+    const d = Math.hypot(x - proj.x, z - proj.z) - (s.halfWidth + s.sidewalk);
     if (d < minSigned) minSigned = d;
   }
   for (let i = 0; i < bucket.nodes.length; i++) {
@@ -413,17 +414,17 @@ export function placeApproachPose(placeId: string): { x: number; z: number; yaw:
   if (!place) return null;
   const seg = segmentById(place.segmentId);
   if (!seg) return { x: place.x, z: place.z, yaw: place.heading };
-  const dx = place.x - seg.ax;
-  const dz = place.z - seg.az;
-  const along = clamp(dx * seg.ux + dz * seg.uz, 0, seg.length);
-  const lateral = (place.x - (seg.ax + seg.ux * along)) * seg.leftX +
-    (place.z - (seg.az + seg.uz * along)) * seg.leftZ;
-  const side = lateral >= 0 ? 1 : -1;
+  // Polyline projection so the approach pose stays on the asphalt on a curved
+  // road. The lateral sign and the half-metre inset are unchanged; only the
+  // frame they are applied in is now the local span frame rather than the chord.
+  const proj = projectOntoPolyline(seg, place.x, place.z);
+  const side = proj.lateral >= 0 ? 1 : -1;
   // Stay on the asphalt, half a metre inside the curb, on the marker's side.
   const laneOffset = (seg.halfWidth - 0.5) * side;
+  const frame = poseAt(seg, proj.s);
   return {
-    x: seg.ax + seg.ux * along + seg.leftX * laneOffset,
-    z: seg.az + seg.uz * along + seg.leftZ * laneOffset,
+    x: frame.x + frame.leftX * laneOffset,
+    z: frame.z + frame.leftZ * laneOffset,
     yaw: place.heading,
   };
 }
