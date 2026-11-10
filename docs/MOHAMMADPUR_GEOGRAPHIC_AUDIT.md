@@ -164,9 +164,32 @@ scoped against a number instead of an impression.
 - Road surface, kerbside, trees and junction views were verified pixel-identical
   in the P2 migration (slices 5–8, zero world drift).
 
-Visual work this audit did **not** do: a render spot-check of the *absent*
-corridors is meaningless (they do not exist to photograph), and the existing
-corridors were already verified during P2. No visual defect is claimed here.
+**Spot-checked this session** with a transient puppeteer harness (built app,
+`vite preview`, `debugStartMode('free')`, `debugSetPhase('golden','sunny')`,
+`ui.show(null)`, fixed manual cameras, static frames). Four street-level views
+plus one overview, **0 page errors**, all rendered as expected:
+
+| view | camera (world) | what it shows |
+|---|---|---|
+| `v-asad` | eye (26, 9, 108) → (118, 5, 84) | Asad Avenue east toward `asad_post`: continuous carriageway, kerbs, balconies, power lines, sun, HUD toast |
+| `v-bazaar` | eye (52, 7, 110) → (78, 3, 96) | Town Hall bazaar street: shopfront signage, awnings, kerbside stalls, pedestrians, tree cover |
+| `v-edgenorth` | eye (10, 12, -170) → (10, 6, -256) | the built edge: buildings stop and bare terrain runs to the horizon — the world boundary is *visible* here |
+| `va-aerial1` | eye (0, 150, 300) | overview: dense built fabric with the schematic grid of streets legible |
+
+Two honest observations from the renders:
+
+1. **Distance fog is heavy.** An aerial at 240 units altitude washes the city to
+   near-flat tan, and at 430 units the frame is a single unbroken orange — the
+   camera is above the fog ceiling entirely. Street level (the actual gameplay
+   view) is unaffected and sharp. This is a deliberate trade for a 1.3 × 1.4 km
+   world on mobile GPUs, but it means **no aerial/satellite-style validation of
+   network coverage is possible from a render** — the 29.8 % figure in §1 comes
+   from geometry, not from a picture, and should not be "confirmed" visually.
+2. No rendering defect was found on any existing corridor. The visual gap is
+   entirely *absence* of streets (§1), not quality of what is built.
+
+Screenshots are transient (`artifacts/` is gitignored, never committed).
+Reproduce by rebuilding and re-creating the harness; it is not checked in.
 
 ---
 
