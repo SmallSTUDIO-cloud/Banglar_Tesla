@@ -13,6 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "baseline:update": "vite-node scripts/update-gameplay-baseline.ts",
+    "baseline:update-world": "vite-node scripts/update-world-baseline.ts",
+    "snapshot:world": "vite-node tools/snapshot-world.ts",
     "test:watch": "vitest",
     "test:e2e": "node tests/e2e/run-e2e.mjs",
     "test:ui": "node tests/e2e/ui-flow.mjs",
