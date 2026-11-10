@@ -138,6 +138,39 @@ class LandmarkProvenanceTests(unittest.TestCase):
         self.assertEqual(poi.get("tags", {}).get("building"), "commercial")
         self.assertIsNone(poi.get("tags", {}).get("amenity"))
 
+    def test_town_hall_anchor_lies_inside_its_own_osm_polygon(self):
+        """The market point must fall inside the marketplace polygon OSM has for it.
+
+        Added while writing docs/PRIORITY_A_TOWN_HALL_SPEC.md: the audit relies on
+        'the anchor is correct, only the form is missing'. That claim is only true
+        if the anchor is physically inside the mapped market area. This pins it, so
+        a future re-anchor to a plausible-looking but wrong point fails here.
+        """
+        town_hall = next(r for r in self.records if r["id"] == "town_hall_bazar")
+        poi = self.pois[town_hall["osmId"]]
+        ring = [(pt["lat"], pt["lon"]) for pt in poi["geometry"]]
+        self.assertGreaterEqual(len(ring), 4, "market polygon is not a usable ring")
+        self.assertEqual(ring[0], ring[-1], "market polygon ring is not closed")
+
+        # Point-in-polygon in local metres so the test does not depend on how the
+        # game projects; longitude is scaled by cos(lat) to keep the shape honest.
+        import math
+
+        cos = math.cos(math.radians(LAT0))
+        poly = [((lon - LON0) * cos, (lat - LAT0)) for lat, lon in ring]
+        px = (town_hall["lon"] - LON0) * cos
+        pz = town_hall["lat"] - LAT0
+
+        inside = False
+        j = len(poly) - 1
+        for i in range(len(poly)):
+            xi, yi = poly[i]
+            xj, yj = poly[j]
+            if (yi > pz) != (yj > pz) and px < (xj - xi) * (pz - yi) / (yj - yi) + xi:
+                inside = not inside
+            j = i
+        self.assertTrue(inside, "town_hall_bazar is outside its own OSM marketplace polygon")
+
     def test_places_anchored_to_landmarks(self):
         """layout.ts must anchor the named markets to the registry, not rote fractions."""
         layout = (ROOT / "src" / "world" / "layout.ts").read_text(encoding="utf-8")
