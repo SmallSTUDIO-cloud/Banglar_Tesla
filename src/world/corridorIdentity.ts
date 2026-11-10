@@ -26,6 +26,7 @@ import {
   isFootprintClearOfCorridor,
   segmentById,
 } from './layout';
+import { arcLengthOf, placementAt } from './roadGeometry';
 
 export type CorridorId = 'ring' | 'tajmahal';
 
@@ -227,14 +228,16 @@ export function planCorridorStructures(occupied?: OccupancyTest): PlacedStructur
     // The seat closest to the OSM centroid wins, so identity is preserved.
     const edge = seg.halfWidth + seg.sidewalk + STRUCTURE_CORRIDOR_GAP;
     let best: { x: number; z: number; offset: number } | null = null;
+    const arc = arcLengthOf(seg);
     for (let shift = -14; shift <= 14; shift += 1) {
-      const t = Math.max(2, Math.min(seg.length - 2, along + shift));
-      const cx = seg.ax + seg.ux * t;
-      const cz = seg.az + seg.uz * t;
+      const t = Math.max(2, Math.min(arc - 2, along + shift));
       for (let delta = 0; delta <= MAX_STRUCTURE_OFFSET; delta += 0.5) {
         const lateral = (edge + delta) * side;
-        const x = cx + seg.leftX * lateral;
-        const z = cz + seg.leftZ * lateral;
+        // Local frame per candidate seat, so a curved frontage offsets from the
+        // kerb it actually runs along rather than from the chord.
+        const seat = placementAt(seg, t, lateral);
+        const x = seat.x;
+        const z = seat.z;
         if (
           !isFootprintClearOfCorridor(
             x,
