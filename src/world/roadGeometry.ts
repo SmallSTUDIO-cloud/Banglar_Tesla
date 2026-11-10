@@ -438,3 +438,51 @@ export function nearestOf<T extends SegmentGeometry>(
 
   return best;
 }
+
+/* ------------------------------------------------------- placement frames */
+
+/** Position, orientation and local axes for anything placed relative to a road. */
+export interface PlacementFrame {
+  x: number;
+  z: number;
+  /** Unit tangent along the span containing `s`. */
+  ux: number;
+  uz: number;
+  /** Unit left-hand normal, (uz, -ux). */
+  leftX: number;
+  leftZ: number;
+  /** Box rotation that aligns a local +Z axis with the tangent. */
+  yaw: number;
+  /** Span index, for callers that want to dedupe work per span. */
+  spanIndex: number;
+  /** Arc position after clamping. */
+  s: number;
+}
+
+/**
+ * Frame for an object placed `lateral` to the left of the centreline at arc
+ * distance `s` (negative moves right).
+ *
+ * This is the replacement for the widespread
+ * `seg.ax + seg.ux * t + seg.leftX * d` / `Math.atan2(seg.ux, seg.uz)` pair.
+ * On a straight or collinear segment it reproduces both exactly, which is what
+ * lets call sites migrate one at a time with no change in output.
+ *
+ * The important difference on a curve: the returned `yaw` is the **local span**
+ * heading, not the chord heading, so a box placed here is aligned with the road
+ * it actually touches rather than with a line crossing it.
+ */
+export function placementAt(seg: SegmentGeometry, s: number, lateral = 0): PlacementFrame {
+  const pose = poseAt(seg, s);
+  return {
+    x: pose.x + pose.leftX * lateral,
+    z: pose.z + pose.leftZ * lateral,
+    ux: pose.ux,
+    uz: pose.uz,
+    leftX: pose.leftX,
+    leftZ: pose.leftZ,
+    yaw: Math.atan2(pose.ux, pose.uz),
+    spanIndex: pose.spanIndex,
+    s: pose.s,
+  };
+}

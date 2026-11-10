@@ -23,7 +23,7 @@ import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
 import { planCorridorStructures } from './corridorIdentity';
-import { renderStrips } from './roadGeometry';
+import { arcLengthOf, placementAt, renderStrips } from './roadGeometry';
 import { PosterAtlas } from './posterAtlas';
 import { EDUCATION_POSTERS, educationPosterTexture, snackPacketAtlas } from './streetPrint';
 import { DAMAGE_ZONES, roadDamageAt } from './roadDamage';
@@ -948,18 +948,26 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
   let signCursor = 0;
   for (const seg of ROAD_SEGMENTS) {
-    const yaw = Math.atan2(seg.ux, seg.uz);
+    // Walk the building frontage by ARC length: on a curved road a straight
+    // walk would under-count, because the chord is shorter than the road.
+    const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
       let along = 9.5;
-      while (along < seg.length - 9.5) {
+      while (along < arc - 9.5) {
         const bWidth = seg.kind === 'main' ? 9.5 + rng() * 5.5 : 7.5 + rng() * 4.5;
         const bDepth = 8.2 + rng() * 4.4;
         const setback = seg.halfWidth + seg.sidewalk + bDepth * 0.5 + 0.95 + rng() * 0.65;
-        const cx = seg.ax + seg.ux * (along + bWidth * 0.5) + seg.leftX * setback * side;
-        const cz = seg.az + seg.uz * (along + bWidth * 0.5) + seg.leftZ * setback * side;
+        // Local polyline frame at this building's own centre. On a straight or
+        // collinear segment this is bit-identical to the chord maths it replaces.
+        // On a curve the building follows the road it actually fronts and its box
+        // is rotated to the local tangent instead of to a line crossing it.
+        const frame = placementAt(seg, along + bWidth * 0.5, setback * side);
+        const cx = frame.x;
+        const cz = frame.z;
+        const yaw = frame.yaw;
 
         // Face normal pointing FROM building TOWARD the street: (-leftX * side, -leftZ * side)
-        const faceYaw = Math.atan2(-seg.leftX * side, -seg.leftZ * side);
+        const faceYaw = Math.atan2(-frame.leftX * side, -frame.leftZ * side);
 
         if (canPlaceBuilding(cx, cz, bDepth, bWidth, yaw)) {
           addFootprint({
@@ -1000,8 +1008,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           }
 
           // Grounded concrete foundation plinth + shopfront entrance apron bridging onto footpath!
-          const fx = -seg.leftX * side;
-          const fz = -seg.leftZ * side;
+          const fx = -frame.leftX * side;
+          const fz = -frame.leftZ * side;
           bDet.box(
             { x: cx + fx * 0.55, y: 0.13, z: cz + fz * 0.55 },
             { x: bDepth + 1.35, y: 0.26, z: bWidth + 0.28 },
@@ -1010,8 +1018,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           );
 
           // 4-sided concrete floor-slab stringcourses (`ছাদের কার্নিশ`) & side-wall windows + sunshades!
-          const sideYawL = Math.atan2(seg.ux, seg.uz);
-          const sideYawR = Math.atan2(-seg.ux, -seg.uz);
+          const sideYawL = Math.atan2(frame.ux, frame.uz);
+          const sideYawR = Math.atan2(-frame.ux, -frame.uz);
           for (let fl = 1; fl <= floors; fl++) {
             const slabY = fl * floorH;
             bDet.box(
@@ -1023,17 +1031,17 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             if (fl < floors) {
               const winY = fl * floorH + 1.48;
               for (const sDir of [-1, 1] as const) {
-                const wx = cx + seg.ux * (bWidth * 0.5 + 0.03) * sDir;
-                const wz = cz + seg.uz * (bWidth * 0.5 + 0.03) * sDir;
+                const wx = cx + frame.ux * (bWidth * 0.5 + 0.03) * sDir;
+                const wz = cz + frame.uz * (bWidth * 0.5 + 0.03) * sDir;
                 const sYaw = sDir === 1 ? sideYawL : sideYawR;
                 for (const dOff of [-bDepth * 0.24, bDepth * 0.24]) {
                   const ox = wx - fx * dOff;
                   const oz = wz - fz * dOff;
                   bDet.box({ x: ox, y: winY, z: oz }, { x: 1.18, y: 1.12, z: 0.06 }, windowShade, { y: sYaw });
-                  litWindow(secIdx, ox + seg.ux * 0.075 * sDir, winY,
-                    oz + seg.uz * 0.075 * sDir, sYaw, 0.96, 0.88);
+                  litWindow(secIdx, ox + frame.ux * 0.075 * sDir, winY,
+                    oz + frame.uz * 0.075 * sDir, sYaw, 0.96, 0.88);
                   bDet.box(
-                    { x: ox + seg.ux * 0.18 * sDir, y: winY + 0.62, z: oz + seg.uz * 0.18 * sDir },
+                    { x: ox + frame.ux * 0.18 * sDir, y: winY + 0.62, z: oz + frame.uz * 0.18 * sDir },
                     { x: 1.42, y: 0.08, z: 0.42 },
                     '#9a9386',
                     { y: sYaw },
@@ -1047,8 +1055,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           // ventilation grilles and drain downpipes; all remain inside the OBB.
           if (bWidth > 8.5) {
             for (const sideDir of [-1, 1] as const) {
-              const sideX = cx + seg.ux * (bWidth * 0.5 + 0.025) * sideDir;
-              const sideZ = cz + seg.uz * (bWidth * 0.5 + 0.025) * sideDir;
+              const sideX = cx + frame.ux * (bWidth * 0.5 + 0.025) * sideDir;
+              const sideZ = cz + frame.uz * (bWidth * 0.5 + 0.025) * sideDir;
               const sideFace = sideDir === 1 ? sideYawL : sideYawR;
               bShut.quad({ x: sideX - fx * 1.35, y: 1.15, z: sideZ - fz * 1.35 },
                 1.55, 2.1, '#4d5b59', { y: sideFace });
@@ -1061,17 +1069,17 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 const design = (Math.abs(Math.round(cx * 7 + cz * 13)) % 2);
                 const w = design === 0 ? 1.78 : 2.05;
                 const h = design === 0 ? 2.53 : 2.05;
-                const px = sideX - fx * 3.35 + seg.ux * 0.065;
-                const pz = sideZ - fz * 3.35 + seg.uz * 0.065;
-                bDet.box({ x: px - seg.ux * 0.018, y: 1.63, z: pz - seg.uz * 0.018 },
+                const px = sideX - fx * 3.35 + frame.ux * 0.065;
+                const pz = sideZ - fz * 3.35 + frame.uz * 0.065;
+                bDet.box({ x: px - frame.ux * 0.018, y: 1.63, z: pz - frame.uz * 0.018 },
                   { x: w + 0.09, y: h + 0.09, z: 0.028 }, '#eee9db', { y: sideYawL });
                 sectorEducation[secIdx].quad({ x: px, y: 1.63, z: pz },
                   w, h, '#ffffff', { y: sideYawL }, EDUCATION_POSTERS[design]);
                 educationPosterCount++;
               }
               if (sideDir === 1 && frontageStyle === 0 && posterCount < 90) {
-                const posterX = sideX - fx * 2.7 + seg.ux * 0.045;
-                const posterZ = sideZ - fz * 2.7 + seg.uz * 0.045;
+                const posterX = sideX - fx * 2.7 + frame.ux * 0.045;
+                const posterZ = sideZ - fz * 2.7 + frame.uz * 0.045;
                 const design = Math.abs(Math.round(cx * 7 + cz * 11));
                 // One in eleven printed notices is non-partisan civic/election
                 // information; most are education, markets and cleanliness.
@@ -1100,7 +1108,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           );
           if (floors >= 3) {
             bDet.box(
-              { x: cx + seg.ux * 1.5, y: height + 1.25, z: cz + seg.uz * 1.5 },
+              { x: cx + frame.ux * 1.5, y: height + 1.25, z: cz + frame.uz * 1.5 },
               { x: 2.6, y: 2.5, z: 2.8 },
               tint,
               { y: yaw },
@@ -1118,8 +1126,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             bPoster.quad({ x: bx + fx * 0.055, y: height + 2.03, z: bz + fz * 0.055 },
               3.84, 1.60, '#ffffff', { y: faceYaw }, posterAtlas.billboard(billboardCount));
             for (const side of [-1, 1]) {
-              bDet.box({ x: bx + seg.ux * side * 1.42 - fx * 0.06,
-                y: height + 0.85, z: bz + seg.uz * side * 1.42 - fz * 0.06 },
+              bDet.box({ x: bx + frame.ux * side * 1.42 - fx * 0.06,
+                y: height + 0.85, z: bz + frame.uz * side * 1.42 - fz * 0.06 },
                 { x: 0.10, y: 1.55, z: 0.11 }, '#525652', { y: faceYaw });
             }
             billboardCount++;
@@ -1131,8 +1139,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           // Intermittent limewash edge and rain-stained sill distinguish the
           // otherwise uniform upper blocks. Both join the sector detail mesh.
           if (!useBrick && (frontageStyle === 2 || frontageStyle === 6)) {
-            bDet.box({ x: frontX + seg.ux * (bWidth * 0.45) + fx * 0.035,
-              y: height * 0.54, z: frontZ + seg.uz * (bWidth * 0.45) + fz * 0.035 },
+            bDet.box({ x: frontX + frame.ux * (bWidth * 0.45) + fx * 0.035,
+              y: height * 0.54, z: frontZ + frame.uz * (bWidth * 0.45) + fz * 0.035 },
               { x: 0.19, y: height * 0.76, z: 0.045 },
               frontageStyle === 2 ? '#aeb6a3' : '#ada99b', { y: faceYaw });
           }
@@ -1152,8 +1160,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             const shopBays = Math.max(1, Math.floor(bWidth / 3.8));
             for (let sb = 0; sb < shopBays; sb++) {
               const bayOff = -((shopBays - 1) * 0.5) * 3.4 + sb * 3.4;
-              const sx = frontX + seg.ux * bayOff;
-              const sz = frontZ + seg.uz * bayOff;
+              const sx = frontX + frame.ux * bayOff;
+              const sz = frontZ + frame.uz * bayOff;
               const isGrocery = sb === 0 && [1, 3, 4, 5].includes(frontageStyle);
               if ((frontageStyle === 1 || frontageStyle === 4) && sb === 0) {
                 // Busy mudi dokan: dark recessed shelves, pale rice/lentil sacks,
@@ -1166,16 +1174,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                     { x: 2.35, y: 0.075, z: 0.24 }, '#76533c', { y: faceYaw });
                   for (let item = -2; item <= 2; item++) {
                     const color = ['#c69f56', '#e3c681', '#6d965f', '#be7141', '#b6a880'][item + 2];
-                    bDet.box({ x: sx + seg.ux * item * 0.43 + fx * 0.19,
-                      y: shelfY + 0.18, z: sz + seg.uz * item * 0.43 + fz * 0.19 },
+                    bDet.box({ x: sx + frame.ux * item * 0.43 + fx * 0.19,
+                      y: shelfY + 0.18, z: sz + frame.uz * item * 0.43 + fz * 0.19 },
                       { x: 0.31, y: 0.27, z: 0.13 }, color, { y: faceYaw });
                   }
                 }
                 bDet.box({ x: sx + fx * 0.30, y: 0.66, z: sz + fz * 0.30 },
                   { x: 1.65, y: 0.15, z: 0.42 }, '#8b603e', { y: faceYaw });
                 for (const end of [-1, 1]) {
-                  bDet.box({ x: sx + seg.ux * end * 0.94 + fx * 0.20,
-                    y: 0.35, z: sz + seg.uz * end * 0.94 + fz * 0.20 },
+                  bDet.box({ x: sx + frame.ux * end * 0.94 + fx * 0.20,
+                    y: 0.35, z: sz + frame.uz * end * 0.94 + fz * 0.20 },
                     { x: 0.40, y: 0.56, z: 0.25 }, '#c0a16e', { y: faceYaw });
                 }
               } else if ((frontageStyle === 3 || frontageStyle === 5) && sb === 0) {
@@ -1185,8 +1193,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 bDet.box({ x: sx + fx * 0.07, y: 1.42, z: sz + fz * 0.07 },
                   { x: 2.65, y: 2.55, z: 0.035 }, '#263137', { y: faceYaw });
                 for (const edge of [-1, 1] as const) {
-                  bDet.box({ x: sx + seg.ux * edge * 1.26 + fx * 0.11, y: 1.45,
-                    z: sz + seg.uz * edge * 1.26 + fz * 0.11 },
+                  bDet.box({ x: sx + frame.ux * edge * 1.26 + fx * 0.11, y: 1.45,
+                    z: sz + frame.uz * edge * 1.26 + fz * 0.11 },
                     { x: 0.11, y: 2.65, z: 0.12 }, '#796f60', { y: faceYaw });
                 }
                 bDet.box({ x: sx + fx * 0.15, y: 0.82, z: sz + fz * 0.15 },
@@ -1200,8 +1208,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                     { x: 1.86, y: 0.07, z: 0.13 }, '#8a6548', { y: faceYaw });
                 }
                 for (let bundle = -1; bundle <= 1; bundle++) {
-                  bDet.box({ x: sx + seg.ux * bundle * 0.52 + fx * 0.12,
-                    y: 1.66, z: sz + seg.uz * bundle * 0.52 + fz * 0.12 },
+                  bDet.box({ x: sx + frame.ux * bundle * 0.52 + fx * 0.12,
+                    y: 1.66, z: sz + frame.uz * bundle * 0.52 + fz * 0.12 },
                     { x: 0.38, y: 0.31, z: 0.09 },
                     frontageStyle === 5
                       ? ['#b99452', '#637948', '#91775c'][bundle + 1]
@@ -1211,8 +1219,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                   // Produce sacks and a shallow street-facing display shelf;
                   // no change to footprint/collision or sidewalk clearance.
                   for (let sack = -1; sack <= 1; sack++) {
-                    bDet.box({ x: sx + seg.ux * sack * 0.53 + fx * 0.23,
-                      y: 0.43, z: sz + seg.uz * sack * 0.53 + fz * 0.23 },
+                    bDet.box({ x: sx + frame.ux * sack * 0.53 + fx * 0.23,
+                      y: 0.43, z: sz + frame.uz * sack * 0.53 + fz * 0.23 },
                       { x: 0.38, y: 0.38, z: 0.24 },
                       ['#b69a72', '#9b8565', '#b7a180'][sack + 1], { y: faceYaw });
                   }
@@ -1227,8 +1235,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 bDet.box({ x: sx + fx * 0.13, y: 0.67, z: sz + fz * 0.13 },
                   { x: 1.97, y: 0.80, z: 0.27 }, '#77573d', { y: faceYaw });
                 for (let item = -1; item <= 1; item++) {
-                  bDet.box({ x: sx + seg.ux * item * 0.48 + fx * 0.23,
-                    y: 1.16, z: sz + seg.uz * item * 0.48 + fz * 0.23 },
+                  bDet.box({ x: sx + frame.ux * item * 0.48 + fx * 0.23,
+                    y: 1.16, z: sz + frame.uz * item * 0.48 + fz * 0.23 },
                     { x: 0.30, y: 0.21, z: 0.20 },
                     ['#b08e61', '#7d8a69', '#bd9971'][item + 1], { y: faceYaw });
                 }
@@ -1246,12 +1254,12 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                   { x: 2.30, y: 0.027, z: 0.025 }, '#5e4d39', { y: faceYaw });
                 for (let string = -1; string <= 1; string++) {
                   const off = string * 0.77;
-                  bDet.box({ x: sx + seg.ux * off + fx * 0.33,
-                    y: 1.86, z: sz + seg.uz * off + fz * 0.33 },
+                  bDet.box({ x: sx + frame.ux * off + fx * 0.33,
+                    y: 1.86, z: sz + frame.uz * off + fz * 0.33 },
                     { x: 0.014, y: 1.05, z: 0.014 }, '#d3c3a3');
                   for (let packet = 0; packet < 3; packet++) {
-                    const px = sx + seg.ux * off + fx * 0.36;
-                    const pz = sz + seg.uz * off + fz * 0.36;
+                    const px = sx + frame.ux * off + fx * 0.36;
+                    const pz = sz + frame.uz * off + fz * 0.36;
                     sectorSnacks[secIdx].quad(
                       { x: px, y: 2.16 - packet * 0.37, z: pz },
                       0.32, 0.34, '#ffffff', { y: faceYaw },
@@ -1261,7 +1269,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               }
               // Vertical shopfront concrete pilaster beside shutter bay
               bDet.box(
-                { x: sx + seg.ux * 1.48, y: 1.45, z: sz + seg.uz * 1.48 },
+                { x: sx + frame.ux * 1.48, y: 1.45, z: sz + frame.uz * 1.48 },
                 { x: 0.24, y: 2.65, z: 0.18 },
                 '#9e9688',
                 { y: faceYaw },
@@ -1296,8 +1304,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               const design = educationPosterCount % 2;
               const w = design === 0 ? 1.72 : 1.95;
               const h = design === 0 ? 2.44 : 1.95;
-              const px = frontX + seg.ux * 3.7 + fx * 0.075;
-              const pz = frontZ + seg.uz * 3.7 + fz * 0.075;
+              const px = frontX + frame.ux * 3.7 + fx * 0.075;
+              const pz = frontZ + frame.uz * 3.7 + fz * 0.075;
               bDet.box({ x: px - fx * 0.018, y: 1.58, z: pz - fz * 0.018 },
                 { x: w + 0.09, y: h + 0.09, z: 0.028 }, '#e7e2d5', { y: faceYaw });
               sectorEducation[secIdx].quad({ x: px, y: 1.58, z: pz },
@@ -1306,7 +1314,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             }
             for (const pDir of [-1.55, 1.55]) {
               bDet.box(
-                { x: frontX + seg.ux * pDir, y: 1.32, z: frontZ + seg.uz * pDir },
+                { x: frontX + frame.ux * pDir, y: 1.32, z: frontZ + frame.uz * pDir },
                 { x: 0.32, y: 2.55, z: 0.28 },
                 '#8f8779',
                 { y: faceYaw },
@@ -1334,8 +1342,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               }
               const bars = frontageStyle === 1 ? 2 : 1;
               for (let bar = -bars; bar <= bars; bar++) {
-                bDet.box({ x: frontX + fx * 0.82 + seg.ux * (balW * bar / (bars + 3)),
-                  y: by + 0.08, z: frontZ + fz * 0.82 + seg.uz * (balW * bar / (bars + 3)) },
+                bDet.box({ x: frontX + fx * 0.82 + frame.ux * (balW * bar / (bars + 3)),
+                  y: by + 0.08, z: frontZ + fz * 0.82 + frame.uz * (balW * bar / (bars + 3)) },
                   { x: 0.045, y: 0.72, z: 0.06 }, '#676963', { y: faceYaw });
               }
             } else if (seg.kind !== 'gali' && (frontageStyle === 2 || frontageStyle === 5)) {
@@ -1345,8 +1353,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               bDet.box({ x: frontX + fx * 0.82, y: by + 0.46, z: frontZ + fz * 0.82 },
                 { x: balW, y: 0.055, z: 0.065 }, '#545d58', { y: faceYaw });
               for (let bar = -2; bar <= 2; bar++) {
-                bDet.box({ x: frontX + fx * 0.82 + seg.ux * balW * bar / 6,
-                  y: by + 0.29, z: frontZ + fz * 0.82 + seg.uz * balW * bar / 6 },
+                bDet.box({ x: frontX + fx * 0.82 + frame.ux * balW * bar / 6,
+                  y: by + 0.29, z: frontZ + fz * 0.82 + frame.uz * balW * bar / 6 },
                   { x: 0.045, y: 0.35, z: 0.05 }, '#545d58', { y: faceYaw });
               }
             } else {
@@ -1358,9 +1366,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             for (const bSide of [-1, 1] as const) {
               bDet.box(
                 {
-                  x: frontX + fx * 0.42 + seg.ux * (balW * 0.49) * bSide,
+                  x: frontX + fx * 0.42 + frame.ux * (balW * 0.49) * bSide,
                   y: by + 0.08,
-                  z: frontZ + fz * 0.42 + seg.uz * (balW * 0.49) * bSide,
+                  z: frontZ + fz * 0.42 + frame.uz * (balW * 0.49) * bSide,
                 },
                 { x: 0.06, y: 0.82, z: 0.84 },
                 railCol,
@@ -1375,16 +1383,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             );
             // One sliding-door mullion breaks the large unlit dark rectangles
             // without introducing transparent glass or per-window objects.
-            bDet.box({ x: frontX + fx * 0.078 + seg.ux * (frontageStyle === 4 ? 0.36 : -0.12),
+            bDet.box({ x: frontX + fx * 0.078 + frame.ux * (frontageStyle === 4 ? 0.36 : -0.12),
               y: by + 0.62,
-              z: frontZ + fz * 0.078 + seg.uz * (frontageStyle === 4 ? 0.36 : -0.12) },
+              z: frontZ + fz * 0.078 + frame.uz * (frontageStyle === 4 ? 0.36 : -0.12) },
               { x: 0.045, y: 1.85, z: 0.045 },
               frontageStyle === 4 ? '#b0a99a' : '#738180', { y: faceYaw });
             // A single faded cloth panel on occasional balconies suggests an
             // occupied home without glass transparency or extra texture passes.
             if ((frontageStyle === 0 || frontageStyle === 5) && fl % 2 === 1) {
-              bDet.quad({ x: frontX + fx * 0.098 + seg.ux * 0.41,
-                y: by + 0.69, z: frontZ + fz * 0.098 + seg.uz * 0.41 },
+              bDet.quad({ x: frontX + fx * 0.098 + frame.ux * 0.41,
+                y: by + 0.69, z: frontZ + fz * 0.098 + frame.uz * 0.41 },
                 0.70, 1.55, frontageStyle === 0 ? '#b6a888' : '#839d94',
                 { y: faceYaw });
             }
@@ -1399,14 +1407,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             // gets a framed two-pane window. Keep it clear of the AC on the
             // opposite side; skip narrow plots and all interior/side faces.
             if (bWidth >= 9.7 && seg.kind !== 'gali' && (fl + frontageStyle) % 2 === 0) {
-              const wx = frontX - seg.ux * (balW * 0.5 + 0.88);
-              const wz = frontZ - seg.uz * (balW * 0.5 + 0.88);
+              const wx = frontX - frame.ux * (balW * 0.5 + 0.88);
+              const wz = frontZ - frame.uz * (balW * 0.5 + 0.88);
               const wy = by + 0.86;
               bDet.box({ x: wx + fx * 0.065, y: wy, z: wz + fz * 0.065 },
                 { x: 1.30, y: 1.24, z: 0.028 }, '#2e3d42', { y: faceYaw });
               for (const edge of [-1, 1]) {
-                bDet.box({ x: wx + fx * 0.09 + seg.ux * edge * 0.65, y: wy,
-                  z: wz + fz * 0.09 + seg.uz * edge * 0.65 },
+                bDet.box({ x: wx + fx * 0.09 + frame.ux * edge * 0.65, y: wy,
+                  z: wz + fz * 0.09 + frame.uz * edge * 0.65 },
                   { x: 0.055, y: 1.30, z: 0.07 }, '#a29c8d', { y: faceYaw });
               }
               bDet.box({ x: wx + fx * 0.095, y: wy - 0.65, z: wz + fz * 0.095 },
@@ -1416,8 +1424,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               bDet.box({ x: wx + fx * 0.105, y: wy, z: wz + fz * 0.105 },
                 { x: 0.035, y: 1.21, z: 0.045 }, '#a4aaa2', { y: faceYaw });
               if (frontageStyle % 2 === 0) {
-                bDet.quad({ x: wx + fx * 0.112 - seg.ux * 0.32, y: wy,
-                  z: wz + fz * 0.112 - seg.uz * 0.32 },
+                bDet.quad({ x: wx + fx * 0.112 - frame.ux * 0.32, y: wy,
+                  z: wz + fz * 0.112 - frame.uz * 0.32 },
                   0.47, 1.09, '#8c938b', { y: faceYaw });
               }
               litWindow(secIdx, wx + fx * 0.116, wy, wz + fz * 0.116,
@@ -1426,13 +1434,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             if ((fl + secIdx) % 3 === 0) {
               // Terracotta balcony planter pot + greenery
               bDet.cylinder(
-                { x: frontX + fx * 0.64 - seg.ux * (balW * 0.32), y: by - 0.16, z: frontZ + fz * 0.64 - seg.uz * (balW * 0.32) },
+                { x: frontX + fx * 0.64 - frame.ux * (balW * 0.32), y: by - 0.16, z: frontZ + fz * 0.64 - frame.uz * (balW * 0.32) },
                 0.16,
                 0.26,
                 '#9c4a2d',
               );
               bDet.cone(
-                { x: frontX + fx * 0.64 - seg.ux * (balW * 0.32), y: by + 0.12, z: frontZ + fz * 0.64 - seg.uz * (balW * 0.32) },
+                { x: frontX + fx * 0.64 - frame.ux * (balW * 0.32), y: by + 0.12, z: frontZ + fz * 0.64 - frame.uz * (balW * 0.32) },
                 0.24,
                 0.38,
                 '#2f6f3e',
@@ -1441,16 +1449,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             // A few older plaster facades show short rain-stained seams below
             // the cornice; keep them high, matte and off shop signs/windows.
             if (frontageStyle === 0 && fl % 2 === 1 && !useBrick) {
-              bDet.box({ x: frontX + seg.ux * (bWidth * 0.43) + fx * 0.075,
-                y: by + 1.15, z: frontZ + seg.uz * (bWidth * 0.43) + fz * 0.075 },
+              bDet.box({ x: frontX + frame.ux * (bWidth * 0.43) + fx * 0.075,
+                y: by + 1.15, z: frontZ + frame.uz * (bWidth * 0.43) + fz * 0.075 },
                 { x: 0.18, y: 0.92, z: 0.016 }, '#aca596', { y: faceYaw });
             }
             // Wall-mounted outdoor split AC: painted casing, inset dark fan
             // grille, radial blades, louvers, bracket and copper drain line.
             // Everything joins the existing sector detail mesh (no new pass).
             if ((fl + secIdx) % 2 === 0) {
-              const ax = frontX + seg.ux * (bWidth * 0.38) + fx * 0.22;
-              const az = frontZ + seg.uz * (bWidth * 0.38) + fz * 0.22;
+              const ax = frontX + frame.ux * (bWidth * 0.38) + fx * 0.22;
+              const az = frontZ + frame.uz * (bWidth * 0.38) + fz * 0.22;
               const ay = by + 0.9;
               bDet.box({ x: ax, y: ay, z: az }, { x: 0.78, y: 0.54, z: 0.34 }, '#d8dedb', { y: faceYaw });
               bDet.box({ x: ax + fx * 0.177, y: ay, z: az + fz * 0.177 },
@@ -1468,12 +1476,12 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                   { y: faceYaw, z: blade * Math.PI / 3 });
               }
               for (const side of [-1, 1]) {
-                bDet.box({ x: ax + seg.ux * side * 0.26 - fx * 0.035,
-                  y: ay - 0.31, z: az + seg.uz * side * 0.26 - fz * 0.035 },
+                bDet.box({ x: ax + frame.ux * side * 0.26 - fx * 0.035,
+                  y: ay - 0.31, z: az + frame.uz * side * 0.26 - fz * 0.035 },
                   { x: 0.08, y: 0.09, z: 0.24 }, '#687675', { y: faceYaw });
               }
-              bDet.box({ x: ax + seg.ux * 0.43 - fx * 0.16, y: ay - 0.22,
-                z: az + seg.uz * 0.43 - fz * 0.16 },
+              bDet.box({ x: ax + frame.ux * 0.43 - fx * 0.16, y: ay - 0.22,
+                z: az + frame.uz * 0.43 - fz * 0.16 },
                 { x: 0.035, y: 0.44, z: 0.035 }, '#997657');
             }
           }
