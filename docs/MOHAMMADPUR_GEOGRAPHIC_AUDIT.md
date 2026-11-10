@@ -60,42 +60,59 @@ not fixed, because changing `PROJECTION_ORIGIN` would translate the entire world
 | graph extent | 460 u × 504 u = **1,278 m × 1,400 m** | — |
 | road segments | **70** | 1,610 ways (1,490 drivable, 573 named) |
 | graph nodes | **42** | — |
-| total road length | **5,521 u = 15,337 m** | 51,523 m drivable in-box (302 ways) |
+| total road length | **5,521 u = 15,337 m** | **47,422 m** drivable, box-clipped |
 | named places | **14 `PLACES`**, 9 `LANDMARKS` | 2,857 POIs (1,201 of them inside the box) |
 
-**Network coverage: 29.8 %** of in-box OSM drivable length is represented by the
+**Network coverage: 32.3 %** of in-box OSM drivable length is represented by the
 runtime graph. The playable world covers **1.79 km²**, which is **24 % of
 Mohammadpur thana's 7.44 km²**.
+
+*Measurement note.* The in-box length must be **clipped** to the box: summing
+whole ways that merely touch it gives 260.34 km, which is meaningless overcount.
+Clipping with Liang–Barsky over all 1,490 drivable ways gives 47.42 km.
 
 Segment classes: `main` 13, `medium` 34, `gali` 23.
 
 **This ratio is the headline number for any coverage claim.** Mohammadpur is
-*not* complete, and the remaining 70 % should not be described as decoration
+*not* complete, and the remaining 68 % should not be described as decoration
 debt — it is absent street network.
+
+`src/world/mohammadpurData.ts` carries its own header claim of "5.5 km against
+16.2 km real, i.e. ~34 % of network length". **The ratio reproduces (32.3 % vs
+34 %) but the absolute length does not (47.42 km vs 16.2 km)** — the header
+appears to count a narrower road set (excluding service/living_street and
+unnamed ways). Because the ratio agrees, the header's *conclusion* stands; the
+absolute figure should not be quoted. Recorded, not silently "corrected", since
+the extract may have been regenerated since that comment was written.
 
 ### High-class corridors inside the playable box
 
-Thirteen named trunk/secondary/tertiary corridors cross the box, **9,376 m** in
-total. Presence in the runtime graph:
+Thirteen named trunk/secondary/tertiary corridors cross the box, **9,244 m** in
+total (box-clipped). Presence in the runtime graph:
 
 | corridor | class | in-box | in game |
 |---|---|---|---|
-| Asad Avenue | secondary | 2,133 m | yes |
-| **Mirpur Road** | **trunk** | **1,339 m** | **ABSENT** |
+| Asad Avenue | secondary | 2,122 m | yes |
+| **Mirpur Road** | **trunk** | **1,297 m** | **ABSENT** |
 | Aurangzeb Road | tertiary | 964 m | yes |
 | Shahjahan Road | tertiary | 896 m | yes |
-| (unnamed links) | secondary_link | 787 m | absent |
-| Ring Road | secondary | 767 m | yes |
+| Ring Road | secondary | 741 m | yes |
 | Tajmahal Road | tertiary | 716 m | yes |
+| (unnamed links) | secondary_link | 709 m | absent |
 | Sher-E-Bangla Road | tertiary | 660 m | absent |
-| Mohammadpur Beribadh Connecting | secondary | 633 m | absent |
-| Satmasjid Road | secondary | 176 m | yes |
-| Sher-E-Bangla Main Road | tertiary | 113 m | absent |
+| Mohammadpur Beribadh Connecting Road | secondary | 595 m | absent |
+| Satmasjid Road | secondary | 265 m | yes |
+| Sher-E-Bangla Main Road | tertiary | 104 m | absent |
 | Glass Factory Road | tertiary | 103 m | absent |
-| Sadek Khan Road | tertiary | 89 m | absent |
+| Sadek Khan Road | tertiary | 72 m | absent |
+
+*Note on the Beribadh row:* the game does have an `asad_0` segment named
+"Beribadh Connecting Rd", but it cites way `565418929` (Asad Avenue's way), not
+any "Mohammadpur Beribadh Connecting Road" way — so the corridor itself is
+unrepresented and the similarly-named segment is not a match.
 
 **The single largest geographic gap is Mirpur Road**: the highest-class road in
-the dataset (`trunk`, 1,339 m inside the box) has no representation at all. The
+the dataset (`trunk`, 1,297 m inside the box) has no representation at all. The
 game is currently built *behind* it — Asad Avenue, Ring Road and the Beribadh
 edge are all present, but the trunk that carries the traffic into them is not.
 
@@ -127,9 +144,40 @@ A third of the drivable network the player experiences is invented linking
 fabric. That is a legitimate design decision for a small open world, but it must
 be stated whenever the map is described as "Mohammadpur".
 
-### Geometry is schematic, not aligned
+### Two different geometry questions, two different answers
 
-Comparing each segment's midpoint to the nearest vertex of the OSM way it cites:
+These must not be conflated, because they are often quoted as if they were one.
+
+**(a) Are the corridors real?** Distance from each segment midpoint to the
+**nearest point on any** drivable OSM road polyline (true point-to-segment
+distance, not vertex distance):
+
+| statistic | value |
+|---|---|
+| minimum | 0.3 m |
+| **median** | **12.2 m** |
+| p90 | 31.7 m |
+| maximum | 52.6 m |
+| within 25 m | **57 / 70** |
+| within 50 m | 68 / 70 |
+
+So the corridors trace real streets — 57 of 70 are within one carriageway width
+and a bit of a real road, and the worst is 52.6 m. **Yes, the corridors are real.**
+
+The header of `mohammadpurData.ts` claims "every one of the 70 segment midpoints
+lies within 25 m of a real road polyline (median 5 m)". **That does not
+reproduce.** Measured against all 1,610 ways the result is identical to the
+drivable-only result (median 12.2 m, 57/70 within 25 m); measured at **nodes**
+instead of midpoints it is median 10.4 m, 38/42 within 25 m, worst 44.1 m
+(`bus_stand`, `babar_e`, `asad_gate_e`, `asad_iqbal`). No reasonable method
+yields "all 70 within 25 m, median 5 m" against the checked-in extract. Either
+the extract changed after that comment, or the method is not reproduced here.
+**Flagged for the user; not edited**, because I cannot prove which of those is
+true and the user's rule is to investigate rather than overwrite.
+
+**(b) Is the cited OSM way the geometry source?** No — and this is by design, not
+a defect. Comparing each segment midpoint to the OSM way its own `osmWayId`
+names:
 
 | deviation | value |
 |---|---|
@@ -144,6 +192,13 @@ Only **12 of 49** segments sit within 30 m of their cited way, and **20 of 49**
 are more than 100 m away. All **42 graph nodes have integer coordinates** and no
 node carries an OSM node ID, which confirms the graph is hand-authored on a unit
 grid rather than derived from OSM.
+
+This is consistent with the source's own documented intent: *"the `osmWayId`
+records which way the corridor came from. Road geometry is not [real]."* The way
+ID is **identity/width provenance**, not a geometry claim, so the 78 m median is
+the expected consequence of hand-placed chords — it is the size of the P3 gap,
+not evidence of a bug. Measure **(a)** is the one to quote for "are the streets
+real"; measure **(b)** is the one to quote for "how far is P3 from alignment".
 
 Per-segment length ratios are not a useful metric (Ring Road way 33832973 is
 640.9 m of OSM geometry represented by four game segments; Asad Avenue way
@@ -183,7 +238,7 @@ Two honest observations from the renders:
    camera is above the fog ceiling entirely. Street level (the actual gameplay
    view) is unaffected and sharp. This is a deliberate trade for a 1.3 × 1.4 km
    world on mobile GPUs, but it means **no aerial/satellite-style validation of
-   network coverage is possible from a render** — the 29.8 % figure in §1 comes
+   network coverage is possible from a render** — the 32.3 % figure in §1 comes
    from geometry, not from a picture, and should not be "confirmed" visually.
 2. No rendering defect was found on any existing corridor. The visual gap is
    entirely *absence* of streets (§1), not quality of what is built.
@@ -255,9 +310,12 @@ inside the routable threshold.
 ## 6. What this audit establishes
 
 1. **Projection and landmark fidelity are sound** (≤1.7 cm). Do not touch them.
-2. **Road geometry is schematic**: median 78 m from cited OSM ways, 32 % of
-   network length is synthetic. This is P3, and P3 now has a number to scope.
-3. **Network coverage is 29.8 %**, area coverage 24 % of the thana.
+2. **The corridors are real but the geometry is schematic.** Segment midpoints
+   sit a median **12.2 m** from the nearest real road (57/70 within 25 m), so the
+   streets are correctly chosen. But only a median **78 m** from the OSM way each
+   one cites, because the `osmWayId` is identity provenance, not geometry. 32 %
+   of network length is synthetic connectors. That 78 m is the P3 scope.
+3. **Network coverage is 32.3 %** (box-clipped), area coverage 24 % of the thana.
 4. **Mirpur Road is the highest-value missing corridor** and cannot be added
    without changing the 140-lane graph and all three baselines.
 5. **Navigation is complete for existing content**, so no navigation fix is
