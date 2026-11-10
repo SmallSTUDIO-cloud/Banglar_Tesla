@@ -476,7 +476,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     const CREST_HEIGHT_BY_SEG: Record<string, number> = {
       asad_0: 0.44, // Beribadh Embankment Approach ramp
       ring_2: 0.40, // Ring Road Shia Mosque Overpass crest
-      babar_2: 0.46, // Babar Road Canal Box-Culvert bridge
+      babar_2: 0.46, // Babor Road Canal Box-Culvert bridge
       satmasjid_2: 0.42, // Satmasjid Road Southern Culvert rise
       asad_5: 0.36, // Asad Gate Crown straight
     };

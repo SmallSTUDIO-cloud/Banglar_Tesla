@@ -30,7 +30,8 @@
     "shots": "node tests/e2e/shoot.mjs",
     "perf": "node tests/e2e/perf.mjs",
     "test:vnext-repair": "node tests/e2e/verify-vnext-repair.mjs",
-    "test:geography": "node tests/e2e/verify-geography.mjs"
+    "test:geography": "node tests/e2e/verify-geography.mjs",
+    "audit:roads": "vite-node scripts/audit-road-coverage.ts"
   },
   "dependencies": {
     "three": "0.186.1"

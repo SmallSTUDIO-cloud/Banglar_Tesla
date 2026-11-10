@@ -59,7 +59,32 @@ which corroborates the photogrammetric claim that the market fronts Asad Avenue
 rather than sitting beside it. `asad_4` runs `town_hall (42,106)` →
 `asad_post (118,84)`, so vertices 0 and 11 (x ≈ 42–48) bracket that junction.
 
-## 3. The one figure that does not reconcile — do not paper over it
+## 3. RESOLVED (2026-10-29): the two area figures are different scopes
+
+**User decision, binding.** The earlier "conflict" below is not a data
+disagreement — the two numbers measure different things and must not be
+reconciled:
+
+| figure | what it is |
+|---|---|
+| **1.24 acres (5,010 m²)** | the currently mapped OSM `amenity=marketplace` **site polygon** (way 223068917) — the bazaar footprint |
+| **5.5 acres** | the wider **Town Hall civic-market precinct** from the academic study, which also covers the ward office, mosque, library and playground |
+
+Consequences, now binding:
+
+- **Neither figure establishes the supermarket building footprint.** Do not
+  derive a building plan or height from either.
+- **Do not construct a 5.5-acre building**, and do not treat 5.5 acres as a
+  building dimension in any form.
+- The OSM polygon remains the only *mapped* geometry available, so it is the only
+  area that may drive ground-level layout.
+- Both figures may be cited in prose, but always labelled with their scope.
+
+The original uncertainty is retained below for provenance, marked resolved.
+
+---
+
+## 3a. Original note (superseded, kept for traceability)
 
 | claim | value | source |
 |---|---|---|

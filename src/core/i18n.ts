@@ -413,7 +413,7 @@ export const STRINGS: Record<string, Entry> = {
   'place.launch': { bn: 'সাতমসজিদ রোড মোড়', en: 'Satmasjid Road Junction' },
   'place.mosque': { bn: 'শিয়া মসজিদ ও রিং রোড মোড়', en: 'Shia Mosque & Ring Road' },
   'place.market': { bn: 'কৃষি মার্কেট মোড়', en: 'Krishi Market Corner' },
-  'place.bridge': { bn: 'বাবর রোড জহুরি মহল্লা', en: 'Babar Road Johuri Moholla' },
+  'place.bridge': { bn: 'বাবর রোড জহুরি মহল্লা', en: 'Babor Road Johuri Moholla' },
   'place.library': { bn: 'তাজমহল রোড ঈদগাহ মাঠ', en: 'Tajmahal Road Field' },
   'place.salimullah': { bn: 'সলিমুল্লাহ রোড মোড়', en: 'Salimullah Road Corner' },
   'place.humayun': { bn: 'হুমায়ুন রোড ক্লিনিক মোড়', en: 'Humayun Road Corner' },
