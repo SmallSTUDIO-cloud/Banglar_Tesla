@@ -18,6 +18,7 @@
  */
 
 import { PLACES, ROAD_SEGMENTS, distanceToRoadCarriageway, segmentById } from './layout';
+import { arcLengthOf, placementAt, projectOntoPolyline } from './roadGeometry';
 
 export type ApronStallKind = 'veg' | 'fruit' | 'tea' | 'fuchka' | 'jhalmuri';
 
@@ -90,29 +91,26 @@ export function planMarketSignage(): MarketSignPlan[] {
     const place = PLACES.find((p) => p.id === placeId);
     if (!place) continue;
     const seg = segmentById(place.segmentId) ?? ROAD_SEGMENTS[0];
-    const lateralSign =
-      (place.x - seg.ax) * seg.leftX + (place.z - seg.az) * seg.leftZ >= 0 ? 1 : -1;
+    // Polyline projection replaces a 0.5-unit brute-force scan: exact instead of
+    // quantised, and correct on a curved segment. Returns the arc position.
+    const proj = projectOntoPolyline(seg, place.x, place.z);
+    const along = proj.s;
+    const arc = arcLengthOf(seg);
+    const lateralSign: 1 | -1 = proj.lateral >= 0 ? 1 : -1;
     const apronOffset = (seg.halfWidth + seg.sidewalk * 0.62) * lateralSign;
-    const yaw = Math.atan2(-seg.leftX * lateralSign, -seg.leftZ * lateralSign);
-
-    let along = 0;
-    let bestD = Infinity;
-    for (let t = 0; t <= seg.length; t += 0.5) {
-      const d = Math.hypot(place.x - (seg.ax + seg.ux * t), place.z - (seg.az + seg.uz * t));
-      if (d < bestD) {
-        bestD = d;
-        along = t;
-      }
-    }
+    // Local frame: the chord normal would rotate a curved frontage off its kerb.
+    const apronFrame = placementAt(seg, along, 0);
+    const yaw = Math.atan2(-apronFrame.leftX * lateralSign, -apronFrame.leftZ * lateralSign);
 
     // End of the vendor row, then just past it.
     const halfSpan = ((APRON_KINDS.length - 1) / 2) * APRON_SPACING;
     let boardAlong = along + halfSpan + SIGN_GAP;
-    if (boardAlong > seg.length - 1.5) boardAlong = along - halfSpan - SIGN_GAP;
-    if (boardAlong < 1.5 || boardAlong > seg.length - 1.5) continue;
+    if (boardAlong > arc - 1.5) boardAlong = along - halfSpan - SIGN_GAP;
+    if (boardAlong < 1.5 || boardAlong > arc - 1.5) continue;
 
-    const bx = seg.ax + seg.ux * boardAlong + seg.leftX * apronOffset;
-    const bz = seg.az + seg.uz * boardAlong + seg.leftZ * apronOffset;
+    const boardFrame = placementAt(seg, boardAlong, apronOffset);
+    const bx = boardFrame.x;
+    const bz = boardFrame.z;
     if (distanceToRoadCarriageway(bx, bz) < APRON_MIN_CLEARANCE) continue;
     plan.push({
       placeId,
@@ -135,29 +133,27 @@ export function planMarketApron(): ApronStallPlan[] {
     const seg = segmentById(place.segmentId) ?? ROAD_SEGMENTS[0];
 
     // Where along this segment the market frontage sits.
-    let along = 0;
-    let bestD = Infinity;
-    for (let t = 0; t <= seg.length; t += 0.5) {
-      const d = Math.hypot(place.x - (seg.ax + seg.ux * t), place.z - (seg.az + seg.uz * t));
-      if (d < bestD) {
-        bestD = d;
-        along = t;
-      }
-    }
+    // Polyline projection replaces a 0.5-unit brute-force scan: exact instead of
+    // quantised, and correct on a curved segment. Returns the arc position.
+    const proj = projectOntoPolyline(seg, place.x, place.z);
+    const along = proj.s;
+    const arc = arcLengthOf(seg);
 
     // Which side of the road the frontage occupies.
-    const lateralSign =
-      (place.x - seg.ax) * seg.leftX + (place.z - seg.az) * seg.leftZ >= 0 ? 1 : -1;
+    const lateralSign: 1 | -1 = proj.lateral >= 0 ? 1 : -1;
     const apronOffset = (seg.halfWidth + seg.sidewalk * 0.62) * lateralSign;
-    const yaw = Math.atan2(-seg.leftX * lateralSign, -seg.leftZ * lateralSign);
+    // Local frame: the chord normal would rotate a curved frontage off its kerb.
+    const apronFrame = placementAt(seg, along, 0);
+    const yaw = Math.atan2(-apronFrame.leftX * lateralSign, -apronFrame.leftZ * lateralSign);
 
     for (let i = 0; i < APRON_KINDS.length; i++) {
       const t = Math.max(
         1.5,
-        Math.min(seg.length - 1.5, along + (i - (APRON_KINDS.length - 1) / 2) * APRON_SPACING),
+        Math.min(arc - 1.5, along + (i - (APRON_KINDS.length - 1) / 2) * APRON_SPACING),
       );
-      const x = seg.ax + seg.ux * t + seg.leftX * apronOffset;
-      const z = seg.az + seg.uz * t + seg.leftZ * apronOffset;
+      const cartFrame = placementAt(seg, t, apronOffset);
+      const x = cartFrame.x;
+      const z = cartFrame.z;
       // Never emit a cart that would sit on the asphalt. Checked here so the
       // invariant is testable independently of mesh construction.
       if (distanceToRoadCarriageway(x, z) < APRON_MIN_CLEARANCE) continue;
