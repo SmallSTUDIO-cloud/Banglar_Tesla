@@ -12,6 +12,7 @@
  */
 
 import { GRAPH_NODES, ROAD_SEGMENTS, type RoadSegment } from '../world/layout';
+import { projectOntoPolyline } from '../world/roadGeometry';
 import type { Poi } from '../world/poiRegistry';
 
 /** How far a place may sit from the carriageway and still be considered served. */
@@ -43,14 +44,15 @@ export interface RouteResult {
 export function nearestRoad(x: number, z: number): NearestRoad | null {
   let best: NearestRoad | null = null;
   for (const segment of ROAD_SEGMENTS) {
-    const vx = segment.bx - segment.ax;
-    const vz = segment.bz - segment.az;
-    const len2 = vx * vx + vz * vz;
-    const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - segment.ax) * vx + (z - segment.az) * vz) / len2));
-    const px = segment.ax + t * vx;
-    const pz = segment.az + t * vz;
-    const distance = Math.hypot(x - px, z - pz);
-    if (!best || distance < best.distance) best = { segment, distance, x: px, z: pz };
+    // Polyline projection, so a curved centreline is measured against the road
+    // that is actually drawn rather than its chord. A chord measurement can
+    // overstate the distance enough to push a genuinely served POI past
+    // POI_ROAD_MAX_OFFSET_M and make it permanently unroutable.
+    const proj = projectOntoPolyline(segment, x, z);
+    const distance = Math.hypot(x - proj.x, z - proj.z);
+    if (!best || distance < best.distance) {
+      best = { segment, distance, x: proj.x, z: proj.z };
+    }
   }
   return best;
 }
