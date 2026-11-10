@@ -8,6 +8,7 @@
 
 import { clamp } from '../core/mathx';
 import { landmarkById, type Landmark } from './landmarks';
+import type { Vec2 } from './roadGeometry';
 import {
   MOHAMMADPUR_EDGES,
   MOHAMMADPUR_NODES,
@@ -58,6 +59,20 @@ export interface RoadSegment {
   osmWayId?: number;
   jamProne: boolean;
   deadEnd: boolean;
+  /**
+   * Optional authored centreline, *including* both endpoints.
+   *
+   * Absent on every segment except the ones listed in
+   * `COLLINEAR_SUBDIVISIONS`. When present, `vertices[0]` equals `(ax,az)` and
+   * the last vertex equals `(bx,bz)` exactly, so the junction nodes and the
+   * gameplay graph are untouched. Interior vertices are not nodes.
+   *
+   * Consume via `src/world/roadGeometry.ts` (`poseAt`, `offsetPoint`,
+   * `projectOntoPolyline`, `arcLengthOf`) rather than doing vector algebra here.
+   * `length` below remains the **chord** between the junctions; polyline length
+   * is a separate query and is never substituted for it silently.
+   */
+  vertices?: readonly Vec2[];
   // Backwards-compatible summary fields for minimap/legacy callers
   axis: 'x' | 'z';
   center: number;
@@ -134,6 +149,52 @@ for (const e of MOHAMMADPUR_EDGES) {
   a.incidentEdgeIds.push(seg.id);
   b.incidentEdgeIds.push(seg.id);
 }
+
+/* ----------------------- Phase 1: collinear subdivision ------------------- */
+
+/**
+ * Phase 1 polyline prototype — **collinear**, deliberately.
+ *
+ * `asad_4` is the single segment given an authored centreline, with vertices at
+ * 0 %, 50 % and 100 % of its existing chord. The polyline is therefore exactly
+ * collinear with the chord it replaces, so it changes *nothing* geometrically:
+ * the same junction nodes, the same asphalt footprint, the same arc length, the
+ * same lane graph, the same buildings, the same race distances.
+ *
+ * Its purpose is to prove the whole polyline pipeline (derivation, span
+ * resampling, sampling, rendering, minimap) end-to-end on a real and heavily
+ * referenced segment while both golden baselines stay at zero diff. Real curved
+ * geometry for this segment is a **separate, unapproved** proposal.
+ *
+ * Endpoints are written from `ax/az` and `bx/bz` directly, never recomputed from
+ * the fraction, so `vertices[0] === (ax,az)` and the last vertex `=== (bx,bz)`
+ * hold exactly and junction identity cannot drift by a rounding step.
+ */
+const COLLINEAR_SUBDIVISIONS: Record<string, readonly number[]> = {
+  asad_4: [0, 0.5, 1],
+};
+
+function applyCollinearSubdivisions(): void {
+  for (const [id, fractions] of Object.entries(COLLINEAR_SUBDIVISIONS)) {
+    const seg = segmentMap.get(id);
+    if (!seg) {
+      throw new Error(`[layout] collinear subdivision targets unknown segment "${id}"`);
+    }
+    const sorted = [...fractions].sort((p, q) => p - q);
+    if (sorted.length < 2 || sorted[0] !== 0 || sorted[sorted.length - 1] !== 1) {
+      throw new Error(`[layout] subdivision for "${id}" must start at 0 and end at 1`);
+    }
+    seg.vertices = sorted.map((f, i) => {
+      if (i === 0) return { x: seg.ax, z: seg.az };
+      if (i === sorted.length - 1) return { x: seg.bx, z: seg.bz };
+      // Multiplication by the fraction is exact enough that the interior vertex
+      // stays collinear to <1e-14 world units (<3e-14 m).
+      return { x: seg.ax + (seg.bx - seg.ax) * f, z: seg.az + (seg.bz - seg.az) * f };
+    });
+  }
+}
+
+applyCollinearSubdivisions();
 
 export const GRAPH_NODES: GraphNode[] = [...nodeMap.values()];
 for (const n of GRAPH_NODES) {

@@ -11,6 +11,7 @@
  */
 
 import type { RoadSegment } from '../world/layout';
+import { renderStrips } from '../world/roadGeometry';
 import type { Poi, PoiCategory } from '../world/poiRegistry';
 import { buildRouteToPoi, poiReach, type MapPoint, type RouteResult } from '../world/mapRouting';
 
@@ -427,12 +428,18 @@ export class MapScreen {
       ctx.lineCap = 'round';
       for (const seg of this.opts.segments) {
         if (seg.kind !== kind) continue;
-        const a = this.worldToScreen(seg.ax, seg.az);
-        const b = this.worldToScreen(seg.bx, seg.bz);
         ctx.lineWidth = Math.max(1.5, style.width * Math.min(this.view.zoom, 2.2) * 0.55);
         ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
+        // Follow the polyline so an authored centreline bends on the minimap
+        // instead of collapsing to a chord. Straight segments emit one span and
+        // therefore draw exactly the previous two-point line.
+        const spans = renderStrips(seg);
+        const start = this.worldToScreen(seg.ax, seg.az);
+        ctx.moveTo(start.x, start.y);
+        for (const span of spans) {
+          const p = this.worldToScreen(span.bx, span.bz);
+          ctx.lineTo(p.x, p.y);
+        }
         ctx.stroke();
       }
     }

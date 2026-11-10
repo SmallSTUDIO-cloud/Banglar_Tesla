@@ -23,6 +23,7 @@ import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
 import { planCorridorStructures } from './corridorIdentity';
+import { renderStrips } from './roadGeometry';
 import { PosterAtlas } from './posterAtlas';
 import { EDUCATION_POSTERS, educationPosterTexture, snackPacketAtlas } from './streetPrint';
 import { DAMAGE_ZONES, roadDamageAt } from './roadDamage';
@@ -364,17 +365,24 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
   for (const seg of ROAD_SEGMENTS) {
     const yaw = Math.atan2(seg.ux, seg.uz);
-    const mx = (seg.ax + seg.bx) * 0.5;
-    const mz = (seg.az + seg.bz) * 0.5;
     const asphaltTint = seg.kind === 'main' ? '#868b92' : seg.kind === 'medium' ? '#7f8389' : '#777a7e';
 
-    // Continuous asphalt carriageway ribbon between junction centres (flush y = 0.014)
-    bRoad.box(
-      { x: mx, y: 0.007, z: mz },
-      { x: seg.width, y: 0.014, z: seg.length },
-      asphaltTint,
-      { y: yaw },
-    );
+    // Continuous asphalt carriageway ribbon between junction centres (flush y = 0.014).
+    //
+    // Emitted once per polyline span so an authored centreline paints as a real
+    // ribbon rather than a straight chord. For a segment with no `vertices` this
+    // is a single box identical to the previous one. For the collinear Phase 1
+    // prototype (`asad_4`) it is two half-length boxes that tile the original
+    // footprint exactly — the seam sits at the midpoint with no gap and no
+    // overlap, so nothing about the surface changes.
+    for (const span of renderStrips(seg)) {
+      bRoad.box(
+        { x: (span.ax + span.bx) * 0.5, y: 0.007, z: (span.az + span.bz) * 0.5 },
+        { x: seg.width, y: 0.014, z: span.length },
+        asphaltTint,
+        { y: Math.atan2(span.ux, span.uz) },
+      );
+    }
 
     // Dashed white centreline + solid main-avenue edge lines (trimmed away from junction centres)
     const trimStart = Math.min(seg.length * 0.35, 8.5);
