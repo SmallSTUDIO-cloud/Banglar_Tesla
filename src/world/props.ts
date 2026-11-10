@@ -19,6 +19,7 @@ import type { Collider } from './city';
 import type { BreakableKind, BreakableProp } from './destruction';
 import { Bucket } from './geo';
 import { ROAD_SEGMENTS, isClearOfRoads, snapToNearestRoad } from './layout';
+import { arcLengthOf, placementAt, projectOntoPolyline } from '../world/roadGeometry';
 import { APRON_MIN_CLEARANCE, planMarketApron, planMarketSignage } from './marketApron';
 import { planCorridorActivity, planCorridorSignage } from './corridorIdentity';
 import { STOREFRONTS } from './storefronts';
@@ -481,17 +482,20 @@ export function buildProps(
   // Place stalls systematically along Mohammadpur sidewalks & market hubs!
   let stallTypeCounter = 0;
   for (const seg of ROAD_SEGMENTS) {
-    if (seg.length < 30) continue;
+    const arc = arcLengthOf(seg);
+    if (arc < 30) continue;
     const density = seg.jamProne ? 2 : seg.kind !== 'gali' ? 1 : rng() < 0.4 ? 1 : 0;
     for (let i = 0; i < density; i++) {
       const side: 1 | -1 = (i + stallTypeCounter) % 2 === 0 ? 1 : -1;
-      const along = seg.length * (density === 1 ? 0.52 : 0.32 + i * 0.36);
+      const along = arc * (density === 1 ? 0.52 : 0.32 + i * 0.36);
       // Sit back onto the outer sidewalk / shopfront apron so road stays 100% clear!
       const lateral = (seg.halfWidth + seg.sidewalk * 0.78 + 0.38) * side;
-      const sx = seg.ax + seg.ux * along + seg.leftX * lateral;
-      const sz = seg.az + seg.uz * along + seg.leftZ * lateral;
+      // Local polyline frame; identical on straight and collinear segments.
+      const stallFrame = placementAt(seg, along, lateral);
+      const sx = stallFrame.x;
+      const sz = stallFrame.z;
       // Face inward toward the street & pedestrians!
-      const faceYaw = Math.atan2(-seg.leftX * side, -seg.leftZ * side);
+      const faceYaw = Math.atan2(-stallFrame.leftX * side, -stallFrame.leftZ * side);
 
       if (!canPlaceStall(sx, sz, 1.35)) continue;
       const mod = stallTypeCounter % 5;
@@ -700,16 +704,16 @@ export function buildProps(
     // the shop actually fronts.
     const snap = snapToNearestRoad(shop.x, shop.z);
     const seg = snap.segment;
-    const side =
-      (shop.x - seg.ax) * seg.leftX + (shop.z - seg.az) * seg.leftZ >= 0 ? 1 : -1;
+    const arc = arcLengthOf(seg);
+    // Polyline projection gives both the arc position and the signed side.
+    const proj = projectOntoPolyline(seg, shop.x, shop.z);
+    const side: 1 | -1 = proj.lateral >= 0 ? 1 : -1;
     const apron = seg.halfWidth + seg.sidewalk * 0.55;
-    const along = Math.max(
-      2,
-      Math.min(seg.length - 2, (shop.x - seg.ax) * seg.ux + (shop.z - seg.az) * seg.uz),
-    );
-    const bx = seg.ax + seg.ux * along + seg.leftX * apron * side;
-    const bz = seg.az + seg.uz * along + seg.leftZ * apron * side;
-    const yaw = Math.atan2(-seg.leftX * side, -seg.leftZ * side);
+    const along = Math.max(2, Math.min(arc - 2, proj.s));
+    const boardFrame = placementAt(seg, along, apron * side);
+    const bx = boardFrame.x;
+    const bz = boardFrame.z;
+    const yaw = Math.atan2(-boardFrame.leftX * side, -boardFrame.leftZ * side);
     // Same rejection rules as every other board.
     if (!isClearOfRoads(bx, bz, APRON_MIN_CLEARANCE)) continue;
     if (overlapsBuilding(bx, bz, 1.6, 0.28, yaw)) continue;
