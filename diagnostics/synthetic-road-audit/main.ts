@@ -4,7 +4,7 @@
  * Two renderers, both driven by the same measured data:
  *
  *   plan   — 2D canvas. Every shipped footprint, the synthetic road with its
- *            carriageway and corridor bands, the 54 evicted footprints painted
+ *            carriageway and corridor bands, the evicted footprints painted
  *            by cause, the replacement buildings the perturbation added.
  *   street — 3D perspective of the *actual* generated city (the real
  *            `buildCity()` group), with the synthetic carriageway drawn where
@@ -214,7 +214,7 @@ function drawPlan(): void {
 
   // --- scale bar + caption
   const metres = 100;
-  scaleEl.textContent = `scale bar ${metres} m   ·   ${audit!.rows.length} evicted   39 added`;
+  scaleEl.textContent = `scale bar ${metres} m   ·   ${audit!.rows.length} evicted   ${audit!.added} added`;
   const px = metres * tf.s;
   ctx.save();
   ctx.strokeStyle = '#9db0c3';
@@ -418,7 +418,7 @@ function draw(): void {
       ? 'Plan view · whole shipped city · paint = measured eviction cause'
       : view.fit === 'region'
         ? 'Plan view · zoom on the densest eviction cluster · numbers match the audit table'
-        : 'Plan view · evicted footprints only · numbered 1–54';
+        : `Plan view · evicted footprints only · numbered 1–${audit!.rows.length}`;
     drawPlanScaleNote();
   }
 }

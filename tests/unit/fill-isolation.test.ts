@@ -266,14 +266,16 @@ describe('interior / infill isolation', () => {
     // (60 main, 70 interior, 20 infill, 12 shop-front) — displaced candidates,
     // not deliberate removals.
     //
-    // What remains is a different, pre-existing question: a road driven through
-    // the mapped blocks evicts the buildings it and its corridor displace. With
-    // the corridor index rebuilt that is 54 buildings, and it is exactly 54 at
-    // `9f3e26e` too (measured: the same set) — the building-vs-road precedence
-    // policy, unchanged by fill isolation and deliberately not decided here.
+    // What remains is a different question: a road driven through the mapped
+    // blocks evicts the buildings it and its corridor displace. That used to be
+    // 54, but 35 of those were collateral — a rejected candidate re-rolled its
+    // neighbours on both sides of the segment. With the frontage walk isolated
+    // (`src/world/frontageLayout.ts`, measured in `docs/SYNTHETIC_ROAD_AUDIT.md`
+    // §11) exactly 19 buildings go: the 17 under the asphalt and the 2 in the
+    // sidewalk band. The precedence policy itself is still not decided here.
     const near = syntheticSegment('synth_near', -60, -200, 60, 160);
     const out = await withSegments([...ORIGINAL_ORDER, near], () => buildNow());
-    expect(removedFrom(BASE, out).length).toBe(54);
+    expect(removedFrom(BASE, out).length).toBe(19);
 
     // Isolation's actual guarantee: every building that survives is the same
     // building, byte for byte. Nothing is resized, re-styled or nudged by the

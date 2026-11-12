@@ -26,6 +26,7 @@ import {
   legacyInfillOrdinal,
   legacyInteriorOrdinal,
 } from './legacyFillLayout';
+import { legacyFrontageDecision } from './frontageLayout';
 import {
   derivedFillOrdinal,
   RegionBudgetLedger,
@@ -1033,10 +1034,45 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
       let along = 9.5;
+      let step = 0;
       while (along < arc - 9.5) {
+        // --- Candidate identity, decided before anything is tested ----------
+        //
+        // Every draw this candidate will ever use is taken here, in the order
+        // the accepted path has always taken them (width, depth, setback,
+        // floors, tint, brick, commercial, gap). Placement is a pure filter
+        // applied afterwards, so a rejected candidate can no longer shift its
+        // neighbours' geometry *or* their randomness — the two couplings that
+        // turned one road into 35 unexplained evictions
+        // (docs/SYNTHETIC_ROAD_AUDIT.md).
+        //
+        // Shipped segments replay the accept/reject pattern they were generated
+        // with (`frontageLayout.ts`), which also fixes the walk's step length.
+        // A segment added later has no frozen pattern and is decided live; its
+        // step length is still derived from its own width, never from the
+        // outcome.
+        const frozen = legacyFrontageDecision(seg.id, side, step);
         const bWidth = seg.kind === 'main' ? 9.5 + bRng() * 5.5 : 7.5 + bRng() * 4.5;
         const bDepth = 8.2 + bRng() * 4.4;
         const setback = seg.halfWidth + seg.sidewalk + bDepth * 0.5 + 0.95 + bRng() * 0.65;
+        if (frozen === 'r') {
+          // The shipped world left this lot empty (parcel contest, sector budget
+          // or an authored anchor). Only 3 draws are consumed, exactly as the
+          // original walk did, and the step keeps its 4.5 m retry length.
+          along += 4.5;
+          step++;
+          continue;
+        }
+        const drawFloors = bRng();
+        const drawTint = bRng();
+        const drawBrick = bRng();
+        // Commercial-ness is only rolled on residential galis: on any other
+        // kind the original expression short-circuited before drawing, so
+        // drawing unconditionally here would shift every later value.
+        const drawCommercial = seg.kind === 'gali' ? bRng() : 1;
+        const drawGap = bRng();
+        // Step length is a property of the candidate, not of the outcome.
+        const advance = bWidth + (drawGap < 0.88 ? 0.32 : 0.72);
         // Local polyline frame at this building's own centre. On a straight or
         // collinear segment this is bit-identical to the chord maths it replaces.
         // On a curve the building follows the road it actually fronts and its box
@@ -1049,7 +1085,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         // Face normal pointing FROM building TOWARD the street: (-leftX * side, -leftZ * side)
         const faceYaw = Math.atan2(-frame.leftX * side, -frame.leftZ * side);
 
-        if (canPlaceBuilding(cx, cz, bDepth, bWidth, yaw)) {
+        if (!canPlaceBuilding(cx, cz, bDepth, bWidth, yaw)) {
+          // Rejected now (a road added later covers this parcel): skip the
+          // building, keep the walk and the stream exactly where they were.
+          along += advance;
+          step++;
+          continue;
+        }
+        {
           addFootprint({
             x: cx, z: cz, halfX: bDepth / 2, halfZ: bWidth / 2, yaw,
             radius: Math.hypot(bDepth, bWidth) / 2,
@@ -1057,10 +1100,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
           const floors =
             seg.kind === 'main'
-              ? 3 + Math.floor(bRng() * 4) // 3..6 storeys on Asad Ave / Ring Rd
+              ? 3 + Math.floor(drawFloors * 4) // 3..6 storeys on Asad Ave / Ring Rd
               : seg.kind === 'medium'
-                ? 2 + Math.floor(bRng() * 4) // 2..5 storeys on Tajmahal / Nurjahan / Sher Shah Suri
-                : 2 + Math.floor(bRng() * 3); // 2..4 storeys on residential galis
+                ? 2 + Math.floor(drawFloors * 4) // 2..5 storeys on Tajmahal / Nurjahan / Sher Shah Suri
+                : 2 + Math.floor(drawFloors * 3); // 2..4 storeys on residential galis
           const floorH = 3.05;
           const height = floors * floorH;
           const secIdx = sectorIndex(cx, cz);
@@ -1071,8 +1114,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           const bSgn = sectorSigns[secIdx];
           const bPoster = sectorPosters[secIdx];
 
-          const tint = PLASTER_TINTS[Math.floor(bRng() * PLASTER_TINTS.length)];
-          const useBrick = bRng() < 0.18;
+          const tint = PLASTER_TINTS[Math.floor(drawTint * PLASTER_TINTS.length)];
+          const useBrick = drawBrick < 0.18;
           // Coordinate-derived style does not consume the seeded layout RNG:
           // building footprints, signs, stalls and navigation stay unchanged.
           const frontageStyle = Math.abs(Math.round(cx * 13 + cz * 7)) % 7;
@@ -1225,7 +1268,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               frontageStyle === 2 ? '#aeb6a3' : '#ada99b', { y: faceYaw });
           }
 
-          const isCommercial = seg.kind !== 'gali' || bRng() < 0.45;
+          const isCommercial = seg.kind !== 'gali' || drawCommercial < 0.45;
           // A few occupied shops stay warm at dusk; the pane and small ground
           // spill join the existing sector light mesh (zero real-time lights).
           if (isCommercial && frontageStyle === 0 && bWidth > 9) {
@@ -1589,12 +1632,11 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             yaw,
           });
 
-          // Shop-house row: mostly narrow 0.3–0.7 m seams, occasional wider
-          // utility break. Preserve the single RNG draw and the street graph.
-          along += bWidth + (bRng() < 0.88 ? 0.32 : 0.72);
-        } else {
-          along += 4.5;
         }
+        // One advance for both outcomes: whether this candidate was placed
+        // cannot move the next one.
+        along += advance;
+        step++;
       }
     }
   }

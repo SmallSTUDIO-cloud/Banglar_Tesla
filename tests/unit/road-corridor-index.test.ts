@@ -266,12 +266,15 @@ describe('generated buildings versus carriageways', () => {
     for (const c of without) expect(minCarriagewayDistance(c as never)).toBeGreaterThan(0.55);
   }, 120_000);
 
-  it('evicts the same 54 buildings the pre-fill code did — fill adds none', async () => {
+  it('evicts only the 19 buildings the road actually conflicts with — fill adds none', async () => {
     // With a correct corridor index a road through the mapped blocks evicts the
-    // buildings it and its corridor displace. That is pre-existing behaviour:
-    // the same 54 buildings go at `9f3e26e` (measured). The regional fill system
-    // must not add to that number, and does not: with region budgets disabled
-    // the count is 54 as well.
+    // buildings it and its corridor displace. The number used to be 54 because a
+    // rejected frontage candidate shifted its neighbours (29 re-rolls + 6
+    // propagated); that coupling is fixed in `src/world/frontageLayout.ts`, and
+    // the audit (`docs/SYNTHETIC_ROAD_AUDIT.md` §11) shows the remaining 19 are
+    // exactly the footprints under the asphalt (17) or in the sidewalk band (2).
+    // The regional fill system must not add to that number, and does not: with
+    // region budgets disabled the count is 19 as well.
     const base = await withSegments(ORIGINAL_ORDER, () => buildNow());
     const out = await withSegments([...ORIGINAL_ORDER, NEAR], () => buildNow());
     const key = (b: { x: number; z: number; width: number; depth: number; height: number }) =>
@@ -284,6 +287,6 @@ describe('generated buildings versus carriageways', () => {
       if (n > 0) after.set(key(b), n - 1);
       else evicted++;
     }
-    expect(evicted).toBe(54);
+    expect(evicted).toBe(19);
   }, 120_000);
 });

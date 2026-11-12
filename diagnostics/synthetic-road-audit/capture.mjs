@@ -63,7 +63,7 @@ await shot('01-plan-world', 'whole shipped city; evicted footprints painted by c
 // 2. every eviction, numbered
 await page.evaluate(() => window.__audit.setPlan('evictions'));
 await wait(350);
-await shot('02-plan-evictions', 'all 54 evicted footprints, numbered');
+await shot('02-plan-evictions', `all ${rows.length} evicted footprints, numbered`);
 
 // 3. zoom on the densest cluster
 const bounds = await page.evaluate(() => window.__audit.classBounds('carriageway-overlap'));
