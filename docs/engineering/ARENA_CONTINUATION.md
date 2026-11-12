@@ -11,8 +11,8 @@ remote, then continue from §7.
 |---|---|
 | Branch | `arena/f78d620e-banglar-tesla` |
 | Base commit | `2dc02d7` (branch point, per Arena) |
-| **Checkpoint commit** | **`583654c`** |
-| Remote (verified via `git ls-remote`) | `arena/f78d620e-banglar-tesla` = `583654c` |
+| **Checkpoint commit** | **`2824bdb`** (frontage fix; the handover text follows it) |
+| Remote (verified via `git ls-remote`) | `arena/f78d620e-banglar-tesla` = see §2, verified after this push |
 | Production `main` | `84e79e4` — **untouched, never merged, never pushed** |
 | Push method | fast-forward only, verified after every push |
 
@@ -22,6 +22,12 @@ remote, then continue from §7.
 |---|---|---|---|
 | 2026-11-12 (earlier) | ~04:03 | ~04:20 | `f134e41`, `2e4d3a2`, `316ccf8`, `b57dd33` |
 | 2026-11-12 (this one) | ~05:31 | ~06:00 | `583654c` |
+| 2026-11-12 (audit) | ~15:0x | ~15:4x | `dac11e5`, `f257cd8`, `92c6299`, `62e3ee3` (synthetic-road audit) |
+| 2026-11-12 (frontage fix) | ≤15:56 (first artefact) | 16:2x | **`2824bdb`** + this handover |
+
+Times are from the sandbox clock and file timestamps, not estimated: the frontage
+fix session spans roughly **30 minutes**, and the whole campaign remains well under
+two hours. No longer-runtime claim is made.
 
 Cumulative campaign time is **well under two hours**, not the eight-hour target. No claim
 of longer runtime is made.
@@ -35,6 +41,8 @@ of longer runtime is made.
 | `316ccf8` | Mirpur attempt 2 measured and reverted; two structural couplings documented |
 | `b57dd33` | This checkpoint file created |
 | **`583654c`** | **Interior/infill generation isolation; zero-drift world preserved** |
+| `dac11e5` → `62e3ee3` | Synthetic-road impact audit: 54 evictions measured, 35 collateral, 4 commits |
+| **`2824bdb`** | **Frontage accept/reject isolation: 54 → 19 evictions, 0 collateral, world still `c60e15b5`** |
 
 ## 4. Verified state at this checkpoint
 
@@ -45,7 +53,8 @@ of longer runtime is made.
 | Python (OSM import) | `python3 -m unittest discover -s tests/map_import` | **34 OK** |
 | Production build | `npm run build` | exit 0, **369.27 kB gzip** |
 | World baseline | `tests/unit/world-baseline.test.ts` | **845 / `c60e15b5`, no drift** |
-| Fill isolation | `tests/unit/fill-isolation.test.ts` | **19 passed** |
+| Fill isolation | `tests/unit/fill-isolation.test.ts` | **19 passed** (evicts 19 by `synth_near`, §6c) |
+| Frontage isolation | `tests/unit/frontage-isolation.test.ts` | **3 passed** (new, §6c) |
 | Lane baseline | `tests/unit/lane-graph-baseline.test.ts` | **140 lanes / `52306cb0`** |
 | Scope audit | `npm run audit:scope` | 3.541 km² ring, 16.4 % (unchanged) |
 
@@ -97,10 +106,12 @@ Committed on `arena/f78d620e-banglar-tesla`; full design and evidence in
   `rebuildRoadSpatialIndex()` / stats / segment-query helpers.
 - **Changed test:** `fill-isolation.test.ts` now rebuilds the corridor index (it
   previously passed only because the index could not see injected roads) and
-  asserts survivors are byte-identical plus 54 evictions, instead of "0 removed".
+  asserted survivors are byte-identical plus evictions, instead of "0 removed"
+  (now 19, see §6c).
 
-Preserved: 845 / `c60e15b5`, 140 lanes / `52306cb0`, 656 tests / 63 files, 34
-Python, build 370.16 kB, `tsc` clean, cross-process reproducible.
+Preserved at that checkpoint: 845 / `c60e15b5`, 140 lanes / `52306cb0`, 656 tests /
+63 files, 34 Python, build 370.16 kB, `tsc` clean, cross-process reproducible.
+(Superseded by §6c: 659 tests / 64 files, build 370.99 kB.)
 
 One full-suite run reported 654/656 and did not reproduce across five subsequent
 runs (details: `docs/REGIONAL_FILL.md` §8). No test was weakened to get there.
@@ -131,8 +142,58 @@ the road. Six independent short-stub trials reproduce it: 84 evicted, 35
 genuine, 49 collateral (58 %).
 
 Verified against `9f3e26e`: identical 54 eviction keys and identical class
-counts. Gates: tsc clean (game + diagnostic), 656 tests, 34 Python, build
-370.16 kB, world still 845 / `c60e15b5`.
+counts. Gates at that time: tsc clean (game + diagnostic), 656 tests, 34 Python,
+build 370.16 kB, world still 845 / `c60e15b5`.
+
+## 6c. Frontage coupling — FIXED (`2824bdb`)
+
+The 35 collateral evictions were a defect, not a policy question, and are now gone.
+Root cause: the frontage walk's *state* depended on its *outcomes*. A rejected
+candidate advanced `along` by 4.5 m and consumed 3 draws; an accepted one advanced
+by `bWidth + gap` and consumed 7 (8 on a gali) from one shared per-segment
+generator. So one rejection re-rolled the rest of that segment's frontage on both
+sides.
+
+Fix (`src/world/city.ts`, new `src/world/frontageLayout.ts`):
+
+- every draw a candidate will ever use is taken **before** the fit test, in the
+  order the accepted path always took them; `canPlaceBuilding()` is now a pure
+  filter;
+- one advance for both outcomes (`bWidth + gap`), so a rejection can only remove
+  that candidate;
+- the shipped accept/reject sequence is frozen (140 frontages, 1210 steps, 564
+  accepted) because the 845-building world *is* the product of the coupled walk.
+  New segments have no frozen sequence and are decided live.
+
+| | before (`62e3ee3`) | after (`2824bdb`) |
+|---|---|---|
+| shipped world | 845 / `c60e15b5` | 845 / `c60e15b5` |
+| evicted by `synth_near` | 54 | **19** |
+| carriageway-overlap / corridor-clearance | 17 / 2 | 17 / 2 |
+| frontage-reroll / unexplained | 29 / 6 | **0 / 0** |
+| six-stub experiment | 84 / 35 / 49 | **34 / 34 / 0** |
+| control road 700 m away | 0 | 0 |
+
+The 19 are a strict subset of the old 54: same keys, same classes, zero new
+losses, max asphalt intrusion still 9.00 m. Reproduced byte-identically in two
+separate processes. A road on empty land (no rejections) produces the *identical*
+world before and after (`a90a7ef7`), so the change is inert outside rejections.
+Cost: buildings within 26 m of the new road 75 → 72 (−4 %).
+
+New regression test `tests/unit/frontage-isolation.test.ts` (3 tests) — it fails
+on the pre-fix walk with `expected 54 to be less than or equal to 20`. Two older
+tests that pinned "54 evictions" now pin 19; their real assertions (no survivor
+resized, fill adds nothing) are unchanged.
+
+Gates at `2824bdb`: `tsc` clean (game + diagnostic), **659 tests / 64 files**, 34
+map-import + 5 apk-pipeline Python tests, build 370.99 kB gzip (+0.83 kB for the
+frozen table), `git diff --check` clean, capture `errors: none`, no diagnostic code
+in `dist/`.
+
+One self-inflicted error, recorded because it invalidated two probe runs: a
+`cp /tmp/city.new1.ts src/world/city.ts` restore overwrote the in-progress fix, so
+the first density comparison ran against a 797-building build. It was caught by a
+digest mismatch, re-fixed, and every number above was re-measured afterwards.
 
 ## 7. The single next action
 
@@ -141,9 +202,10 @@ blocking a real production road: region fill is bounded, deterministic and
 corridor-safe, but a road through mapped blocks still evicts 54 shipped buildings,
 65 % of them without a footprint overlap (§6b).
 
-That decision now has numbers behind it: of the 54 removals, 19 are genuine
-conflicts and 35 are collateral from the frontage-walk cascade (§6b). Decide
-precedence for the 19; treat the 35 as a defect to fix, not a policy choice.
+That decision now has numbers behind it, and the defect is out of the way: of the
+original 54 removals, 35 were collateral from the frontage-walk cascade and are
+fixed (§6c); **19 are genuine conflicts** and are the only ones the precedence
+policy has to decide.
 
 ## 8. Open product decision (still blocks road integration, needs the user)
 

@@ -120,6 +120,12 @@ That is the building-versus-carriageway precedence policy, which this mission wa
 explicitly told not to decide. It stays open (§7); what changed is that the test
 suite can no longer be fooled into thinking nothing happens.
 
+> **Update (`2824bdb`).** Of those 54, only 19 were conflicts with the road; the
+> other 35 were frontage re-rolls caused by the walk's reject/advance coupling.
+> With that coupling fixed the same perturbation evicts **19** buildings and the
+> six-stub experiment reports 0 collateral. See `docs/SYNTHETIC_ROAD_AUDIT.md` §11.
+> The precedence policy itself is still open.
+
 ### Corridor enforcement now
 
 - 0 of 824 footprinted building colliders in the shipped world overlap a

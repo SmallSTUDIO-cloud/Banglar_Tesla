@@ -6,8 +6,18 @@ the region budgets or gameplay was changed. The one new directory is
 
 - Branch: `arena/f78d620e-banglar-tesla`
 - Audit commit: `dac11e5`
-- Shipped world unchanged: **845 buildings, digest `c60e15b5`**
+- Fix commit: **`2824bdb`** — see **§11** for the post-fix measurement
+- Shipped world unchanged: **845 buildings, digest `c60e15b5`** (before *and* after the fix)
 - `main` untouched at `84e79e4`
+
+> **Status: measured, then fixed.** §1–§7 are the audit as it was run against
+> the coupled generator (commit `62e3ee3`): 54 evictions, 35 of them collateral.
+> **§11** records the fix and re-runs every measurement in this document against
+> it. The headline numbers change from **54 evicted / 19 genuine / 35 collateral**
+> to **19 evicted / 19 genuine / 0 collateral**, with the shipped world still
+> byte-identical at `c60e15b5`. The CSVs, JSON and screenshots in `out/` are the
+> post-fix ones; the pre-fix tables are preserved in this document and at
+> `62e3ee3`.
 
 ---
 
@@ -149,7 +159,7 @@ builds the world with the synthetic road installed. No mock geometry.
 | file | what it shows |
 |---|---|
 | `out/01-plan-world.png` | whole 845-building city, evictions painted by cause; HUD legend |
-| `out/02-plan-evictions.png` | all 54 evicted footprints, numbered 1–54 |
+| `out/02-plan-evictions.png` | all 19 evicted footprints (post-fix build), numbered 1–19 |
 | `out/03-plan-zoom-conflicts.png` | zoomed: red/orange over the carriageway vs yellow/blue far from it |
 | `out/04-street-18pct.png` | street level, 18 % along the road |
 | `out/05-street-42pct.png` | street level, 42 % — cyan corridor crossing a shipped street |
@@ -180,7 +190,7 @@ The regional-fill work changed nothing about this behaviour, which is what
 `docs/REGIONAL_FILL.md` §7.2 claimed — now independently confirmed by key equality
 rather than by count.
 
-## 7. Full table — all 54
+## 7. Full table — all 54 (pre-fix; the post-fix 19 are in §11.9)
 
 `dist.` is centre-to-centreline; `signed clearance` is that minus the 4.5 m
 half-width, so a negative value puts the building's centre inside the asphalt;
@@ -301,10 +311,183 @@ npx vite --config diagnostics/synthetic-road-audit/vite.config.ts
 # capture the screenshots (needs the server above)
 node diagnostics/synthetic-road-audit/capture.mjs
 
-# the controlled cascade experiment
-npx vite-node diagnostics/synthetic-road-audit/probe-cascade.ts
+# the controlled cascade experiment (writes out/cascade-experiment.json)
+npx vite-node diagnostics/synthetic-road-audit/probe-cascade.ts \
+  | grep '^CASCADE_JSON=' | sed 's/^CASCADE_JSON=//' \
+  > diagnostics/synthetic-road-audit/out/cascade-experiment.json
+
+# regenerate out/evictions.csv and out/evictions-table.md from runAudit()
+npx vite-node diagnostics/synthetic-road-audit/write-rows.ts > /tmp/rows.out
+# then split the CSV_BEGIN/CSV_END and MD_BEGIN/MD_END blocks into those files
 ```
 
 Removal is one directory: `rm -rf diagnostics/synthetic-road-audit` (and the
 section added to `docs/engineering/ARENA_CONTINUATION.md`). No `src/` file,
 baseline or golden was touched by this audit.
+
+## 11. The fix — post-fix measurement (commit `2824bdb`)
+
+### 11.1 Root cause
+
+One frontage walk, two couplings, both caused by the same thing: the walk's
+*state* depended on the walk's *outcomes*.
+
+| coupling | mechanism | effect |
+|---|---|---|
+| position | rejected → `along += 4.5`; accepted → `along += bWidth + gap` | one rejection moved every later candidate on that side |
+| randomness | rejected → 3 draws; accepted → 7 (8 on a gali) from one shared per-segment generator | one rejection changed every later width, depth, setback, floor count, tint and brick flag — on **both** sides, because the generator is created once per segment |
+
+That is why a 9 m road crossing 7 streetfronts could evict a building 70.9 m
+away: the building was not touched by the road, its *slot* was re-rolled.
+
+### 11.2 What changed
+
+`src/world/city.ts` — the frontage walk:
+
+1. **Every draw is taken before the fit test.** Width, depth, setback, floors,
+   tint, brick, commercial-ness and gap are drawn in the order the accepted path
+   always drew them, so a candidate's identity is settled before anything asks
+   whether it fits. `canPlaceBuilding()` is now a pure filter.
+2. **One advance for both outcomes**: `bWidth + gap`, computed from the
+   candidate, never from the result. A rejection can only *remove* a candidate.
+3. **The shipped accept/reject sequence is frozen** in `src/world/frontageLayout.ts`
+   — 140 frontages, 1210 steps, 564 accepted — because the 845-building world
+   *is* the product of the old coupled walk. Replaying the recorded outcomes is
+   what makes "fix the coupling" and "keep `c60e15b5`" compatible. A segment
+   added later has no recorded sequence and is decided live.
+
+One detail worth recording, because it cost a wrong build: the first version
+drew the commercial-ness roll unconditionally and the world fell to 797
+buildings (`4e065dd2`). The original expression was
+`seg.kind !== 'gali' || bRng() < 0.45`, which **short-circuits** — on every
+non-gali segment it never drew at all. Drawing it always shifted the stream by
+one value per building. The draw is now conditional on `seg.kind === 'gali'`,
+which is what the shipped world actually consumed.
+
+### 11.3 Measured result
+
+Same audit, same road, same process order:
+
+| | pre-fix (`62e3ee3`) | post-fix (`2824bdb`) |
+|---|---|---|
+| shipped digest / buildings | `c60e15b5` / 845 | `c60e15b5` / 845 |
+| perturbed digest / buildings | `8a375893` / 827 | `01743076` / 829 |
+| evicted | 54 | **19** |
+| carriageway-overlap | 17 | 17 |
+| corridor-clearance | 2 | 2 |
+| frontage-reroll | 29 | **0** |
+| unexplained | 6 | **0** |
+| control road 700 m away | 0 | 0 |
+| untraced evictions | 0 | 0 |
+
+The 19 are a **strict subset** of the old 54:
+
+| check | result |
+|---|---|
+| collider keys only in the pre-fix set | 35 — exactly the 29 `frontage-reroll` + 6 `unexplained` |
+| collider keys only in the post-fix set | **0** |
+| buildings whose class changed | **0** |
+| max asphalt intrusion | 9.00 m (unchanged) |
+| buildings with centre inside the asphalt | 8 (unchanged) |
+
+Frontages still taking losses, all at their direct conflicts: `humayun_2/-1` 6,
+`zakir_1/+1` 3, `aziz_2/+1` 3, `zakir_5/+1` 2, `tajmahal_5/+1` 2, `babar_1/-1` 2,
+`shershah_2/-1` 1. No segment loses a building it does not touch.
+
+### 11.4 Six-stub cascade experiment, re-run
+
+| stub target | pre-fix evicted / genuine / collateral | post-fix evicted / genuine / collateral |
+|---|---|---|
+| asad_0 frontage | 3 / 3 / 0 | 3 / 3 / 0 |
+| ring_0 frontage | 6 / 2 / 4 | 2 / 2 / 0 |
+| tajmahal_1 frontage | 9 / 6 / 3 | 6 / 6 / 0 |
+| humayun_1 frontage | 19 / 8 / 11 | 8 / 8 / 0 |
+| shahjahan_1 frontage | 28 / 8 / 20 | 7 / 7 / 0 |
+| johuri_bypass frontage | 19 / 8 / 11 | 8 / 8 / 0 |
+| **total** | **84 / 35 / 49 (58 %)** | **34 / 34 / 0 (0 %)** |
+
+### 11.5 What a new road costs now
+
+A road still builds itself up, and it still removes what it covers. Two honest
+numbers:
+
+| measure | pre-fix | post-fix |
+|---|---|---|
+| buildings within 26 m of the new centreline | 75 | 72 |
+| colliders with no pre-road twin (`added`) | 39 | 6 |
+
+The first is the meaningful one: a 4 % drop, because the frontage lots the road
+covers are gone and nothing is re-rolled to replace them. The `added` figure is
+**not** a density measure — it counts every collider without a twin anywhere in
+the city, so on the pre-fix build it mostly counted *displaced neighbours* on
+legacy frontages, which is the defect, not street life.
+
+The cleanest evidence that nothing else changed: a 200 m road on empty land
+(`far_probe`, from (−900, −100) to (−700, 100)), where **no** candidate is ever
+rejected, produces the *identical* world before and after the fix —
+`a90a7ef7`, 143 buildings added, 0 evicted, in both. The fix is inert except
+where a rejection actually happens.
+
+### 11.6 Reproducibility
+
+`runAudit()` executed twice in two separate `vite-node` processes produced
+byte-identical eviction keys, classes and digests (diff of the captured output:
+empty). The 845/`c60e15b5` baseline build is identical in both.
+
+### 11.7 Regression tests
+
+`tests/unit/frontage-isolation.test.ts` (new, 3 tests):
+
+1. the frozen table replays — 140 frontages, 1210 steps, 564 accepted;
+2. the shipped world is still `845 / c60e15b5`;
+3. a road across the city may only remove buildings it reaches (≤ 12.5 m) and any
+   building it adds must sit on its own frontage — **this test fails on the
+   pre-fix walk** with `expected 54 to be less than or equal to 20`, which is the
+   regression it exists for.
+
+Two older tests (`fill-isolation`, `road-corridor-index`) pinned 54 as
+"pre-existing behaviour". They now pin 19, and their real assertions — no
+survivor is resized or re-styled, fill adds nothing to the eviction count — are
+unchanged.
+
+### 11.8 Gates at `2824bdb`
+
+| gate | result |
+|---|---|
+| `npx tsc --noEmit` | clean |
+| `npx tsc -p diagnostics/synthetic-road-audit/tsconfig.json` | clean |
+| `npx vitest run` | **659 passed / 64 files** |
+| `python3 -m unittest discover -s tests/map_import` | 34 passed |
+| `python3 -m unittest discover -s tests/apk_pipeline` | 5 passed |
+| `npm run build` | 370.99 kB gzip (**+0.83 kB**: the 1210-step table ships as data) |
+| `git diff --check` | clean |
+| capture run | 7 screenshots, `errors: none` |
+| diagnostic code in `dist/` | none |
+
+### 11.9 Post-fix table — all 19
+
+| # | building id | x, z (m) | frontage | u (m) | dist. to centreline (m) | signed clearance to asphalt (m) | asphalt overlap depth (m) | nearest road after | cause |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | `aziz_2:-25.60,-120.78` | -25.6, -120.8 | aziz_2 / 1 | 64.3 | 7.58 | +3.08 | 4.61 | synth_near | carriageway-overlap |
+| 2 | `aziz_2:-35.20,-129.60` | -35.2, -129.6 | aziz_2 / 1 | 56.8 | 1.26 | -3.24 | 7.69 | synth_near | carriageway-overlap |
+| 3 | `aziz_2:-36.25,-117.81` | -36.3, -117.8 | aziz_2 / 1 | 53.2 | 3.46 | -1.04 | 7.89 | synth_near | carriageway-overlap |
+| 4 | `babar_1:-60.16,-209.28` | -60.2, -209.3 | babar_1 / -1 | 76.8 | 9.29 | +4.79 | 2.21 | synth_near | carriageway-overlap |
+| 5 | `babar_1:-68.43,-208.23` | -68.4, -208.2 | babar_1 / -1 | 68.4 | 11.78 | +7.28 | 0.74 | synth_near | carriageway-overlap |
+| 6 | `humayun_2:-38.54,-144.84` | -38.5, -144.8 | humayun_2 / -1 | 87.1 | 2.92 | -1.58 | 8.75 | synth_near | carriageway-overlap |
+| 7 | `humayun_2:-41.72,-169.78` | -41.7, -169.8 | humayun_2 / 1 | 89.9 | 7.78 | +3.28 | 3.62 | synth_near | carriageway-overlap |
+| 8 | `humayun_2:-47.85,-140.81` | -47.9, -140.8 | humayun_2 / -1 | 77.1 | 7.19 | +2.69 | 3.93 | synth_near | carriageway-overlap |
+| 9 | `humayun_2:-50.37,-167.76` | -50.4, -167.8 | humayun_2 / 1 | 81.0 | 1.06 | -3.44 | 9.00 | synth_near | carriageway-overlap |
+| 10 | `humayun_2:-55.70,-187.00` | -55.7, -187.0 | humayun_2 / 1 | 80.3 | 0.03 | -4.47 | 9.00 | synth_near | carriageway-overlap |
+| 11 | `humayun_2:-58.92,-165.08` | -58.9, -165.1 | humayun_2 / 1 | 72.0 | 10.02 | +5.52 | 1.07 | synth_near | carriageway-overlap |
+| 12 | `shershah_2:5.56,-33.61` | 5.6, -33.6 | shershah_2 / -1 | 51.1 | 9.58 | +5.08 | 0.00 | synth_near | corridor-clearance |
+| 13 | `tajmahal_5:-25.98,-94.03` | -26.0, -94.0 | tajmahal_5 / 1 | 35.2 | 1.24 | -3.26 | 8.77 | synth_near | carriageway-overlap |
+| 14 | `tajmahal_5:-26.70,-83.22` | -26.7, -83.2 | tajmahal_5 / 1 | 24.4 | 5.34 | +0.84 | 4.91 | synth_near | carriageway-overlap |
+| 15 | `zakir_1:44.51,134.05` | 44.5, 134.1 | zakir_1 / 1 | 25.4 | 6.49 | +1.99 | 3.99 | synth_near | carriageway-overlap |
+| 16 | `zakir_1:46.53,123.76` | 46.5, 123.8 | zakir_1 / 1 | 15.1 | 1.32 | -3.18 | 7.49 | synth_near | carriageway-overlap |
+| 17 | `zakir_1:62.30,140.20` | 62.3, 140.2 | zakir_1 / 1 | 25.0 | 8.44 | +3.94 | 0.00 | synth_near | corridor-clearance |
+| 18 | `zakir_5:54.66,161.32` | 54.7, 161.3 | zakir_5 / 1 | 39.9 | 5.48 | +0.98 | 4.78 | synth_near | carriageway-overlap |
+| 19 | `zakir_5:63.59,160.83` | 63.6, 160.8 | zakir_5 / 1 | 48.9 | 3.68 | -0.82 | 3.65 | synth_near | carriageway-overlap |
+
+---
+
+*End of post-fix record. Everything above this section is the pre-fix audit.*
