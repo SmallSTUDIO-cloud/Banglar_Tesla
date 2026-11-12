@@ -34,20 +34,27 @@ fs.mkdirSync(outDir, { recursive: true });
  * measured from the market polygon centroid (64.93, 98.11).
  */
 const VIEWS = [
-  { name: '01-approach-west', pos: [24, 2.2, 110], look: [70, 6, 95], fov: 55,
-    note: 'westbound approach along Asad Ave, market ahead-right' },
-  { name: '02-approach-east', pos: [104, 2.2, 88], look: [62, 6, 99], fov: 55,
-    note: 'eastbound approach along Asad Ave toward the market frontage' },
-  { name: '03-frontage-street', pos: [58, 2.0, 104], look: [70, 7, 93], fov: 60,
-    note: 'street level on the frontage, looking at the market elevation' },
-  { name: '04-bazar-inside', pos: [62, 2.0, 96], look: [80, 4, 92], fov: 62,
-    note: 'inside the market apron / kacha bazar' },
-  { name: '05-junction', pos: [44, 2.2, 108], look: [66, 5, 99], fov: 58,
-    note: 'Town Hall junction, looking into the market corner' },
-  { name: '06-elevated', pos: [30, 34, 132], look: [78, 3, 96], fov: 50,
-    note: 'elevated oblique: market block, frontage and surrounding streets' },
-  { name: '07-aerial', pos: [64, 96, 190], look: [86, 2, 96], fov: 55,
-    note: 'high aerial over the market and Asad Avenue corridor' },
+  { name: '01-approach-west', pos: [49.4, 2.2, 102.8], look: [67.5, 6, 86.1], fov: 58,
+    note: 'approach from the Town Hall junction: frontage running away to the east' },
+  { name: '02-approach-east', pos: [96.1, 2.2, 91.4], look: [67.5, 6, 86.1], fov: 58,
+    note: 'approach from the Post Office end, looking back along the frontage' },
+  { name: '03-frontage-street', pos: [67.0, 2.0, 98.8], look: [70.8, 5.5, 83.1], fov: 64,
+    note: 'from the carriageway: the shopfront terrace head-on' },
+  // Road-local s 48, v 19.8 looking back west down the bazaar street at eye
+  // height: the hall arcade, its fish/vegetable boards and the stall rows.
+  { name: '04-bazar-inside', pos: [82.5, 1.65, 73.2], look: [61.4, 2.4, 79.5], fov: 70,
+    note: 'down the centre of the bazaar aisle: hall arcade, stall rows, produce' },
+  { name: '05-junction', pos: [51.0, 2.2, 101.3], look: [67.2, 5, 85.2], fov: 62,
+    note: 'Town Hall junction, three-quarter view of the market corner' },
+  { name: '06-market-hall', pos: [57.4, 1.8, 80.2], look: [84.3, 3.5, 72.4], fov: 66,
+    note: 'inside the bazaar street: stalls, hall arcade, tin roof' },
+  // Directly over the Asad Avenue carriageway looking north-east across the
+  // block. The previous 26 m southern viewpoint sat behind a roofline and
+  // showed a white roof instead of the market.
+  { name: '07-elevated', pos: [45.8, 34, 104.9], look: [71.8, 5, 72.4], fov: 54,
+    note: 'elevated over the road: frontage, bazaar spine, halls, mosque' },
+  { name: '08-aerial', pos: [84.9, 62, 124.8], look: [71.0, 2, 76.8], fov: 55,
+    note: 'aerial over the market block' },
 ];
 
 async function waitFor(url, ms = 60000) {
@@ -102,6 +109,44 @@ await page.evaluate(() => {
   g.debugFreeCamera = true;
 });
 
+/**
+ * Renderer cost at a viewpoint. `info.render.calls` is the draw-call count for
+ * the frame just submitted, and the frame-time figure is the mean of the next
+ * 30 frames — measured in the same process the game runs in, not estimated.
+ */
+async function measure() {
+  return page.evaluate(async () => {
+    const g = window.__banglarTesla;
+    const frames = [];
+    let last = performance.now();
+    await new Promise((done) => {
+      let n = 0;
+      const tick = () => {
+        const now = performance.now();
+        frames.push(now - last);
+        last = now;
+        if (++n >= 12) done();
+        else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    frames.shift();
+    const sorted = [...frames].sort((a, b) => a - b);
+    return {
+      drawCalls: g.renderer.info.render.calls,
+      triangles: g.renderer.info.render.triangles,
+      geometries: g.renderer.info.memory.geometries,
+      textures: g.renderer.info.memory.textures,
+      programs: g.renderer.info.programs?.length ?? 0,
+      meanFrameMs: +(frames.reduce((a, b) => a + b, 0) / frames.length).toFixed(2),
+      p95FrameMs: +sorted[Math.floor(sorted.length * 0.95)].toFixed(2),
+    };
+  });
+}
+
+/** Views sampled for renderer cost: street, interior and aerial. */
+const PERF_VIEWS = new Set(['03-frontage-street', '06-market-hall', '08-aerial']);
+
 const shots = [];
 for (const view of VIEWS) {
   await page.evaluate((v) => {
@@ -114,13 +159,27 @@ for (const view of VIEWS) {
   }, view);
   await new Promise((r) => setTimeout(r, 900));
   const file = path.join(outDir, `${view.name}${tag ? `-${tag}` : ''}.png`);
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, timeout: 120000 });
   const bytes = fs.statSync(file).size;
-  shots.push({ ...view, file: path.relative(root, file), bytes });
+  // Full renderer stats on three representative views; a 12-frame sample each is
+  // enough to catch a regression without stalling the software renderer.
+  const perf = PERF_VIEWS.has(view.name) ? await measure() : null;
+  shots.push({ ...view, file: path.relative(root, file), bytes, perf });
   console.log(`shot ${path.basename(file)} (${bytes} bytes) — ${view.note}`);
 }
 
-const report = { capturedAt: new Date().toISOString(), base: BASE, tag, shots, errors };
+const measured = shots.filter((s) => s.perf);
+const summary = measured.reduce(
+  (acc, s) => ({
+    maxDrawCalls: Math.max(acc.maxDrawCalls, s.perf.drawCalls),
+    maxTriangles: Math.max(acc.maxTriangles, s.perf.triangles),
+    worstMeanFrameMs: Math.max(acc.worstMeanFrameMs, s.perf.meanFrameMs),
+    measuredViews: acc.measuredViews + 1,
+  }),
+  { maxDrawCalls: 0, maxTriangles: 0, worstMeanFrameMs: 0, measuredViews: 0 },
+);
+
+const report = { capturedAt: new Date().toISOString(), base: BASE, tag, summary, shots, errors };
 fs.writeFileSync(path.join(outDir, `capture-report${tag ? `-${tag}` : ''}.json`), JSON.stringify(report, null, 2));
 console.log('errors:', errors.length ? errors : 'none');
 

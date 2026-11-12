@@ -1,126 +1,181 @@
 {
-  "capturedAt": "2026-11-12T17:19:58.828Z",
+  "capturedAt": "2026-11-12T20:57:32.450Z",
   "base": "http://127.0.0.1:4211",
   "tag": "before",
+  "summary": {
+    "maxDrawCalls": 179,
+    "maxTriangles": 1333859,
+    "worstMeanFrameMs": 1871.59,
+    "measuredViews": 3
+  },
   "shots": [
     {
       "name": "01-approach-west",
       "pos": [
-        24,
+        49.4,
         2.2,
-        110
+        102.8
       ],
       "look": [
-        70,
+        67.5,
         6,
-        95
+        86.1
       ],
-      "fov": 55,
-      "note": "westbound approach along Asad Ave, market ahead-right",
+      "fov": 58,
+      "note": "approach from the Town Hall junction: frontage running away to the east",
       "file": "diagnostics/townhall/baseline/01-approach-west-before.png",
-      "bytes": 600628
+      "bytes": 619299,
+      "perf": null
     },
     {
       "name": "02-approach-east",
       "pos": [
-        104,
+        96.1,
         2.2,
-        88
+        91.4
       ],
       "look": [
-        62,
+        67.5,
         6,
-        99
+        86.1
       ],
-      "fov": 55,
-      "note": "eastbound approach along Asad Ave toward the market frontage",
+      "fov": 58,
+      "note": "approach from the Post Office end, looking back along the frontage",
       "file": "diagnostics/townhall/baseline/02-approach-east-before.png",
-      "bytes": 632188
+      "bytes": 576339,
+      "perf": null
     },
     {
       "name": "03-frontage-street",
       "pos": [
-        58,
+        67,
         2,
-        104
+        98.8
       ],
       "look": [
-        70,
-        7,
-        93
+        70.8,
+        5.5,
+        83.1
       ],
-      "fov": 60,
-      "note": "street level on the frontage, looking at the market elevation",
+      "fov": 64,
+      "note": "from the carriageway: the shopfront terrace head-on",
       "file": "diagnostics/townhall/baseline/03-frontage-street-before.png",
-      "bytes": 640240
+      "bytes": 605272,
+      "perf": {
+        "drawCalls": 160,
+        "triangles": 1199865,
+        "geometries": 277,
+        "textures": 21,
+        "programs": 65,
+        "meanFrameMs": 1612.45,
+        "p95FrameMs": 2128.5
+      }
     },
     {
       "name": "04-bazar-inside",
       "pos": [
-        62,
-        2,
-        96
+        82.5,
+        1.65,
+        73.2
       ],
       "look": [
-        80,
-        4,
-        92
+        61.4,
+        2.4,
+        79.5
       ],
-      "fov": 62,
-      "note": "inside the market apron / kacha bazar",
+      "fov": 70,
+      "note": "down the centre of the bazaar aisle: hall arcade, stall rows, produce",
       "file": "diagnostics/townhall/baseline/04-bazar-inside-before.png",
-      "bytes": 623706
+      "bytes": 421875,
+      "perf": null
     },
     {
       "name": "05-junction",
       "pos": [
-        44,
+        51,
         2.2,
-        108
+        101.3
       ],
       "look": [
-        66,
+        67.2,
         5,
-        99
+        85.2
       ],
-      "fov": 58,
-      "note": "Town Hall junction, looking into the market corner",
+      "fov": 62,
+      "note": "Town Hall junction, three-quarter view of the market corner",
       "file": "diagnostics/townhall/baseline/05-junction-before.png",
-      "bytes": 615216
+      "bytes": 560534,
+      "perf": null
     },
     {
-      "name": "06-elevated",
+      "name": "06-market-hall",
       "pos": [
-        30,
+        57.4,
+        1.8,
+        80.2
+      ],
+      "look": [
+        84.3,
+        3.5,
+        72.4
+      ],
+      "fov": 66,
+      "note": "inside the bazaar street: stalls, hall arcade, tin roof",
+      "file": "diagnostics/townhall/baseline/06-market-hall-before.png",
+      "bytes": 235344,
+      "perf": {
+        "drawCalls": 115,
+        "triangles": 812004,
+        "geometries": 277,
+        "textures": 21,
+        "programs": 65,
+        "meanFrameMs": 1352.54,
+        "p95FrameMs": 1388.8
+      }
+    },
+    {
+      "name": "07-elevated",
+      "pos": [
+        45.8,
         34,
-        132
+        104.9
       ],
       "look": [
-        78,
-        3,
-        96
+        71.8,
+        5,
+        72.4
       ],
-      "fov": 50,
-      "note": "elevated oblique: market block, frontage and surrounding streets",
-      "file": "diagnostics/townhall/baseline/06-elevated-before.png",
-      "bytes": 982792
+      "fov": 54,
+      "note": "elevated over the road: frontage, bazaar spine, halls, mosque",
+      "file": "diagnostics/townhall/baseline/07-elevated-before.png",
+      "bytes": 1024298,
+      "perf": null
     },
     {
-      "name": "07-aerial",
+      "name": "08-aerial",
       "pos": [
-        64,
-        96,
-        190
+        84.9,
+        62,
+        124.8
       ],
       "look": [
-        86,
+        71,
         2,
-        96
+        76.8
       ],
       "fov": 55,
-      "note": "high aerial over the market and Asad Avenue corridor",
-      "file": "diagnostics/townhall/baseline/07-aerial-before.png",
-      "bytes": 1231796
+      "note": "aerial over the market block",
+      "file": "diagnostics/townhall/baseline/08-aerial-before.png",
+      "bytes": 984863,
+      "perf": {
+        "drawCalls": 179,
+        "triangles": 1333859,
+        "geometries": 277,
+        "textures": 21,
+        "programs": 65,
+        "meanFrameMs": 1871.59,
+        "p95FrameMs": 2139.9
+      }
     }
   ],
   "errors": []

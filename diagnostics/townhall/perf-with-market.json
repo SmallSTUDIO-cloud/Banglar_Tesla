@@ -1,0 +1,33 @@
+{
+  "label": "with-market",
+  "captureNote": "SwiftShader CPU rasteriser — frame times are not device measurements",
+  "rows": [
+    {
+      "view": "frontage",
+      "drawCalls": 162,
+      "triangles": 1203027,
+      "geometries": 277,
+      "textures": 21,
+      "programs": 65,
+      "meanFrameMs": 2125.2
+    },
+    {
+      "view": "hall",
+      "drawCalls": 117,
+      "triangles": 816820,
+      "geometries": 277,
+      "textures": 21,
+      "programs": 65,
+      "meanFrameMs": 2319.6
+    },
+    {
+      "view": "aerial",
+      "drawCalls": 182,
+      "triangles": 1339231,
+      "geometries": 277,
+      "textures": 21,
+      "programs": 65,
+      "meanFrameMs": 2172.1
+    }
+  ]
+}
