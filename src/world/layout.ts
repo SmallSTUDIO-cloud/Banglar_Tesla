@@ -433,11 +433,18 @@ export function snapToNearestRoad(
   x: number,
   z: number,
   allowGali = true,
+  /**
+   * Explicit road scope. Defaults to every segment, which is correct for
+   * gameplay ("what road am I on?"). Generation passes that must not react to
+   * *new* roads pass a frozen subset so adding a road elsewhere cannot change
+   * an existing building's orientation.
+   */
+  scope: readonly RoadSegment[] = ROAD_SEGMENTS,
 ): { x: number; z: number; yaw: number; segment: RoadSegment } {
   // Selection and clamping live in `roadGeometry.nearestOf` so they can be
   // tested against synthetic curved geometry. The margin is unchanged: the same
   // junction clearance the previous chord implementation used.
-  const snap = nearestOf(ROAD_SEGMENTS, x, z, {
+  const snap = nearestOf(scope, x, z, {
     marginOf: (s) => Math.min(4, s.length * 0.2),
     skip: (s) => !allowGali && s.kind === 'gali',
   });
@@ -445,7 +452,7 @@ export function snapToNearestRoad(
   if (!snap) {
     // Every segment was excluded (only reachable if the graph had no non-gali
     // road). Preserve the previous fallback rather than throwing.
-    const fallback = ROAD_SEGMENTS[0];
+    const fallback = scope[0] ?? ROAD_SEGMENTS[0];
     return { x, z, yaw: Math.atan2(fallback.ux, fallback.uz), segment: fallback };
   }
 

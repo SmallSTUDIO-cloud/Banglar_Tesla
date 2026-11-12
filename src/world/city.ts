@@ -20,6 +20,12 @@ import type { QualitySettings } from '../core/config';
 import { WORLD } from '../core/config';
 import { clamp, mulberry32 } from '../core/mathx';
 import { buildingRngFor, postBuildingRng } from './buildingRng';
+import {
+  canonicalSegments,
+  isLegacyRoadSegment,
+  legacyInfillOrdinal,
+  legacyInteriorOrdinal,
+} from './legacyFillLayout';
 import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
@@ -882,8 +888,21 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     halfZ: number;
     yaw: number;
     radius: number;
+    /** True when contributed by a legacy segment (see `legacyPrecedence`). */
+    legacy?: boolean;
   }
   const placedBuildings: PlacedFootprint[] = [];
+  /**
+   * Footprints contributed by *legacy* segments only.
+   *
+   * The block-interior pass orders its candidates by distance to the nearest
+   * placed building. Using the full list would let a building added by a new
+   * road reorder interior candidates across the whole city, so the pass reads
+   * this frozen-scope snapshot instead. For the shipped 70-segment graph the
+   * two lists are identical at that point.
+   */
+  const legacyPlacedBuildings: PlacedFootprint[] = [];
+  let collectLegacyFootprints = true;
 
 
   // Static parcel broad phase: test only neighboring center cells before SAT.
@@ -894,7 +913,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   let maxParcelRadius = 0;
   const parcelKey = (x: number, z: number): string => `${x},${z}`;
   const addFootprint = (footprint: PlacedFootprint): void => {
+    if (collectLegacyFootprints) footprint.legacy = true;
     placedBuildings.push(footprint);
+    if (collectLegacyFootprints) legacyPlacedBuildings.push(footprint);
     maxParcelRadius = Math.max(maxParcelRadius, footprint.radius);
     const key = parcelKey(Math.floor(footprint.x / PARCEL_CELL), Math.floor(footprint.z / PARCEL_CELL));
     let cell = parcelCells.get(key);
@@ -946,6 +967,17 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     width: number,
     depth: number,
     yaw: number,
+    /**
+     * Legacy precedence. When true the candidate belongs to the shipped world,
+     * so buildings contributed by *new* roads may not evict it. Without this a
+     * road added today would silently delete an existing building by placing a
+     * fresh one beside it — a world change dressed up as locality.
+     *
+     * Corridor checks are unaffected: a legacy building is still refused when a
+     * road carriageway itself covers it. Only the building-vs-building parcel
+     * contest is weighted, and only in favour of what already existed.
+     */
+    legacyPrecedence = false,
   ): boolean => {
     if (!isFootprintClearOfCorridor(cx, cz, width, depth, yaw, 0.55)) return false;
     const candidate: PlacedFootprint = {
@@ -960,14 +992,18 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     for (let dz = -reach; dz <= reach; dz++) {
       for (let dx = -reach; dx <= reach; dx++) {
         const cell = parcelCells.get(parcelKey(gx + dx, gz + dz));
-        if (cell && !cell.every((other) => footprintSeparated(candidate, other, 0.28))) return false;
+        if (cell && !cell.every((other) => {
+          if (legacyPrecedence && other.legacy !== true) return true;
+          return footprintSeparated(candidate, other, 0.28);
+        })) return false;
       }
     }
     return true;
   };
 
   let signCursor = 0;
-  for (const seg of ROAD_SEGMENTS) {
+  for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
+    collectLegacyFootprints = isLegacyRoadSegment(seg.id);
     // Per-segment, id-seeded stream: building output no longer depends on how
     // many draws props/trees consumed, nor on how many segments precede this one.
     // See `src/world/buildingRng.ts`.
@@ -1547,7 +1583,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   // The same oriented-footprint/road-corridor checks protect driving width.
   let infillCount = 0;
   const infillBySector = new Uint8Array(SECTOR_COUNT);
-  for (const seg of ROAD_SEGMENTS) {
+  for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
+    collectLegacyFootprints = isLegacyRoadSegment(seg.id);
     if (infillCount >= 112) break;
     const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
@@ -1568,8 +1605,11 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const frontX = cx + faceX * (depth / 2 + 0.025);
         const frontZ = cz + faceZ * (depth / 2 + 0.025);
         const faceYaw = Math.atan2(faceX, faceZ);
-        const tint = PLASTER_TINTS[(infillCount * 3 + sec) % PLASTER_TINTS.length];
-        const floors = (infillCount + sec) % 3 === 0 ? 3 : 2;
+        // Frozen ordinal, not the shared counter: see legacyFillLayout.ts.
+        const ord = legacyInfillOrdinal(cx, cz);
+        if (ord === undefined) continue;
+        const tint = PLASTER_TINTS[(ord * 3 + sec) % PLASTER_TINTS.length];
+        const floors = (ord + sec) % 3 === 0 ? 3 : 2;
         const height = floors * 3.1;
         sectorWalls[sec].box({ x: cx, y: height / 2, z: cz }, { x: depth, y: height, z: width }, tint, { y: yaw });
         sectorDetails[sec].box({ x: cx, y: height + 0.08, z: cz }, { x: depth + 0.15, y: 0.16, z: width + 0.15 }, '#9d9888', { y: yaw });
@@ -1603,6 +1643,12 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   // vendor courts, missions and vehicle lanes free. Sector budgets bound cost.
   let interiorCount = 0;
   const interiorBySector = new Uint8Array(SECTOR_COUNT);
+  const legacySegments = canonicalSegments(ROAD_SEGMENTS).filter((sg) => isLegacyRoadSegment(sg.id));
+  // Every interior candidate comes from the frozen legacy list, so its footprint
+  // is legacy by construction. Set this explicitly: the flag is otherwise left
+  // holding whatever the last infill segment set, which after a new road would be
+  // `false` and would let a later pass evict these buildings.
+  collectLegacyFootprints = true;
   const interiorCandidates: Array<{ x: number; z: number; sec: number; order: number }> = [];
   for (let gz = -224; gz <= 224; gz += 11.8) {
     for (let gx = -224; gx <= 224; gx += 11.8) {
@@ -1617,7 +1663,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       // receive comparable attention without special-casing a landmark.
       const tie = (Math.imul(Math.round(x * 4), 73856093) ^
         Math.imul(Math.round(z * 4), 19349663)) >>> 0;
-      const gap = placedBuildings.reduce((d, b) =>
+      const gap = legacyPlacedBuildings.reduce((d, b) =>
         Math.min(d, Math.hypot(x - b.x, z - b.z) - b.radius), 50);
       // Fill the actual largest unexplained voids first; jitter breaks ties
       // without turning the city into a regular checkerboard of identical lots.
@@ -1626,15 +1672,24 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   }
   interiorCandidates.sort((a, b) => a.order - b.order);
   for (const { x, z, sec } of interiorCandidates) {
+      // Frozen ordinal: a legacy candidate's size and style are properties of
+      // the candidate itself, not of a running counter, so losing one candidate
+      // elsewhere in the city can no longer resize this one. A candidate that
+      // the shipped world did not contain is skipped rather than numbered from
+      // the shared counter (see `legacyFillLayout.ts`).
+      const ord = legacyInteriorOrdinal(x, z);
+      if (ord === undefined) continue;
       if (interiorBySector[sec] >= 12 || interiorCount >= 160) continue;
-      const road = snapToNearestRoad(x, z).segment;
+      // Frozen road scope: a road added later must not re-orient an existing
+      // interior building by becoming the new nearest centreline.
+      const road = snapToNearestRoad(x, z, true, legacySegments).segment;
       const yaw = Math.atan2(road.ux, road.uz);
-      const width = 5.9 + ((interiorCount + sec) % 3) * 0.75;
-      const depth = 6.3 + ((interiorCount + sec * 2) % 3) * 0.62;
-      if (!canPlaceBuilding(x, z, depth, width, yaw)) continue;
-      const floorCount = 2 + (interiorCount + sec) % 3;
+      const width = 5.9 + ((ord + sec) % 3) * 0.75;
+      const depth = 6.3 + ((ord + sec * 2) % 3) * 0.62;
+      if (!canPlaceBuilding(x, z, depth, width, yaw, true)) continue;
+      const floorCount = 2 + (ord + sec) % 3;
       const h = floorCount * 2.85;
-      const tint = PLASTER_TINTS[(interiorCount * 5 + sec) % PLASTER_TINTS.length];
+      const tint = PLASTER_TINTS[(ord * 5 + sec) % PLASTER_TINTS.length];
       const wall = sectorWalls[sec], details = sectorDetails[sec];
       wall.box({ x, y: h / 2, z }, { x: depth, y: h, z: width }, tint, { y: yaw });
       details.box({ x, y: h + 0.2, z }, { x: depth + 0.22, y: 0.4, z: width + 0.22 }, '#999186', { y: yaw });
@@ -1659,7 +1714,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             { x: 1.25, y: 0.09, z: 0.24 }, '#b5aa94', { y: faceYaw });
         }
       }
-      if ((interiorCount + sec) % 4 === 0) {
+      if ((ord + sec) % 4 === 0) {
         details.box({ x: x - fx * 1.2, y: h + 0.95, z: z - fz * 1.2 },
           { x: 1.9, y: 1.5, z: 2.15 }, tint, { y: yaw });
       }
@@ -1682,7 +1737,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   let courtyardCount = 0;
   const courtyardSites: { x: number; z: number }[] = [];
   const courtyardBySector = new Uint8Array(SECTOR_COUNT);
-  for (const seg of ROAD_SEGMENTS) {
+  for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
     if (courtyardCount >= 36) break;
     const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
@@ -1837,7 +1892,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   // Second parcel size for leftover narrow street-front seams. The large
   // apartment pass cannot fit here, but actual shop-houses often can. Keep a
   // clear junction sightline and every authored mission/POI forecourt.
-  for (const seg of ROAD_SEGMENTS) {
+  for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
+    collectLegacyFootprints = isLegacyRoadSegment(seg.id);
     if (infillCount >= 126) break;
     const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
@@ -1858,8 +1914,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const x = cx + fx * (depth / 2 + 0.03);
         const z = cz + fz * (depth / 2 + 0.03);
         const height = 6.15;
+        const ord = legacyInfillOrdinal(cx, cz);
+        if (ord === undefined) continue;
         sectorWalls[sec].box({ x: cx, y: height / 2, z: cz },
-          { x: depth, y: height, z: width }, PLASTER_TINTS[(sec + infillCount) % PLASTER_TINTS.length], { y: yaw });
+          { x: depth, y: height, z: width }, PLASTER_TINTS[(sec + ord) % PLASTER_TINTS.length], { y: yaw });
         sectorDetails[sec].box({ x: cx, y: height + 0.12, z: cz },
           { x: depth + 0.15, y: 0.24, z: width + 0.12 }, '#9c9383', { y: yaw });
         sectorShutters[sec].quad({ x, y: 1.42, z }, 2.47, 2.51, '#536b6d', { y: faceYaw });
