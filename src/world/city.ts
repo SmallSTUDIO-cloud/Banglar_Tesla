@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import type { QualitySettings } from '../core/config';
 import { WORLD } from '../core/config';
 import { clamp, mulberry32 } from '../core/mathx';
+import { buildingRngFor, postBuildingRng } from './buildingRng';
 import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
@@ -967,15 +968,19 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
   let signCursor = 0;
   for (const seg of ROAD_SEGMENTS) {
+    // Per-segment, id-seeded stream: building output no longer depends on how
+    // many draws props/trees consumed, nor on how many segments precede this one.
+    // See `src/world/buildingRng.ts`.
+    const bRng = buildingRngFor(seg.id);
     // Walk the building frontage by ARC length: on a curved road a straight
     // walk would under-count, because the chord is shorter than the road.
     const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
       let along = 9.5;
       while (along < arc - 9.5) {
-        const bWidth = seg.kind === 'main' ? 9.5 + rng() * 5.5 : 7.5 + rng() * 4.5;
-        const bDepth = 8.2 + rng() * 4.4;
-        const setback = seg.halfWidth + seg.sidewalk + bDepth * 0.5 + 0.95 + rng() * 0.65;
+        const bWidth = seg.kind === 'main' ? 9.5 + bRng() * 5.5 : 7.5 + bRng() * 4.5;
+        const bDepth = 8.2 + bRng() * 4.4;
+        const setback = seg.halfWidth + seg.sidewalk + bDepth * 0.5 + 0.95 + bRng() * 0.65;
         // Local polyline frame at this building's own centre. On a straight or
         // collinear segment this is bit-identical to the chord maths it replaces.
         // On a curve the building follows the road it actually fronts and its box
@@ -996,10 +1001,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
           const floors =
             seg.kind === 'main'
-              ? 3 + Math.floor(rng() * 4) // 3..6 storeys on Asad Ave / Ring Rd
+              ? 3 + Math.floor(bRng() * 4) // 3..6 storeys on Asad Ave / Ring Rd
               : seg.kind === 'medium'
-                ? 2 + Math.floor(rng() * 4) // 2..5 storeys on Tajmahal / Nurjahan / Sher Shah Suri
-                : 2 + Math.floor(rng() * 3); // 2..4 storeys on residential galis
+                ? 2 + Math.floor(bRng() * 4) // 2..5 storeys on Tajmahal / Nurjahan / Sher Shah Suri
+                : 2 + Math.floor(bRng() * 3); // 2..4 storeys on residential galis
           const floorH = 3.05;
           const height = floors * floorH;
           const secIdx = sectorIndex(cx, cz);
@@ -1010,8 +1015,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           const bSgn = sectorSigns[secIdx];
           const bPoster = sectorPosters[secIdx];
 
-          const tint = PLASTER_TINTS[Math.floor(rng() * PLASTER_TINTS.length)];
-          const useBrick = rng() < 0.18;
+          const tint = PLASTER_TINTS[Math.floor(bRng() * PLASTER_TINTS.length)];
+          const useBrick = bRng() < 0.18;
           // Coordinate-derived style does not consume the seeded layout RNG:
           // building footprints, signs, stalls and navigation stay unchanged.
           const frontageStyle = Math.abs(Math.round(cx * 13 + cz * 7)) % 7;
@@ -1164,7 +1169,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               frontageStyle === 2 ? '#aeb6a3' : '#ada99b', { y: faceYaw });
           }
 
-          const isCommercial = seg.kind !== 'gali' || rng() < 0.45;
+          const isCommercial = seg.kind !== 'gali' || bRng() < 0.45;
           // A few occupied shops stay warm at dusk; the pane and small ground
           // spill join the existing sector light mesh (zero real-time lights).
           if (isCommercial && frontageStyle === 0 && bWidth > 9) {
@@ -1530,7 +1535,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
           // Shop-house row: mostly narrow 0.3–0.7 m seams, occasional wider
           // utility break. Preserve the single RNG draw and the street graph.
-          along += bWidth + (rng() < 0.88 ? 0.32 : 0.72);
+          along += bWidth + (bRng() < 0.88 ? 0.32 : 0.72);
         } else {
           along += 4.5;
         }
@@ -2288,23 +2293,27 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     scale: number;
   }
   const litterItems: LitterItem[] = [];
+  // Litter used to continue the shared stream and therefore began at absolute
+  // draw 7,151. Pinning that exact state keeps it bit-identical while removing
+  // its dependence on the props stage and the building pass.
+  const litterRng = postBuildingRng();
   for (let si = 0; si < ROAD_SEGMENTS.length && litterItems.length < 136; si++) {
     const seg = ROAD_SEGMENTS[si];
     const perSeg = seg.jamProne ? 4 : seg.kind === 'main' ? 3 : 2;
     for (let k = 0; k < perSeg && litterItems.length < 136; k++) {
       // Arc length, so a curved road is not under-sampled at its far end.
-      const along = 6 + rng() * Math.max(4, arcLengthOf(seg) - 12);
-      const side: 1 | -1 = rng() < 0.5 ? 1 : -1;
-      const lat = (seg.halfWidth - 0.35 + rng() * 0.65) * side;
+      const along = 6 + litterRng() * Math.max(4, arcLengthOf(seg) - 12);
+      const side: 1 | -1 = litterRng() < 0.5 ? 1 : -1;
+      const lat = (seg.halfWidth - 0.35 + litterRng() * 0.65) * side;
       const frame = placementAt(seg, along, lat);
       litterItems.push({
         baseX: frame.x,
         baseZ: frame.z,
         ux: frame.ux,
         uz: frame.uz,
-        baseYaw: rng() * Math.PI * 2,
-        phase: rng() * Math.PI * 2,
-        scale: 0.75 + rng() * 0.65,
+        baseYaw: litterRng() * Math.PI * 2,
+        phase: litterRng() * Math.PI * 2,
+        scale: 0.75 + litterRng() * 0.65,
       });
     }
   }
