@@ -27,6 +27,7 @@ import {
   legacyInteriorOrdinal,
 } from './legacyFillLayout';
 import { legacyFrontageDecision } from './frontageLayout';
+import { buildTownHall, isInTownHallSite } from './townHall';
 import {
   derivedFillOrdinal,
   RegionBudgetLedger,
@@ -1001,6 +1002,11 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     legacyPrecedence = false,
   ): boolean => {
     if (!isFootprintClearOfCorridor(cx, cz, width, depth, yaw, 0.55)) return false;
+    // The Town Hall Market envelope is authored (`townHall.ts`), so the generic
+    // generator must not drop a block through it. This is the only deliberate
+    // removal from the shipped 845-building world; the frontage walk keeps its
+    // positions and draws, so a suppressed candidate costs exactly itself.
+    if (isInTownHallSite(cx, cz)) return false;
     const candidate: PlacedFootprint = {
       x: cx, z: cz, halfX: width / 2, halfZ: depth / 2, yaw,
       radius: Math.hypot(width, depth) / 2,
@@ -2246,6 +2252,24 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       kind: 'building',
     });
   }
+
+  // Mohammadpur Town Hall Market. Authored geometry drawn into the buckets that
+  // already exist, so it adds no draw calls; its colliders join the static set.
+  // The site exclusion above keeps the generator out of the same ground.
+  const townHall = buildTownHall({
+    signAtlas,
+    sectorOf: sectorIndex,
+    walls: sectorWalls,
+    details: sectorDetails,
+    signs: sectorSigns,
+    metal: bMetal,
+    walk: bWalk,
+    glow: bGlow,
+    signSlotStart: signCursor,
+    wirePairs,
+    utilityPoleSites,
+  });
+  for (const c of townHall.colliders) colliders.push(c);
 
   // Overhead Dhaka utility cables chunked by 6x6 sector so off-screen wires
   // frustum-cull cleanly and opaque dark charcoal avoids full-city alpha overdraw!

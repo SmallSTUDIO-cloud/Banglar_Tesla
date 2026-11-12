@@ -39,9 +39,14 @@ export const CATEGORY_BN: Record<string, string> = {
   travel_agency: 'ট্রাভেলস',
   leather: 'চামড়ার দোকান',
   electronics: 'ইলেকট্রনিক্স',
+  butcher: 'মাংসের দোকান',
+  seafood: 'মাছের বাজার',
+  greengrocer: 'সবজি বাজার',
+  supermarket: 'সুপার মার্কেট',
+  variety_store: 'মুদি ও পণ্য',
 };
 
-export type StorefrontCorridor = 'ring' | 'tajmahal';
+export type StorefrontCorridor = 'ring' | 'tajmahal' | 'townhall';
 
 export interface Storefront {
   /** Stable id, also used as the sign atlas key. */
@@ -101,6 +106,22 @@ export const STOREFRONTS: readonly Storefront[] = [
   storefront('sf_taj_biriyani', 'tajmahal', 'Taj Biriyani', 'restaurant', 11978971231, 'node', 23.7635345, 90.3624764),
   storefront('sf_pusti_dairy', 'tajmahal', 'Pusti Dairy Farm Sweets & Bakery', 'confectionery', 11979111669, 'node', 23.7635762, 90.3626253),
   storefront('sf_dhakaiya_pharma', 'tajmahal', 'Dhakaiya Pharma', 'pharmacy', 6902633008, 'node', 23.7638228, 90.3636336),
+
+  // ------------------------------------------- Town Hall Market frontage
+  // The row the player actually drives past has a pharmacy almost every other
+  // bay and the market's own produce halls behind it. Every name below is the
+  // OSM `name` verbatim, including OSM's own "FIsh" typo, which is not "fixed"
+  // because a board must not claim a business that does not exist.
+  storefront('sf_th_pharma', 'townhall', 'Khan Pharma', 'pharmacy', 6908693907, 'node', 23.7597885, 90.3658883),
+  storefront('sf_th_tehari', 'townhall', 'Shoykat Tehari Ghor', 'restaurant', 14269781870, 'node', 23.7598080, 90.3661931),
+  storefront('sf_th_cork_sheet', 'townhall', 'Cork Sheet Box Shop', 'general', 14269781871, 'node', 23.7599590, 90.3664940),
+  storefront('sf_th_tailors', 'townhall', 'Liton Master Tailors and Fabrics', 'tailor', 14269781873, 'node', 23.7599784, 90.3665623),
+  storefront('sf_th_butcher', 'townhall', 'MD Bikram Mangsho Bitan', 'butcher', 14269781878, 'node', 23.7601979, 90.3664566),
+  storefront('sf_th_rice', 'townhall', 'Monipur Rice Store', 'greengrocer', 14269781879, 'node', 23.7602091, 90.3665013),
+  storefront('sf_th_electronics', 'townhall', 'Modina Electronics', 'electronics', 14269781882, 'node', 23.7600052, 90.3667777),
+  storefront('sf_th_sweets', 'townhall', 'Bikrampur Sweets', 'confectionery', 14269781883, 'node', 23.7600193, 90.3668257),
+  storefront('sf_th_fish', 'townhall', 'Townhall FIsh Market', 'seafood', 14269781884, 'node', 23.7600573, 90.3667525),
+  storefront('sf_th_veg', 'townhall', 'Townhall Vegetable Market', 'greengrocer', 14269781888, 'node', 23.7602649, 90.3667045),
 ];
 
 export function storefrontsFor(corridor: StorefrontCorridor): readonly Storefront[] {
