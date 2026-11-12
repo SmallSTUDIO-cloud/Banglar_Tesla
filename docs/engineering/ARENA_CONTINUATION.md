@@ -11,8 +11,8 @@ remote, then continue from §7.
 |---|---|
 | Branch | `arena/f78d620e-banglar-tesla` |
 | Base commit | `2dc02d7` (branch point, per Arena) |
-| **Checkpoint commit** | **`316ccf8`** |
-| Remote (verified via `git ls-remote`) | `arena/f78d620e-banglar-tesla` = `316ccf8` |
+| **Checkpoint commit** | **`583654c`** |
+| Remote (verified via `git ls-remote`) | `arena/f78d620e-banglar-tesla` = `583654c` |
 | Production `main` | `84e79e4` — **untouched, never merged, never pushed** |
 | Push method | fast-forward only, verified after every push |
 
@@ -20,10 +20,11 @@ remote, then continue from §7.
 
 | Session | Start | End | Commits produced |
 |---|---|---|---|
-| 2026-11-12 (this one) | ~04:03 | ~04:20 | `f134e41`, `2e4d3a2`, `316ccf8` |
+| 2026-11-12 (earlier) | ~04:03 | ~04:20 | `f134e41`, `2e4d3a2`, `316ccf8`, `b57dd33` |
+| 2026-11-12 (this one) | ~05:31 | ~06:00 | `583654c` |
 
-Cumulative campaign time is **under one hour of wall-clock execution**, not the eight-hour
-target. No claim of longer runtime is made.
+Cumulative campaign time is **well under two hours**, not the eight-hour target. No claim
+of longer runtime is made.
 
 ## 3. Campaign commits (oldest first)
 
@@ -32,19 +33,24 @@ target. No claim of longer runtime is made.
 | `f134e41` | Isolate building RNG: per-segment pinned legacy streams + pinned litter stream |
 | `2e4d3a2` | Boundary-clipped map scope audit; coverage 32.3 % → 16.4 %; Mirpur 1,704 m |
 | `316ccf8` | Mirpur attempt 2 measured and reverted; two structural couplings documented |
+| `b57dd33` | This checkpoint file created |
+| **`583654c`** | **Interior/infill generation isolation; zero-drift world preserved** |
 
 ## 4. Verified state at this checkpoint
 
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npx tsc --noEmit` | exit 0 |
-| Unit/integration | `npx vitest run` | **588 passed / 59 files** |
+| Unit/integration | `npx vitest run` | **607 passed / 60 files** |
 | Python (OSM import) | `python3 -m unittest discover -s tests/map_import` | **34 OK** |
-| Production build | `npm run build` | exit 0, **366.20 kB gzip** |
+| Production build | `npm run build` | exit 0, **369.27 kB gzip** |
 | World baseline | `tests/unit/world-baseline.test.ts` | **845 / `c60e15b5`, no drift** |
+| Fill isolation | `tests/unit/fill-isolation.test.ts` | **19 passed** |
 | Lane baseline | `tests/unit/lane-graph-baseline.test.ts` | **140 lanes / `52306cb0`** |
-| Scope audit | `npm run audit:scope` | 3.541 km² ring, 93,551 m in scope, **16.4 %** |
-| Road audit | `npm run audit:roads` | 47,422 m in box, 15,337 m graph, 32.3 % (unchanged) |
+| Scope audit | `npm run audit:scope` | 3.541 km² ring, 16.4 % (unchanged) |
+
+**Measured locality now:** reversing `ROAD_SEGMENTS` → 0 buildings changed (was 674).
+Adding a test road through the city → 0 legacy buildings removed (was 162).
 
 ## 5. Workspace state
 
@@ -56,11 +62,11 @@ target. No claim of longer runtime is made.
 - `node_modules/` is **not persisted** across sandbox restores. Run `npm ci` first.
 - No worktrees left behind (`git worktree list` shows only the main tree).
 
-## 6. Known environment hazard (recurring)
+## 6. Known environment hazard (recurring, every session so far)
 
 **Every fresh sandbox has shown an empty git index and a HEAD reset to the branch base
-(`2dc02d7`).** This makes the entire repository look modified or deleted. It is not — the
-remote is authoritative.
+(`2dc02d7`).** This makes the entire repository look modified (231 paths this time). It is
+not — the remote is authoritative.
 
 Recovery, non-destructive, in this order:
 
@@ -71,58 +77,49 @@ git update-ref refs/heads/arena/f78d620e-banglar-tesla <verified-tip-sha>
 git status --short          # expect only the three untracked paths in §5
 ```
 
-Never use `git reset --hard`, `git checkout -- .`, `git clean`, or `git restore .` to
-recover. Verify `/dev/null` exists (`crw-rw-rw- 1 root root 1, 3`) before long command
-sequences; if it is missing, stop and request a fresh sandbox — do **not** attempt repair.
+Verify `/dev/null` exists (`crw-rw-rw- 1 root root 1, 3`) before long command sequences.
+Never use `git reset --hard`, `git checkout -- .`, `git clean`, or `git restore .`.
 
 ## 7. The single next action
 
-**Implement block-interior and infill isolation** (`docs/MIRPUR_INTEGRATION_ATTEMPT_2.md`
-§9.1). This needs **no product decision** and preserves the current world exactly.
+**Give new regions independent fill budgets and deterministic streams.**
 
-Target contract, testable in both directions:
+Right now a non-legacy fill candidate is **skipped**, because ordinals are looked up by
+coordinate and a new area has none (`docs/INTERIOR_INFILL_ISOLATION.md` §3.2, §7.3). That
+is deliberately conservative — it avoids reintroducing a shared counter — but it means a
+road added to an unmapped area gets main-pass frontage only, with no interior fill.
 
-1. With the current 70 segments, output must stay **byte-identical** (845 buildings,
-   digest `c60e15b5`). Anything else is a bug in the fix.
-2. With synthetic segments added anywhere, the **legacy** buildings must not change at all.
+Design to implement: a per-region (spatial cell or per-segment) budget with a
+deterministic stream keyed by the region's stable id, derived the same way
+`buildingRng.ts` derives new-segment seeds (`NEW_SEGMENT_SEED ^ hashString(id)`). The
+legacy 70-segment world must stay byte-identical, verified by the same test triple:
+`world-baseline`, `fill-isolation`, and a new region test.
 
-Approach (from the measured evidence):
+Write the failing test first: add a road in an empty region, assert it gets interior fill,
+and assert the legacy 845 are untouched.
 
-- Scope the interior pass's `roadDistance` and `snapToNearestRoad` to **legacy segments**.
-- Compute interior `gap` from a `placedBuildings` snapshot taken **before** new segments
-  contribute.
-- Freeze the infill budget the same way (cap 112, per-sector cap 8).
-- The mutable `interiorCount` counter is the hard part: a single extra/fewer rejection
-  shifts every later dimension. Prefer making each candidate's dimensions a pure function
-  of a stable candidate key, but **only** if the legacy 131 interior buildings can be
-  reproduced exactly — otherwise keep the counter and guarantee the rejection sequence is
-  unchanged.
-
-Write the mutation test first: add a far-away segment and assert zero legacy change. It
-must fail now, and pass after the fix.
-
-## 8. Open product decision (blocks Phase 4, needs the user)
+## 8. Open product decision (still blocks road integration, needs the user)
 
 A carriageway laid over a standing building must remove it. Measured for Mirpur Road:
-**18–28 legacy buildings sit within 20–40 m of the new centreline**, the nearest at
-**6.4 m** — inside the 14.05 m corridor.
+18–28 legacy buildings sit within 20–40 m of the new centreline, nearest at 6.4 m — inside
+the 14.05 m corridor. Measured for the synthetic test road: the 5 buildings it covered were
+all *parcel* rejections, not corridor rejections (the corridor index is static — see
+`docs/INTERIOR_INFILL_ISOLATION.md` §7.2), so that figure is a lower bound, not the real
+displacement a real road would cause.
 
-Options, none of which should be chosen silently:
-
-- (a) Enumerate the displaced footprints per corridor, show before/after screenshots, and
-  relax the gate to "all 845 unchanged **except N enumerated footprints**".
-- (b) Pick a corridor with no building overlap first — **Beribadh Road** is 1,786 m,
-  100 % absent from the graph, and the largest measured gap.
-- (c) Shift the centreline to dodge buildings — **rejected**: it trades geographic
-  accuracy for convenience.
+Options (see `docs/MIRPUR_INTEGRATION_ATTEMPT_2.md` §9.2): enumerate and accept per-corridor
+displacement; choose a corridor with no building overlap (Beribadh Road, 1,786 m, 100 %
+absent); or shift centrelines (rejected — trades geographic accuracy).
 
 ## 9. What NOT to redo
 
-- Do not re-derive the RNG offset table. It was re-derived independently from pristine
-  `c56eb4a` and matched all 70 values exactly (`/tmp` artifacts are gone; the procedure and
-  results are in `docs/BUILDING_RNG_ISOLATION.md` §6).
-- Do not re-run the visual A/B for the RNG milestone; it passed and is recorded with pixel
-  counts in `docs/BUILDING_RNG_ISOLATION.md` §4.4.
-- Do not re-measure the boundary; `npm run audit:scope` reproduces it and
-  `tests/unit/map-scope.test.ts` pins it.
-- Do not re-attempt the Mirpur patch without doing §7 first; it will fail the same way.
+- **Do not re-derive the RNG offset table or the fill ordinal tables.** Both were derived
+  from a real build and are pinned by tests. Procedures are in
+  `docs/BUILDING_RNG_ISOLATION.md` §6 and `docs/INTERIOR_INFILL_ISOLATION.md` §6.
+- **Do not re-run the visual A/B** for either milestone; both passed with pixel counts
+  recorded (`BUILDING_RNG_ISOLATION.md` §4.4, `INTERIOR_INFILL_ISOLATION.md` §4.5).
+- **Do not re-measure the boundary**; `npm run audit:scope` reproduces it.
+- **Do not re-attempt the Mirpur patch** until §8 is decided.
+- **Do not "fix" the passing mutation** in `INTERIOR_INFILL_ISOLATION.md` §7.1 by deleting
+  the ordinals. They are correct; the failure mode they defend is just not reachable from
+  the current fixed candidate universe.
