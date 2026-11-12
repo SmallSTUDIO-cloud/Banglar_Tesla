@@ -112,33 +112,38 @@ hollow (a stale index reported a footprint clear of a road it was standing on;
 `INTERIOR_INFILL_ISOLATION.md` was an artifact of that defect: with a correct
 index the same perturbation evicts 54 buildings, identically at `9f3e26e` and now.
 
+## 6b. Synthetic road impact audit — DONE (`dac11e5`)
+
+Diagnostic only, nothing in `src/` changed; full report in
+`docs/SYNTHETIC_ROAD_AUDIT.md`, evidence in `diagnostics/synthetic-road-audit/`
+(one removable directory, absent from the game bundle).
+
+The 54 evictions caused by `synth_near` decompose as **19 genuine conflicts**
+(17 footprints under the asphalt, 2 in the sidewalk+setback band) and **35
+collateral** (29 re-rolled by an upstream rejection, 6 by a later pass). The
+"removed because the new road is now its nearest road" hypothesis is disproved:
+19 buildings gain that attribution and all 19 are genuine conflicts.
+
+Mechanism: `buildCity()` uses one `bRng` per **segment**, walking side −1 then
++1, so one rejected candidate (3 draws, +4.5 m) re-rolls every later candidate
+on both sides of that segment. `babar_1` loses 15 buildings while 70.9 m from
+the road. Six independent short-stub trials reproduce it: 84 evicted, 35
+genuine, 49 collateral (58 %).
+
+Verified against `9f3e26e`: identical 54 eviction keys and identical class
+counts. Gates: tsc clean (game + diagnostic), 656 tests, 34 Python, build
+370.16 kB, world still 845 / `c60e15b5`.
+
 ## 7. The single next action
 
 **Decide building-versus-carriageway precedence** (see §8). It is the only thing
 blocking a real production road: region fill is bounded, deterministic and
 corridor-safe, but a road through mapped blocks still evicts 54 shipped buildings,
-40 % of them without a footprint overlap.
+65 % of them without a footprint overlap (§6b).
 
-Before that, the cheapest useful increment: **render** a synthetic road's
-neighbourhood and look at it. Region fill is numerically verified but never seen.
-
-## 7. The single next action
-
-**Give new regions independent fill budgets and deterministic streams.**
-
-Right now a non-legacy fill candidate is **skipped**, because ordinals are looked up by
-coordinate and a new area has none (`docs/INTERIOR_INFILL_ISOLATION.md` §3.2, §7.3). That
-is deliberately conservative — it avoids reintroducing a shared counter — but it means a
-road added to an unmapped area gets main-pass frontage only, with no interior fill.
-
-Design to implement: a per-region (spatial cell or per-segment) budget with a
-deterministic stream keyed by the region's stable id, derived the same way
-`buildingRng.ts` derives new-segment seeds (`NEW_SEGMENT_SEED ^ hashString(id)`). The
-legacy 70-segment world must stay byte-identical, verified by the same test triple:
-`world-baseline`, `fill-isolation`, and a new region test.
-
-Write the failing test first: add a road in an empty region, assert it gets interior fill,
-and assert the legacy 845 are untouched.
+That decision now has numbers behind it: of the 54 removals, 19 are genuine
+conflicts and 35 are collateral from the frontage-walk cascade (§6b). Decide
+precedence for the 19; treat the 35 as a defect to fix, not a policy choice.
 
 ## 8. Open product decision (still blocks road integration, needs the user)
 
