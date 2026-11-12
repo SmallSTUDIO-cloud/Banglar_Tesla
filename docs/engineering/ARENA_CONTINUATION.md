@@ -11,8 +11,8 @@ remote, then continue from §7.
 |---|---|
 | Branch | `arena/f78d620e-banglar-tesla` |
 | Base commit | `2dc02d7` (branch point, per Arena) |
-| **Checkpoint commit** | **`2824bdb`** (frontage fix; the handover text follows it) |
-| Remote (verified via `git ls-remote`) | `arena/f78d620e-banglar-tesla` = see §2, verified after this push |
+| **Checkpoint commit** | **`73abdca`** (code `2824bdb`, then the handover text) |
+| Remote (verified via `git ls-remote`) | `arena/f78d620e-banglar-tesla` = **`73abdca`** (`62e3ee3..73abdca`, fast-forward) |
 | Production `main` | `84e79e4` — **untouched, never merged, never pushed** |
 | Push method | fast-forward only, verified after every push |
 
@@ -23,7 +23,7 @@ remote, then continue from §7.
 | 2026-11-12 (earlier) | ~04:03 | ~04:20 | `f134e41`, `2e4d3a2`, `316ccf8`, `b57dd33` |
 | 2026-11-12 (this one) | ~05:31 | ~06:00 | `583654c` |
 | 2026-11-12 (audit) | ~15:0x | ~15:4x | `dac11e5`, `f257cd8`, `92c6299`, `62e3ee3` (synthetic-road audit) |
-| 2026-11-12 (frontage fix) | ≤15:56 (first artefact) | 16:2x | **`2824bdb`** + this handover |
+| 2026-11-12 (frontage fix) | ≤15:56 (first artefact) | 16:2x | **`2824bdb`**, `73abdca` (this handover) |
 
 Times are from the sandbox clock and file timestamps, not estimated: the frontage
 fix session spans roughly **30 minutes**, and the whole campaign remains well under
