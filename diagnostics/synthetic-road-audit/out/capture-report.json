@@ -1,0 +1,63 @@
+{
+  "summary": {
+    "base": {
+      "buildings": 845,
+      "digest": "c60e15b5"
+    },
+    "perturbed": {
+      "buildings": 827,
+      "digest": "8a375893"
+    },
+    "evicted": 54,
+    "added": 39,
+    "counts": {
+      "carriageway-overlap": 17,
+      "corridor-clearance": 2,
+      "frontage-reroll": 29,
+      "unexplained": 6
+    },
+    "control": {
+      "roadId": "synth_control",
+      "evicted": 0
+    },
+    "frontages": 10
+  },
+  "shots": [
+    {
+      "name": "01-plan-world",
+      "note": "whole shipped city; evicted footprints painted by cause",
+      "bytes": 212882
+    },
+    {
+      "name": "02-plan-evictions",
+      "note": "all 54 evicted footprints, numbered",
+      "bytes": 261150
+    },
+    {
+      "name": "03-plan-zoom-conflicts",
+      "note": "zoom: footprints under the asphalt vs corridor-only rejections",
+      "bytes": 246712
+    },
+    {
+      "name": "04-street-18pct",
+      "note": "street level at 18% along the synthetic road",
+      "bytes": 528543
+    },
+    {
+      "name": "05-street-42pct",
+      "note": "street level at 42% along the synthetic road",
+      "bytes": 535671
+    },
+    {
+      "name": "06-street-62pct",
+      "note": "street level at 62% along the synthetic road",
+      "bytes": 586017
+    },
+    {
+      "name": "07-bird-3d",
+      "note": "oblique aerial; cyan wash is the synthetic carriageway",
+      "bytes": 1346604
+    }
+  ],
+  "errors": []
+}
