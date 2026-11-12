@@ -238,9 +238,14 @@ const BASE = await buildNow();
 const PERTURBED = await buildWith([...ORIGINAL_ORDER, FAR]);
 
 describe('interior ordinals in the real world', () => {
-  it('still places exactly the shipped 845 buildings', () => {
-    expect(BASE.counts.buildings).toBe(845);
-    expect(worldDigest(BASE)).toBe('c60e15b5');
+  // The shipped world is now **848 / 49d542e1**: the authored Town Hall Market
+  // (`src/world/townHall.ts`) occupies verified OSM way 223068917, so 5 generated
+  // blocks inside that envelope are suppressed and 8 authored market buildings are
+  // added. The other 840 buildings are byte-identical (see `town-hall.test.ts`,
+  // which pins that delta exactly). Before the market it was 845 / c60e15b5.
+  it('still places exactly the shipped 848 buildings', () => {
+    expect(BASE.counts.buildings).toBe(848);
+    expect(worldDigest(BASE)).toBe('49d542e1');
   });
 
   it('resolves every shipped interior building through the frozen table', () => {
@@ -270,7 +275,7 @@ describe('interior ordinals in the real world', () => {
       else missing.push(k);
     }
     expect(missing).toEqual([]);
-    expect(worldDigest(BASE)).toBe('c60e15b5');
+    expect(worldDigest(BASE)).toBe('49d542e1');
   });
 
   it('gives every shipped interior building the same dimensions after the fill', () => {

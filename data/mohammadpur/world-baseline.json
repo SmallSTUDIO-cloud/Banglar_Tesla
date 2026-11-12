@@ -1,20 +1,20 @@
 {
  "_note": "Golden generated-world reference. Compared field-by-field by tests/unit/world-baseline.test.ts. Regenerate only via `npm run baseline:update-world` with BASELINE_ACCEPT set to a reason. Building positions are world units (1 unit = 2.778 real m) rounded to 1 cm. segmentId is derived by nearest-centreline attribution, not recorded by the generator.",
  "capturedWith": "npx vite-node tools/snapshot-world.ts",
- "acceptedReason": "Phase 0: add position-keyed building identity for unambiguous diffs",
- "digest": "c60e15b5",
+ "acceptedReason": "Town Hall Market reconstruction (docs/TOWN_HALL_RESEARCH.md): the authored market occupies verified OSM way 223068917 ground, so 5 generated apartment blocks inside that envelope are suppressed and 8 authored market buildings (6 terrace bays, 1 hall, 1 mosque) are added. Measured delta: removed=5 at (65.42,81.92) (78.71,80.44) (91.22,75.71) (45.91,76.62) (52.33,85.86); added=8. The other 840 buildings are byte-identical; digest c60e15b5 -> 49d542e1.",
+ "digest": "49d542e1",
  "counts": {
-  "buildings": 845,
-  "props": 387,
-  "walls": 0,
+  "buildings": 848,
+  "props": 390,
+  "walls": 1,
   "trees": 108,
-  "utilityPoles": 133,
+  "utilityPoles": 138,
   "lamps": 142,
   "litter": 136,
   "infill": 118,
   "posters": 90,
   "billboards": 8,
-  "grocery": 268,
+  "grocery": 265,
   "speedHumps": 27
  },
  "buildingsBySegment": {
@@ -22,7 +22,7 @@
   "asad_1": 7,
   "asad_2": 7,
   "asad_3": 4,
-  "asad_4": 8,
+  "asad_4": 11,
   "asad_5": 14,
   "asad_6": 6,
   "satmasjid_1": 8,
@@ -316,6 +316,15 @@
    "height": 9.15
   },
   {
+   "id": "asad_4:59.07,85.86",
+   "segmentId": "asad_4",
+   "x": 59.07,
+   "z": 85.86,
+   "width": 9.63,
+   "depth": 8.95,
+   "height": 9.3
+  },
+  {
    "id": "asad_4:61.35,117.52",
    "segmentId": "asad_4",
    "x": 61.35,
@@ -325,13 +334,22 @@
    "height": 18.3
   },
   {
-   "id": "asad_4:65.42,81.92",
+   "id": "asad_4:66.76,83.63",
    "segmentId": "asad_4",
-   "x": 65.42,
-   "z": 81.92,
-   "width": 17.53,
-   "depth": 16.09,
-   "height": 9.15
+   "x": 66.76,
+   "z": 83.63,
+   "width": 9.63,
+   "depth": 8.95,
+   "height": 6.2
+  },
+  {
+   "id": "asad_4:68.43,71.44",
+   "segmentId": "asad_4",
+   "x": 68.43,
+   "z": 71.44,
+   "width": 34.63,
+   "depth": 16.27,
+   "height": 6.4
   },
   {
    "id": "asad_4:72.67,114.28",
@@ -343,13 +361,22 @@
    "height": 12.2
   },
   {
-   "id": "asad_4:78.71,80.44",
+   "id": "asad_4:74.44,81.41",
    "segmentId": "asad_4",
-   "x": 78.71,
-   "z": 80.44,
-   "width": 12.94,
-   "depth": 10.99,
-   "height": 12.2
+   "x": 74.44,
+   "z": 81.41,
+   "width": 9.63,
+   "depth": 8.95,
+   "height": 6.2
+  },
+  {
+   "id": "asad_4:82.13,79.19",
+   "segmentId": "asad_4",
+   "x": 82.13,
+   "z": 79.19,
+   "width": 9.63,
+   "depth": 8.95,
+   "height": 9.3
   },
   {
    "id": "asad_4:82.91,110.19",
@@ -361,13 +388,13 @@
    "height": 18.3
   },
   {
-   "id": "asad_4:91.22,75.71",
+   "id": "asad_4:89.81,76.96",
    "segmentId": "asad_4",
-   "x": 91.22,
-   "z": 75.71,
-   "width": 16.54,
-   "depth": 14.16,
-   "height": 18.3
+   "x": 89.81,
+   "z": 76.96,
+   "width": 9.63,
+   "depth": 8.95,
+   "height": 6.2
   },
   {
    "id": "asad_4:92.95,106.22",
@@ -6238,22 +6265,22 @@
    "height": 15.25
   },
   {
-   "id": "shershah_1:45.91,76.62",
+   "id": "shershah_1:48.61,79.93",
    "segmentId": "shershah_1",
-   "x": 45.91,
-   "z": 76.62,
-   "width": 10.43,
-   "depth": 9.84,
-   "height": 9.15
+   "x": 48.61,
+   "z": 79.93,
+   "width": 6.88,
+   "depth": 6.74,
+   "height": 4
   },
   {
-   "id": "shershah_1:52.33,85.86",
+   "id": "shershah_1:51.39,88.08",
    "segmentId": "shershah_1",
-   "x": 52.33,
-   "z": 85.86,
-   "width": 15.05,
-   "depth": 15.35,
-   "height": 15.25
+   "x": 51.39,
+   "z": 88.08,
+   "width": 9.63,
+   "depth": 8.95,
+   "height": 9.3
   },
   {
    "id": "shershah_1:59.20,57.60",

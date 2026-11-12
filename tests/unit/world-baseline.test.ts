@@ -77,7 +77,7 @@ function building(cx: number, cz: number, w = 8, d = 8, h = 10): ColliderLike {
 describe('generated world baseline', () => {
   it('matches the golden building count', () => {
     expect(LIVE.counts.buildings).toBe(GOLDEN.counts.buildings);
-    expect(LIVE.counts.buildings).toBe(845);
+    expect(LIVE.counts.buildings).toBe(848);
   });
 
   it('matches the golden digest', () => {

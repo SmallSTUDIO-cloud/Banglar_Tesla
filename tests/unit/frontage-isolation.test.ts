@@ -138,8 +138,13 @@ describe('frontage accept/reject isolation', () => {
   it('leaves the shipped world untouched', () => {
     // Byte-identical to the world the coupled walk produced: the fix changes how
     // rejections are handled, not which buildings the shipped map contains.
-    expect(BASE.digest).toBe('c60e15b5');
-    expect(BASE.buildings_count).toBe(845);
+  // The shipped world is now **848 / 49d542e1**: the authored Town Hall Market
+  // (`src/world/townHall.ts`) occupies verified OSM way 223068917, so 5 generated
+  // blocks inside that envelope are suppressed and 8 authored market buildings are
+  // added. The other 840 buildings are byte-identical (see `town-hall.test.ts`,
+  // which pins that delta exactly). Before the market it was 845 / c60e15b5.
+    expect(BASE.digest).toBe('49d542e1');
+    expect(BASE.buildings_count).toBe(848);
   });
 
   it('removes only buildings inside the new road and re-places no neighbour', () => {

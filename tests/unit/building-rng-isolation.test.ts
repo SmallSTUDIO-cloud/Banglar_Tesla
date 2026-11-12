@@ -116,9 +116,9 @@ afterEach(() => {
 
 describe('building RNG isolation', () => {
   it('builds a stable reference world', () => {
-    expect(LIVE.counts.buildings).toBe(845);
+    expect(LIVE.counts.buildings).toBe(848);
     expect(LEGACY_IDS.length).toBe(70);
-  });
+  }, 60_000);
 
   it('keeps every legacy building when a segment is added after the last one', async () => {
     const candidate = await buildWith([
@@ -126,17 +126,17 @@ describe('building RNG isolation', () => {
     ]);
     expect(legacyBuildings(candidate)).toEqual(legacyBuildings(LIVE));
     expect(candidate.counts.buildings).toBeGreaterThan(LIVE.counts.buildings);
-  });
+  }, 60_000);
 
   it('keeps every legacy building when a segment is added before the first one', async () => {
     const candidate = await buildWith([{ index: 0, seg: syntheticSegment('synth_head', 0) }]);
     expect(legacyBuildings(candidate)).toEqual(legacyBuildings(LIVE));
-  });
+  }, 60_000);
 
   it('keeps every legacy building when a segment is inserted in the middle', async () => {
     const candidate = await buildWith([{ index: 35, seg: syntheticSegment('synth_mid', 0) }]);
     expect(legacyBuildings(candidate)).toEqual(legacyBuildings(LIVE));
-  });
+  }, 60_000);
 
   it('is unaffected by several segments at once, in several places', async () => {
     const candidate = await buildWith([
@@ -146,7 +146,10 @@ describe('building RNG isolation', () => {
       { index: ROAD_SEGMENTS.length, seg: syntheticSegment('synth_d', 3) },
     ]);
     expect(legacyBuildings(candidate)).toEqual(legacyBuildings(LIVE));
-  });
+    // Four full world builds. The authored Town Hall market adds ~10 % to each
+    // build, which pushed this over the 5 s default; the assertion is unchanged,
+    // only the budget matches the 60 s used elsewhere in this file.
+  }, 60_000);
 
   it('is not vacuous: the inserted segment really does run its building pass', async () => {
     // If the synthetic segment produced nothing, the equality above would prove
@@ -157,7 +160,7 @@ describe('building RNG isolation', () => {
     const mine = candidate.buildings.filter((b) => b.segmentId === 'synth_probe');
     expect(mine.length).toBeGreaterThan(0);
     expect(candidate.buildingsBySegment.synth_probe).toBe(mine.length);
-  });
+  }, 60_000);
 
   it('is not vacuous: the inserted segment perturbs the shared prop stream', async () => {
     // Trees, humps and puddles still draw from the original shared stream, so a
@@ -171,7 +174,7 @@ describe('building RNG isolation', () => {
       candidate.counts.speedHumps !== LIVE.counts.speedHumps ||
       candidate.counts.props !== LIVE.counts.props;
     expect(propsMoved, 'synthetic segment did not perturb the prop stream, so isolation is untested').toBe(true);
-  });
+  }, 60_000);
 
   it('keeps the litter count stable when a segment is added', async () => {
     // Litter is a downstream consumer pinned past the building pass, so a new
@@ -189,7 +192,7 @@ describe('building RNG isolation', () => {
       { index: 0, seg: syntheticSegment('synth_litter', 0) },
     ]);
     expect(candidate.counts.litter).toBe(LIVE.counts.litter);
-  });
+  }, 60_000);
 
   it('produces the same world regardless of how many times it is asked', async () => {
     const a = await buildNow();
@@ -201,5 +204,5 @@ describe('building RNG isolation', () => {
   it('keeps the legacy digest stable across an isolated rebuild', async () => {
     const rebuilt = await buildNow();
     expect(worldDigest(rebuilt)).toBe(worldDigest(LIVE));
-  });
+  }, 60_000);
 });
