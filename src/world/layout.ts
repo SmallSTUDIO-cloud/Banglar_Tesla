@@ -256,30 +256,97 @@ function worldToCell(v: number): number {
   return clamp(Math.floor((v - GRID_MIN) / CELL_SIZE), 0, GRID_COLS - 1);
 }
 
-for (const s of ROAD_SEGMENTS) {
-  const pad = s.halfWidth + s.sidewalk + 8;
-  const c0x = worldToCell(Math.min(s.ax, s.bx) - pad);
-  const c1x = worldToCell(Math.max(s.ax, s.bx) + pad);
-  const c0z = worldToCell(Math.min(s.az, s.bz) - pad);
-  const c1z = worldToCell(Math.max(s.az, s.bz) + pad);
-  for (let cz = c0z; cz <= c1z; cz++) {
-    for (let cx = c0x; cx <= c1x; cx++) {
-      spatialCells[cellIdx(cx, cz)].segments.push(s);
+/**
+ * Rebuild the coarse spatial hash used by `distanceToRoadCarriageway`,
+ * `distanceToRoadCorridor` and `isFootprintClearOfCorridor`.
+ *
+ * The index is derived state, so it has an explicit lifecycle instead of being a
+ * side effect of two top-level loops. That matters because the index was
+ * previously built once at import time: a segment pushed onto `ROAD_SEGMENTS`
+ * afterwards was invisible to every corridor query, so a test that injected a
+ * road could not observe corridor collisions at all.
+ *
+ * `buildCity()` and the gameplay runtime only ever read a complete index, so in
+ * production this runs once. Tests that mutate the segment list call it to
+ * restore the invariant "the index describes exactly the segments present".
+ *
+ * Idempotent: it clears every bucket first, so calling it repeatedly with the
+ * same input cannot accumulate duplicates and inflate a bucket.
+ */
+export function rebuildRoadSpatialIndex(): void {
+  for (const cell of spatialCells) {
+    cell.segments.length = 0;
+    cell.nodes.length = 0;
+  }
+
+  for (const s of ROAD_SEGMENTS) {
+    const pad = s.halfWidth + s.sidewalk + 8;
+    const c0x = worldToCell(Math.min(s.ax, s.bx) - pad);
+    const c1x = worldToCell(Math.max(s.ax, s.bx) + pad);
+    const c0z = worldToCell(Math.min(s.az, s.bz) - pad);
+    const c1z = worldToCell(Math.max(s.az, s.bz) + pad);
+    for (let cz = c0z; cz <= c1z; cz++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        spatialCells[cellIdx(cx, cz)].segments.push(s);
+      }
+    }
+  }
+
+  for (const n of GRAPH_NODES) {
+    const pad = n.outerRadius + 8;
+    const c0x = worldToCell(n.x - pad);
+    const c1x = worldToCell(n.x + pad);
+    const c0z = worldToCell(n.z - pad);
+    const c1z = worldToCell(n.z + pad);
+    for (let cz = c0z; cz <= c1z; cz++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        spatialCells[cellIdx(cx, cz)].nodes.push(n);
+      }
     }
   }
 }
 
-for (const n of GRAPH_NODES) {
-  const pad = n.outerRadius + 8;
-  const c0x = worldToCell(n.x - pad);
-  const c1x = worldToCell(n.x + pad);
-  const c0z = worldToCell(n.z - pad);
-  const c1z = worldToCell(n.z + pad);
-  for (let cz = c0z; cz <= c1z; cz++) {
-    for (let cx = c0x; cx <= c1x; cx++) {
-      spatialCells[cellIdx(cx, cz)].nodes.push(n);
-    }
+rebuildRoadSpatialIndex();
+
+/**
+ * Diagnostics for the corridor index. Tests use this to prove the index actually
+ * contains a newly added road, rather than assuming the query saw it.
+ */
+export function roadSpatialIndexStats(): {
+  cells: number;
+  segmentEntries: number;
+  nodeEntries: number;
+  distinctSegments: number;
+  cellSize: number;
+  gridMin: number;
+  gridCols: number;
+} {
+  let segmentEntries = 0;
+  let nodeEntries = 0;
+  const distinct = new Set<string>();
+  for (const cell of spatialCells) {
+    segmentEntries += cell.segments.length;
+    nodeEntries += cell.nodes.length;
+    for (const s of cell.segments) distinct.add(s.id);
   }
+  return {
+    cells: spatialCells.length,
+    segmentEntries,
+    nodeEntries,
+    distinctSegments: distinct.size,
+    cellSize: CELL_SIZE,
+    gridMin: GRID_MIN,
+    gridCols: GRID_COLS,
+  };
+}
+
+/**
+ * True when the index's cell for `(x, z)` contains `segmentId`. Used by tests to
+ * assert a road is genuinely query-visible.
+ */
+export function roadSpatialIndexHasSegmentAt(x: number, z: number, segmentId: string): boolean {
+  const bucket = spatialCells[cellIdx(worldToCell(x), worldToCell(z))];
+  return bucket.segments.some((s) => s.id === segmentId);
 }
 
 export function pointToSegmentDistance(

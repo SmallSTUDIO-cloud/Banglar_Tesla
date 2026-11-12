@@ -80,6 +80,48 @@ git status --short          # expect only the three untracked paths in §5
 Verify `/dev/null` exists (`crw-rw-rw- 1 root root 1, 3`) before long command sequences.
 Never use `git reset --hard`, `git checkout -- .`, `git clean`, or `git restore .`.
 
+## 6a. Regional fill system — DONE (this milestone)
+
+Committed on `arena/f78d620e-banglar-tesla`; full design and evidence in
+`docs/REGIONAL_FILL.md`.
+
+- **New:** `src/world/regionFill.ts` — 48-unit regions (measured against the
+  legacy interior distribution), per-region budgets of 4–8 derived from a stable
+  hash of the region key, position-derived ordinals for new candidates, and a
+  per-build `RegionBudgetLedger`.
+- **New tests:** `regional-fill.test.ts` (28), `interior-ordinal-stability.test.ts`
+  (13, Gap A), `road-corridor-index.test.ts` (8, Gap B).
+- **Changed:** `city.ts` wires the ledger into both infill passes and the
+  block-interior pass, adds an extension grid for new-segment areas, and scopes
+  region fill to *new segments outside the shipped ±224 extent*. `layout.ts` gains
+  `rebuildRoadSpatialIndex()` / stats / segment-query helpers.
+- **Changed test:** `fill-isolation.test.ts` now rebuilds the corridor index (it
+  previously passed only because the index could not see injected roads) and
+  asserts survivors are byte-identical plus 54 evictions, instead of "0 removed".
+
+Preserved: 845 / `c60e15b5`, 140 lanes / `52306cb0`, 656 tests / 63 files, 34
+Python, build 370.16 kB, `tsc` clean, cross-process reproducible.
+
+One full-suite run reported 654/656 and did not reproduce across five subsequent
+runs (details: `docs/REGIONAL_FILL.md` §8). No test was weakened to get there.
+
+Two corrections to earlier notes: the corridor index was **not** merely "static by
+design" — it was a lifecycle defect that made injected-road collision evidence
+hollow (a stale index reported a footprint clear of a road it was standing on;
+§4 of `REGIONAL_FILL.md`). And the "near-road: 0 removed" result in
+`INTERIOR_INFILL_ISOLATION.md` was an artifact of that defect: with a correct
+index the same perturbation evicts 54 buildings, identically at `9f3e26e` and now.
+
+## 7. The single next action
+
+**Decide building-versus-carriageway precedence** (see §8). It is the only thing
+blocking a real production road: region fill is bounded, deterministic and
+corridor-safe, but a road through mapped blocks still evicts 54 shipped buildings,
+40 % of them without a footprint overlap.
+
+Before that, the cheapest useful increment: **render** a synthetic road's
+neighbourhood and look at it. Region fill is numerically verified but never seen.
+
 ## 7. The single next action
 
 **Give new regions independent fill budgets and deterministic streams.**

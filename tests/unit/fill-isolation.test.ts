@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { installDomShim } from '../../tools/domShim';
-import { ROAD_SEGMENTS, type RoadSegment } from '../../src/world/layout';
+import { ROAD_SEGMENTS, rebuildRoadSpatialIndex, type RoadSegment } from '../../src/world/layout';
 import {
   canonicalSegments,
   isLegacyRoadSegment,
@@ -72,16 +72,27 @@ function syntheticSegment(id: string, ax: number, az: number, bx: number, bz: nu
   };
 }
 
-/** Run `fn` with `ro` installed as `ROAD_SEGMENTS`, then restore the exact array. */
+/**
+ * Run `fn` with `ro` installed as `ROAD_SEGMENTS`, then restore the exact array.
+ *
+ * The corridor index is rebuilt on both edges. Earlier revisions of this file did
+ * not rebuild it, so a segment injected here was invisible to
+ * `isFootprintClearOfCorridor`: placements could land on its carriageway and
+ * perturbations reported zero removals that the index could not have seen
+ * (Gap B, `docs/REGIONAL_FILL.md` §4). Every conclusion below is now drawn
+ * against the index the running game would use.
+ */
 async function withSegments<T>(ro: RoadSegment[], fn: () => Promise<T>): Promise<T> {
   const original = [...ROAD_SEGMENTS];
   try {
     ROAD_SEGMENTS.length = 0;
     ROAD_SEGMENTS.push(...ro);
+    rebuildRoadSpatialIndex();
     return await fn();
   } finally {
     ROAD_SEGMENTS.length = 0;
     ROAD_SEGMENTS.push(...original);
+    rebuildRoadSpatialIndex();
   }
 }
 
@@ -250,34 +261,57 @@ describe('interior / infill isolation', () => {
     for (const g of addedGeoms) expect(Number(g.split(',')[0])).toBeGreaterThan(4000);
   }, 120_000);
 
-  it('keeps every legacy building when a road is added through the city', async () => {
-    // The hard case. Was 162 replaced (60 main, 70 interior, 20 infill, 12 shop-front).
-    // Every displacement is now gone: corridors no longer reshuffle candidates and
-    // a new building may not evict an existing one.
+  it('never moves or resizes a shipped building when a road is added through the city', async () => {
+    // The hard case. Before isolation 162 shipped buildings were *replaced*
+    // (60 main, 70 interior, 20 infill, 12 shop-front) — displaced candidates,
+    // not deliberate removals.
+    //
+    // What remains is a different, pre-existing question: a road driven through
+    // the mapped blocks evicts the buildings it and its corridor displace. With
+    // the corridor index rebuilt that is 54 buildings, and it is exactly 54 at
+    // `9f3e26e` too (measured: the same set) — the building-vs-road precedence
+    // policy, unchanged by fill isolation and deliberately not decided here.
     const near = syntheticSegment('synth_near', -60, -200, 60, 160);
     const out = await withSegments([...ORIGINAL_ORDER, near], () => buildNow());
-    expect(removedFrom(BASE, out)).toEqual([]);
-    // The digest legitimately changes: a new road becomes the nearest road for
-    // some existing buildings, which is attribution, not geometry.
-    expect(addedTo(BASE, out).length).toBeGreaterThan(0);
+    expect(removedFrom(BASE, out).length).toBe(54);
+
+    // Isolation's actual guarantee: every building that survives is the same
+    // building, byte for byte. Nothing is resized, re-styled or nudged by the
+    // new road's candidates.
+    const survivors = new Map<string, string>();
+    for (const b of out.buildings) survivors.set(`${b.x},${b.z}`, geomKey(b));
+    let resized = 0;
+    for (const b of BASE.buildings) {
+      const after = survivors.get(`${b.x},${b.z}`);
+      if (after !== undefined && after !== geomKey(b)) resized++;
+    }
+    expect(resized).toBe(0);
   }, 120_000);
 
-  it('does not let a new road consume interior budget from existing regions', async () => {
+  it('does not let a new road resize the shipped block interiors', async () => {
+    // The original form of this test asserted that *no* interior building
+    // disappeared. That passed only because the corridor index was stale and
+    // could not see the new road; with the index rebuilt, the 3 interiors the
+    // carriageway subsumes are genuinely gone (see the eviction test above).
+    // What the budget system must guarantee is that no interior building is
+    // *resized* or re-styled by another region's spend.
     const near = syntheticSegment('synth_budget', -60, -200, 60, 160);
     const out = await withSegments([...ORIGINAL_ORDER, near], () => buildNow());
-    // Interior buildings in the shipped world are all still present.
     const interiorHeights = new Set(['5.70', '8.55', '11.40']);
-    const alive = new Map<string, number>();
-    for (const g of geomMultiset(out)) alive.set(g, (alive.get(g) ?? 0) + 1);
-    const missingInterior: string[] = [];
+    const survivors = new Map<string, string>();
+    for (const b of out.buildings) survivors.set(`${b.x},${b.z}`, geomKey(b));
+    const changed: string[] = [];
+    let displaced = 0;
     for (const b of BASE.buildings) {
       if (!interiorHeights.has(b.height.toFixed(2))) continue;
-      const k = geomKey(b);
-      const n = alive.get(k) ?? 0;
-      if (n > 0) alive.set(k, n - 1);
-      else missingInterior.push(k);
+      const after = survivors.get(`${b.x},${b.z}`);
+      if (after === undefined) displaced++;
+      else if (after !== geomKey(b)) changed.push(geomKey(b));
     }
-    expect(missingInterior).toEqual([]);
+    expect(changed).toEqual([]);
+    // The only interiors that may disappear are the ones the new carriageway
+    // physically displaces — a handful, never the 160-building population.
+    expect(displaced).toBe(3);
   }, 120_000);
 
   it('is deterministic across repeated builds in one process', async () => {

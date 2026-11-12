@@ -26,6 +26,11 @@ import {
   legacyInfillOrdinal,
   legacyInteriorOrdinal,
 } from './legacyFillLayout';
+import {
+  derivedFillOrdinal,
+  RegionBudgetLedger,
+  regionKeyOf,
+} from './regionFill';
 import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
@@ -169,6 +174,21 @@ const SECTOR_GRID = 4;
 const SECTOR_COUNT = SECTOR_GRID * SECTOR_GRID;
 const SECTOR_MIN = -285;
 const SECTOR_SPAN = 570;
+
+/**
+ * Extent of the world the shipped road graph generates buildings over
+ * (`[-224, 224]` on both axes — the block-interior candidate grid).
+ *
+ * Region fill is scoped to areas *outside* this box. A road that happens to run
+ * through the mapped blocks is a different, unresolved question (building-vs-road
+ * precedence, `docs/REGIONAL_FILL.md` §7.2), and this system must not answer it by
+ * quietly adding or evicting shipped buildings.
+ */
+const SHIPPED_EXTENT = 224;
+
+function insideShippedExtent(x: number, z: number): boolean {
+  return Math.abs(x) <= SHIPPED_EXTENT && Math.abs(z) <= SHIPPED_EXTENT;
+}
 
 function sectorIndex(x: number, z: number): number {
   const sx = clamp(Math.floor(((x - SECTOR_MIN) / SECTOR_SPAN) * SECTOR_GRID), 0, SECTOR_GRID - 1);
@@ -1581,6 +1601,11 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
   // Slender infill where the primary apartment pass left an actual empty lot.
   // The same oriented-footprint/road-corridor checks protect driving width.
+  // One ledger per build. Created here because three passes consult it: the two
+  // infill passes and the block-interior region phase.
+  const regionBudgetLedger = new RegionBudgetLedger();
+  const legacySegments = canonicalSegments(ROAD_SEGMENTS).filter((sg) => isLegacyRoadSegment(sg.id));
+  const newSegments = canonicalSegments(ROAD_SEGMENTS).filter((sg) => !isLegacyRoadSegment(sg.id));
   let infillCount = 0;
   const infillBySector = new Uint8Array(SECTOR_COUNT);
   for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
@@ -1596,6 +1621,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const cx = frame.x;
         const cz = frame.z;
         const yaw = frame.yaw;
+        // Region fill comes only from a *new* road, and only outside the shipped
+        // extent. An unfrozen candidate along a shipped road is a lot the
+        // shipped world left empty (sector budget, count cap, or a rejected
+        // overlap) and must stay empty, or fill would occupy parcels the
+        // shipped passes resolve later and evict shipped buildings (measured:
+        // 3 of 845 before this rule, `docs/REGIONAL_FILL.md` §7.1).
+        if (legacyInfillOrdinal(cx, cz) === undefined &&
+            (isLegacyRoadSegment(seg.id) || insideShippedExtent(cx, cz))) continue;
         if (!canPlaceBuilding(cx, cz, depth, width, yaw)) continue;
         const sec = sectorIndex(cx, cz);
         // Distribute the frontage pass across the city instead of consuming
@@ -1605,9 +1638,18 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const frontX = cx + faceX * (depth / 2 + 0.025);
         const frontZ = cz + faceZ * (depth / 2 + 0.025);
         const faceYaw = Math.atan2(faceX, faceZ);
-        // Frozen ordinal, not the shared counter: see legacyFillLayout.ts.
-        const ord = legacyInfillOrdinal(cx, cz);
-        if (ord === undefined) continue;
+        // Frozen ordinal for the shipped world; a new road's frontage derives its
+        // own ordinal from position and spends a per-region budget, so it can
+        // neither take a legacy lot nor exhaust another region's allowance.
+        const legacyOrdA = legacyInfillOrdinal(cx, cz);
+        const isLegacyA = legacyOrdA !== undefined;
+        const ord = isLegacyA ? (legacyOrdA as number) : derivedFillOrdinal(cx, cz);
+        if (!isLegacyA) {
+          if (!regionBudgetLedger.tryConsume(regionKeyOf(cx, cz))) continue;
+          collectLegacyFootprints = false;
+        } else {
+          collectLegacyFootprints = true;
+        }
         const tint = PLASTER_TINTS[(ord * 3 + sec) % PLASTER_TINTS.length];
         const floors = (ord + sec) % 3 === 0 ? 3 : 2;
         const height = floors * 3.1;
@@ -1643,13 +1685,18 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   // vendor courts, missions and vehicle lanes free. Sector budgets bound cost.
   let interiorCount = 0;
   const interiorBySector = new Uint8Array(SECTOR_COUNT);
-  const legacySegments = canonicalSegments(ROAD_SEGMENTS).filter((sg) => isLegacyRoadSegment(sg.id));
+
   // Every interior candidate comes from the frozen legacy list, so its footprint
   // is legacy by construction. Set this explicitly: the flag is otherwise left
   // holding whatever the last infill segment set, which after a new road would be
   // `false` and would let a later pass evict these buildings.
   collectLegacyFootprints = true;
-  const interiorCandidates: Array<{ x: number; z: number; sec: number; order: number }> = [];
+  // `regionFill` marks a candidate produced by the extension grid, i.e. one the
+  // shipped world never considered. Candidates *inside* the legacy box that the
+  // shipped world happened to leave unused also lack a frozen ordinal, but they
+  // must stay unused — giving them region budgets would add buildings to the
+  // shipped city (measured: +135 before this flag existed).
+  const interiorCandidates: Array<{ x: number; z: number; sec: number; order: number; regionFill: boolean }> = [];
   for (let gz = -224; gz <= 224; gz += 11.8) {
     for (let gx = -224; gx <= 224; gx += 11.8) {
       const x = gx + (Math.floor((gz + 224) / 11.8) % 2 ? 3.1 : 0);
@@ -1667,26 +1714,111 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         Math.min(d, Math.hypot(x - b.x, z - b.z) - b.radius), 50);
       // Fill the actual largest unexplained voids first; jitter breaks ties
       // without turning the city into a regular checkerboard of identical lots.
-      interiorCandidates.push({ x, z, sec: sectorIndex(x, z), order: -gap + tie / 4294967296 });
+      interiorCandidates.push({ x, z, sec: sectorIndex(x, z), order: -gap + tie / 4294967296, regionFill: false });
+    }
+  }
+
+  // Region-fill candidate grid for areas the shipped world never covered.
+  //
+  // The legacy loop above is untouched and still runs over exactly [-224, 224],
+  // so every shipped candidate keeps its exact coordinates and `order` value.
+  // This second pass runs ONLY when non-legacy segments exist, and only covers
+  // their extent, so with the shipped 70-segment graph it contributes nothing and
+  // the world is unchanged. Legacy segments deliberately do not widen the box:
+  // widening it without new roads would add buildings to the shipped world.
+  if (newSegments.length > 0) {
+    const LEGACY_BOX = SHIPPED_EXTENT;
+    const step = 11.8;
+    const pad = 48;
+    // Seeded from the segments themselves, not from the legacy box: seeding a
+    // max accumulator with `-LEGACY_BOX` clips it at `-224`, which let a road far
+    // west of the city drag the grid 470 m back toward the shipped blocks
+    // (measured: 154 buildings with no new road within 43 m of them).
+    let extMinX = Infinity, extMaxX = -Infinity;
+    let extMinZ = Infinity, extMaxZ = -Infinity;
+    for (const sg of newSegments) {
+      extMinX = Math.min(extMinX, sg.ax, sg.bx);
+      extMaxX = Math.max(extMaxX, sg.ax, sg.bx);
+      extMinZ = Math.min(extMinZ, sg.az, sg.bz);
+      extMaxZ = Math.max(extMaxZ, sg.az, sg.bz);
+    }
+    // Centreline distance to the nearest new segment. The corridor test below
+    // measures against *all* roads, so without this a candidate in the pad ring
+    // could be filled merely because a legacy road is nearby, sprouting new
+    // buildings just outside the shipped blocks with no new road to justify them.
+    const newRoadDistance = (x: number, z: number): number => {
+      let best = Infinity;
+      for (const sg of newSegments) {
+        const t = Math.max(0, Math.min(sg.length,
+          (x - sg.ax) * sg.ux + (z - sg.az) * sg.uz));
+        const d = Math.hypot(x - (sg.ax + sg.ux * t), z - (sg.az + sg.uz * t));
+        if (d < best) best = d;
+      }
+      return best;
+    };
+    const startX = Math.floor((extMinX - pad) / step) * step;
+    const startZ = Math.floor((extMinZ - pad) / step) * step;
+    for (let gz = startZ; gz <= extMaxZ + pad; gz += step) {
+      for (let gx = startX; gx <= extMaxX + pad; gx += step) {
+        // The legacy box is entirely covered by the loop above.
+        if (gx >= -LEGACY_BOX && gx <= LEGACY_BOX && gz >= -LEGACY_BOX && gz <= LEGACY_BOX) continue;
+        const x = gx + (Math.floor((gz + LEGACY_BOX) / step) % 2 ? 3.1 : 0);
+        const z = gz + ((Math.floor((gx + LEGACY_BOX) / step) % 3) - 1) * 1.6;
+        const roadDistance = distanceToRoadCorridor(x, z);
+        if (roadDistance < 2.2 || roadDistance > 43 || newRoadDistance(x, z) > 43 ||
+            PLACES.some((place) => Math.hypot(x - place.x, z - place.z) < 16) ||
+            GRAPH_NODES.some((node) => Math.hypot(x - node.x, z - node.z) < node.outerRadius + 7)) continue;
+        const tie = (Math.imul(Math.round(x * 4), 73856093) ^
+          Math.imul(Math.round(z * 4), 19349663)) >>> 0;
+        const gap = legacyPlacedBuildings.reduce((d, b) =>
+          Math.min(d, Math.hypot(x - b.x, z - b.z) - b.radius), 50);
+        interiorCandidates.push({ x, z, sec: sectorIndex(x, z), order: -gap + tie / 4294967296, regionFill: true });
+      }
     }
   }
   interiorCandidates.sort((a, b) => a.order - b.order);
-  for (const { x, z, sec } of interiorCandidates) {
+
+  // Two phases, in this order, and never interleaved.
+  //
+  // Phase 1 is the shipped world: identical candidates, identical order, identical
+  // counters, therefore identical output. Phase 2 is everything the shipped world
+  // did not contain, governed by per-region budgets from `regionFill.ts`.
+  //
+  // Ordering matters. If a new region's candidate were visited during phase 1 it
+  // could claim a sector's last slot, or spend the global cap, and change the
+  // shipped city. Running the legacy phase to completion first makes that
+  // impossible by construction rather than by a tuning constant.
+  const legacyPhase = interiorCandidates.filter((c) => !c.regionFill);
+  const regionPhase = interiorCandidates.filter((c) => c.regionFill);
+
+  for (const { x, z, sec, regionFill } of [...legacyPhase, ...regionPhase]) {
+      const legacyOrd = legacyInteriorOrdinal(x, z);
+      if (!regionFill && legacyOrd === undefined) continue;
+      const isLegacy = !regionFill;
       // Frozen ordinal: a legacy candidate's size and style are properties of
       // the candidate itself, not of a running counter, so losing one candidate
-      // elsewhere in the city can no longer resize this one. A candidate that
-      // the shipped world did not contain is skipped rather than numbered from
-      // the shared counter (see `legacyFillLayout.ts`).
-      const ord = legacyInteriorOrdinal(x, z);
-      if (ord === undefined) continue;
-      if (interiorBySector[sec] >= 12 || interiorCount >= 160) continue;
-      // Frozen road scope: a road added later must not re-orient an existing
-      // interior building by becoming the new nearest centreline.
-      const road = snapToNearestRoad(x, z, true, legacySegments).segment;
+      // elsewhere in the city can no longer resize this one
+      // (see `legacyFillLayout.ts`). A new-region candidate derives its ordinal
+      // from its own position for exactly the same reason.
+      const ord: number = isLegacy ? (legacyOrd as number) : derivedFillOrdinal(x, z);
+      const regionKey = regionKeyOf(x, z);
+      if (isLegacy) {
+        if (interiorBySector[sec] >= 12 || interiorCount >= 160) continue;
+      } else if (regionBudgetLedger.remainingIn(regionKey) <= 0) {
+        continue;
+      }
+      // Frozen road scope for legacy candidates: a road added later must not
+      // re-orient an existing interior building by becoming its nearest
+      // centreline. New-region candidates use the full graph, because for them
+      // the new road *is* their context.
+      const road = snapToNearestRoad(x, z, true, isLegacy ? legacySegments : ROAD_SEGMENTS).segment;
       const yaw = Math.atan2(road.ux, road.uz);
       const width = 5.9 + ((ord + sec) % 3) * 0.75;
       const depth = 6.3 + ((ord + sec * 2) % 3) * 0.62;
-      if (!canPlaceBuilding(x, z, depth, width, yaw, true)) continue;
+      if (!canPlaceBuilding(x, z, depth, width, yaw, isLegacy)) continue;
+      if (!isLegacy && !regionBudgetLedger.tryConsume(regionKey)) continue;
+      // Legacy footprints earn legacy precedence; new-region ones do not.
+      collectLegacyFootprints = isLegacy;
       const floorCount = 2 + (ord + sec) % 3;
       const h = floorCount * 2.85;
       const tint = PLASTER_TINTS[(ord * 5 + sec) % PLASTER_TINTS.length];
@@ -1725,9 +1857,15 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       colliders.push({ minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez,
         height: h, cameraBlocking: true, kind: 'building', cx: x, cz: z,
         halfX: depth / 2, halfZ: width / 2, yaw });
-      interiorBySector[sec]++;
-      interiorCount++;
+      // Only the shipped world's candidates advance the legacy counters; a new
+      // region's consumption is already recorded by its own region ledger.
+      if (isLegacy) {
+        interiorBySector[sec]++;
+        interiorCount++;
+      }
   }
+  // Every later pass reasons about legacy footprints only, so restore the flag.
+  collectLegacyFootprints = true;
 
   // Genuine open frontage is often too shallow for even a two-storey shop.
   // Fill eligible lots with small roofed tea stalls / planted courtyards, not
@@ -1748,6 +1886,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const x = frame.x;
         const z = frame.z;
         const yaw = frame.yaw;
+        // Same scope rule as the infill passes: a new road through the mapped
+        // blocks does not claim courtyards there.
+        if (!isLegacyRoadSegment(seg.id) && insideShippedExtent(x, z)) continue;
         const sec = sectorIndex(x, z);
         if (courtyardBySector[sec] >= 3 || !canPlaceBuilding(x, z, depth, width, yaw)) continue;
         const frontX = -frame.leftX * side, frontZ = -frame.leftZ * side;
@@ -1904,6 +2045,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const cx = frame.x;
         const cz = frame.z;
         const yaw = frame.yaw;
+        // Same rule as the first seam pass: region fill only from new roads,
+        // only outside the shipped extent.
+        if (legacyInfillOrdinal(cx, cz) === undefined &&
+            (isLegacyRoadSegment(seg.id) || insideShippedExtent(cx, cz))) continue;
         const sec = sectorIndex(cx, cz);
         if (infillBySector[sec] >= 12 ||
             PLACES.some(p => Math.hypot(cx - p.x, cz - p.z) < 10) ||
@@ -1914,8 +2059,15 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         const x = cx + fx * (depth / 2 + 0.03);
         const z = cz + fz * (depth / 2 + 0.03);
         const height = 6.15;
-        const ord = legacyInfillOrdinal(cx, cz);
-        if (ord === undefined) continue;
+        const legacyOrdB = legacyInfillOrdinal(cx, cz);
+        const isLegacyB = legacyOrdB !== undefined;
+        const ord = isLegacyB ? (legacyOrdB as number) : derivedFillOrdinal(cx, cz);
+        if (!isLegacyB) {
+          if (!regionBudgetLedger.tryConsume(regionKeyOf(cx, cz))) continue;
+          collectLegacyFootprints = false;
+        } else {
+          collectLegacyFootprints = true;
+        }
         sectorWalls[sec].box({ x: cx, y: height / 2, z: cz },
           { x: depth, y: height, z: width }, PLASTER_TINTS[(sec + ord) % PLASTER_TINTS.length], { y: yaw });
         sectorDetails[sec].box({ x: cx, y: height + 0.12, z: cz },
