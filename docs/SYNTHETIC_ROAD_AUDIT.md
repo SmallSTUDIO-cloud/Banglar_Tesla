@@ -5,7 +5,7 @@ the region budgets or gameplay was changed. The one new directory is
 `diagnostics/synthetic-road-audit/`, which the game bundle never imports.
 
 - Branch: `arena/f78d620e-banglar-tesla`
-- Audit commit: `AUDIT_COMMIT_PLACEHOLDER`
+- Audit commit: `dac11e5`
 - Shipped world unchanged: **845 buildings, digest `c60e15b5`**
 - `main` untouched at `84e79e4`
 
