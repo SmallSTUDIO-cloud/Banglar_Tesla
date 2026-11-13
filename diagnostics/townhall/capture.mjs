@@ -23,6 +23,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
 const outDir = path.resolve(process.argv[2] ?? path.join(__dirname, 'out'));
 const tag = process.argv[3] ?? '';
+/**
+ * Optional `--only=04,06` filter. Art iteration needs one or two frames per try,
+ * and a full ten-view run costs ~10 minutes under SwiftShader; the filter keeps
+ * that loop short without changing what a full run does.
+ */
+const onlyArg = process.argv.find((a) => a.startsWith('--only='));
+const only = onlyArg ? new Set(onlyArg.slice('--only='.length).split(',')) : null;
 const PORT = 4211;
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -61,6 +68,10 @@ const VIEWS = [
   // Street level at the kerb among the produce, with the crowd and the traffic.
   { name: '10-kerb-activity', pos: [64.2, 1.9, 96.4], look: [77.8, 2.1, 85.7], fov: 62,
     note: 'driving past at eye level: produce heaps, awnings, shoppers on the kerb' },
+  // Close on a stallholder, the way a player walking the aisle would see one.
+  // Post 5 is a vendor behind the north counter at (64.51, 80.20) facing -2.86.
+  { name: '11-vendor-closeup', pos: [64.06, 1.52, 82.28], look: [64.51, 1.25, 80.20], fov: 52,
+    note: 'close on a stallholder at ~2 m: pose, hands, produce' },
   { name: '08-aerial', pos: [84.9, 62, 124.8], look: [71.0, 2, 76.8], fov: 55,
     note: 'aerial over the market block' },
 ];
@@ -174,7 +185,12 @@ async function measure() {
 const PERF_VIEWS = new Set(['03-frontage-street', '06-market-hall', '08-aerial']);
 
 const shots = [];
-for (const view of VIEWS) {
+const selected = only ? VIEWS.filter((v) => only.has(v.name.slice(0, 2))) : VIEWS;
+if (only && selected.length === 0) {
+  console.error(`--only matched no view; names are ${VIEWS.map((v) => v.name.slice(0, 2)).join(',')}`);
+  process.exit(2);
+}
+for (const view of selected) {
   await page.evaluate((v) => {
     const g = window.__banglarTesla;
     g.debugFreeCamera = true;

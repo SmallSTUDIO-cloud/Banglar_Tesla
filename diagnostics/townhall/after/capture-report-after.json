@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-11-13T10:19:07.996Z",
+  "capturedAt": "2026-11-13T18:01:57.041Z",
   "base": "http://127.0.0.1:4211",
   "tag": "after",
   "playerAnchor": {
@@ -13,9 +13,9 @@
     "marketPosts": 22
   },
   "summary": {
-    "maxDrawCalls": 207,
-    "maxTriangles": 1405065,
-    "worstMeanFrameMs": 1258.73,
+    "maxDrawCalls": 199,
+    "maxTriangles": 1400025,
+    "worstMeanFrameMs": 2127.67,
     "measuredViews": 3
   },
   "shots": [
@@ -34,7 +34,7 @@
       "fov": 58,
       "note": "approach from the Town Hall junction: frontage running away to the east",
       "file": "diagnostics/townhall/after/01-approach-west-after.png",
-      "bytes": 702999,
+      "bytes": 703280,
       "perf": null
     },
     {
@@ -52,7 +52,7 @@
       "fov": 58,
       "note": "approach from the Post Office end, looking back along the frontage",
       "file": "diagnostics/townhall/after/02-approach-east-after.png",
-      "bytes": 609441,
+      "bytes": 609305,
       "perf": null
     },
     {
@@ -70,15 +70,15 @@
       "fov": 64,
       "note": "from the carriageway: the shopfront terrace head-on",
       "file": "diagnostics/townhall/after/03-frontage-street-after.png",
-      "bytes": 636477,
+      "bytes": 637866,
       "perf": {
         "drawCalls": 169,
-        "triangles": 1253093,
+        "triangles": 1259645,
         "geometries": 277,
         "textures": 21,
         "programs": 65,
-        "meanFrameMs": 1132.89,
-        "p95FrameMs": 1629
+        "meanFrameMs": 1943.43,
+        "p95FrameMs": 4326.1
       }
     },
     {
@@ -96,7 +96,7 @@
       "fov": 70,
       "note": "down the centre of the bazaar aisle: stallholders, counters, produce",
       "file": "diagnostics/townhall/after/04-bazar-inside-after.png",
-      "bytes": 486245,
+      "bytes": 408430,
       "perf": null
     },
     {
@@ -114,7 +114,7 @@
       "fov": 62,
       "note": "Town Hall junction, three-quarter view of the market corner",
       "file": "diagnostics/townhall/after/05-junction-after.png",
-      "bytes": 658120,
+      "bytes": 658391,
       "perf": null
     },
     {
@@ -132,15 +132,15 @@
       "fov": 66,
       "note": "inside the bazaar street: stalls, hall arcade, tin roof",
       "file": "diagnostics/townhall/after/06-market-hall-after.png",
-      "bytes": 465866,
+      "bytes": 336590,
       "perf": {
-        "drawCalls": 118,
-        "triangles": 867060,
+        "drawCalls": 119,
+        "triangles": 873132,
         "geometries": 277,
         "textures": 21,
         "programs": 65,
-        "meanFrameMs": 1209.6,
-        "p95FrameMs": 1846.2
+        "meanFrameMs": 2127.67,
+        "p95FrameMs": 2647.9
       }
     },
     {
@@ -158,7 +158,7 @@
       "fov": 54,
       "note": "elevated over the road: frontage, bazaar spine, halls, mosque",
       "file": "diagnostics/townhall/after/07-elevated-after.png",
-      "bytes": 1273841,
+      "bytes": 1270129,
       "perf": null
     },
     {
@@ -176,7 +176,7 @@
       "fov": 58,
       "note": "over the yard behind the halls: deliveries, refuse, compound wall",
       "file": "diagnostics/townhall/after/09-north-yard-after.png",
-      "bytes": 856737,
+      "bytes": 855101,
       "perf": null
     },
     {
@@ -194,7 +194,25 @@
       "fov": 62,
       "note": "driving past at eye level: produce heaps, awnings, shoppers on the kerb",
       "file": "diagnostics/townhall/after/10-kerb-activity-after.png",
-      "bytes": 650963,
+      "bytes": 633318,
+      "perf": null
+    },
+    {
+      "name": "11-vendor-closeup",
+      "pos": [
+        64.06,
+        1.52,
+        82.28
+      ],
+      "look": [
+        64.51,
+        1.25,
+        80.2
+      ],
+      "fov": 52,
+      "note": "close on a stallholder at ~2 m: pose, hands, produce",
+      "file": "diagnostics/townhall/after/11-vendor-closeup-after.png",
+      "bytes": 322705,
       "perf": null
     },
     {
@@ -212,15 +230,15 @@
       "fov": 55,
       "note": "aerial over the market block",
       "file": "diagnostics/townhall/after/08-aerial-after.png",
-      "bytes": 1068476,
+      "bytes": 1068291,
       "perf": {
-        "drawCalls": 207,
-        "triangles": 1405065,
+        "drawCalls": 199,
+        "triangles": 1400025,
         "geometries": 277,
         "textures": 21,
         "programs": 65,
-        "meanFrameMs": 1258.73,
-        "p95FrameMs": 1523.6
+        "meanFrameMs": 1567.57,
+        "p95FrameMs": 2185.7
       }
     }
   ],

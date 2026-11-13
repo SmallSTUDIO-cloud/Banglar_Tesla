@@ -119,6 +119,17 @@ const HAIR_HEADWEAR_COLORS = [
   '#b45309', // ochre cap / wrap
 ];
 const LOWER_COLORS = ['#1f2937', '#1e4e68', '#4a3525', '#dcd6c8', '#7f1d1d', '#1b4332'];
+/**
+ * Shopkeeper colours. Vendors are the same instanced walkers, re-tinted on
+ * assignment: faded checked cotton kameez over a dark lungi is what the men
+ * behind these counters actually wear, and it reads at 2–5 m where a face does
+ * not. Assignment writes the instance colour and release restores the original,
+ * so the crowd is not permanently recoloured and the RNG stream is untouched.
+ */
+const VENDOR_TOPS = ['#e7e2d2', '#d3dccf', '#ded1b3', '#c8d3d9', '#e3d8c2', '#cdd3c4'] as const;
+const VENDOR_LOWERS = ['#4a4038', '#3b4a52', '#5a4a3a', '#42403a', '#4f4437'] as const;
+/** Woman stallholder's saree, used when the borrowed walker is wearing one. */
+const VENDOR_SKIRTS = ['#8d3b46', '#2f5d70', '#7a5a2e', '#3f5a43', '#6b3f63'] as const;
 const BAG_COLORS = ['#d97706', '#dc2626', '#16a34a', '#2563eb', '#9333ea'];
 const REACTION_KEYS = [
   'ped.react.1',
@@ -251,6 +262,12 @@ interface PedAgent {
   vendorSlot: number;
   /** Own clock for the stall-handling cycle; never shares the walk phase. */
   vendorPhase: number;
+  /** Per-slot posture offset so no two stallholders move in lockstep. */
+  vendorTempo: number;
+  /** Instance colours captured on assignment, restored on release. */
+  vendorSavedTop: [number, number, number] | null;
+  vendorSavedLower: [number, number, number] | null;
+  vendorSavedSkirt: [number, number, number] | null;
   marketX: number;
   marketZ: number;
   worldX: number;
@@ -523,6 +540,10 @@ export class PedestrianSystem {
       marketAttention: 0,
       vendorSlot: -1,
       vendorPhase: this.rng() * TAU,
+      vendorTempo: 0.8 + this.rng() * 0.5,
+      vendorSavedTop: null,
+      vendorSavedLower: null,
+      vendorSavedSkirt: null,
       marketX: 0,
       marketZ: 0,
       worldX: p ? p.ax + (p.bx - p.ax) * t : 0,
@@ -670,8 +691,62 @@ export class PedestrianSystem {
     return this.vendorCrew.length;
   }
 
+  /** Read one instance colour back out, so it can be restored on release. */
+  private readColor(mesh: THREE.InstancedMesh, i: number): [number, number, number] | null {
+    const attr = mesh.instanceColor;
+    if (!attr) return null;
+    return [attr.getX(i), attr.getY(i), attr.getZ(i)];
+  }
+
+  private writeColor(mesh: THREE.InstancedMesh, i: number, c: [number, number, number]): void {
+    if (!mesh.instanceColor) return;
+    mesh.instanceColor.setXYZ(i, c[0], c[1], c[2]);
+  }
+
+  /**
+   * Dress a borrowed walker as a stallholder. Costs three attribute writes and
+   * no new mesh, material or draw call — the improvement at close range is
+   * entirely colour and posture.
+   */
+  private applyVendorLook(ped: PedAgent, index: number, slot: number): void {
+    const tmp = new THREE.Color();
+    ped.vendorSavedTop = this.readColor(this.body, index);
+    ped.vendorSavedLower = this.readColor(this.legL, index);
+    ped.vendorSavedSkirt = ped.hasSkirt ? this.readColor(this.skirt, index) : null;
+
+    tmp.set(VENDOR_TOPS[slot % VENDOR_TOPS.length]);
+    this.writeColor(this.body, index, [tmp.r, tmp.g, tmp.b]);
+    tmp.set(VENDOR_LOWERS[slot % VENDOR_LOWERS.length]);
+    this.writeColor(this.legL, index, [tmp.r, tmp.g, tmp.b]);
+    this.writeColor(this.legR, index, [tmp.r, tmp.g, tmp.b]);
+    if (ped.vendorSavedSkirt) {
+      tmp.set(VENDOR_SKIRTS[slot % VENDOR_SKIRTS.length]);
+      this.writeColor(this.skirt, index, [tmp.r, tmp.g, tmp.b]);
+    }
+    for (const m of [this.body, this.legL, this.legR, this.skirt]) {
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    }
+  }
+
+  private restoreVendorLook(ped: PedAgent, index: number): void {
+    if (ped.vendorSavedTop) this.writeColor(this.body, index, ped.vendorSavedTop);
+    if (ped.vendorSavedLower) {
+      this.writeColor(this.legL, index, ped.vendorSavedLower);
+      this.writeColor(this.legR, index, ped.vendorSavedLower);
+    }
+    if (ped.vendorSavedSkirt) this.writeColor(this.skirt, index, ped.vendorSavedSkirt);
+    ped.vendorSavedTop = null;
+    ped.vendorSavedLower = null;
+    ped.vendorSavedSkirt = null;
+    if (this.body.instanceColor) this.body.instanceColor.needsUpdate = true;
+    if (this.legL.instanceColor) this.legL.instanceColor.needsUpdate = true;
+    if (this.legR.instanceColor) this.legR.instanceColor.needsUpdate = true;
+  }
+
   private releaseMarketCrew(): void {
     for (const ped of this.vendorCrew) {
+      const idx = this.peds.indexOf(ped);
+      if (idx >= 0) this.restoreVendorLook(ped, idx);
       ped.vendorSlot = -1;
       // Send them back to the pavement at a fresh spot; they are always far
       // from the rider when this runs, so the re-seat is not visible.
@@ -713,17 +788,21 @@ export class PedestrianSystem {
     for (let k = 0; k < wanted; k++) {
       const slot = Math.floor((k * postCount) / wanted);
       let ped: PedAgent | null = null;
+      let pedIndex = -1;
       for (let i = 0; i < this.activeCount; i++) {
         const cand = this.peds[i];
         if (cand.vendorSlot >= 0 || cand.roadsideReserved) continue;
         if (Math.hypot(cand.worldX - playerX, cand.worldZ - playerZ) < 50) continue;
         ped = cand;
+        pedIndex = i;
         break;
       }
       if (!ped) break;
       ped.vendorSlot = slot;
       ped.vendorPhase = this.rng() * TAU;
+      ped.vendorTempo = 0.85 + this.rng() * 0.45;
       ped.hasBag = this.vendorPosts[slot].role === 'shopper' && this.rng() < 0.75;
+      if (this.vendorPosts[slot].role === 'vendor') this.applyVendorLook(ped, pedIndex, slot);
       this.vendorCrew.push(ped);
     }
   }
@@ -865,8 +944,10 @@ export class PedestrianSystem {
       if (post) {
         wx = post.x;
         wz = post.z;
-        // Stalls tick over on their own clock, even when the rider is stopped.
-        ped.vendorPhase = (ped.vendorPhase + stepDt * (post.role === 'vendor' ? 1.15 : 0.62)) % TAU;
+        // Stalls tick over on their own clock, even when the rider is stopped,
+        // each at its own tempo so no two counter hands move in lockstep.
+        const rate = (post.role === 'vendor' ? 1.15 : 0.62) * ped.vendorTempo;
+        ped.vendorPhase = (ped.vendorPhase + stepDt * rate) % TAU;
       }
       ped.worldX = wx;
       ped.worldZ = wz;
@@ -913,9 +994,21 @@ export class PedestrianSystem {
       const h = ped.heightScale;
       const groundY = 0.09;
 
+      // A stallholder leans over their counter; a customer stands upright with a
+      // slight weight shift. Small angles, but they are what separates a person
+      // *working* a stall from a person standing in front of one.
+      const lean = post
+        ? (post.role === 'vendor'
+          ? 0.13 + Math.sin(ped.vendorPhase) * 0.045
+          : 0.03 + Math.sin(ped.vendorPhase * 0.6) * 0.02)
+        : 0;
+
       // Torso, head & hair/headwear
       if (stumbleTilt !== 0) {
         this.euler.set(stumbleTilt, yaw, stumbleTilt * 0.5, 'YXZ');
+        this.quat.setFromEuler(this.euler);
+      } else if (lean !== 0) {
+        this.euler.set(lean, yaw, 0, 'YXZ');
         this.quat.setFromEuler(this.euler);
       } else {
         this.quat.setFromAxisAngle(Y_AXIS, yaw);
@@ -952,20 +1045,27 @@ export class PedestrianSystem {
       // Stall work reuses the same arm instances: a vendor reaches down to the
       // counter, lifts, sets the goods back — the small repetitive motion that
       // reads as "occupied stall" from a moving rickshaw.
+      // Both arms are carried forward over the counter, then one hand dips to the
+      // goods while the other holds — the asymmetric reach that reads as work.
+      // Negative X on the shoulder pivot swings the arm forward (+Z is forward).
       const stallYawArmL = post?.role === 'vendor'
-        ? -0.16 - Math.max(0, -Math.sin(ped.vendorPhase)) * 0.62
+        ? -0.62 - Math.max(0, Math.sin(ped.vendorPhase)) * 0.34
         : post
-          ? -0.12 - Math.max(0, Math.sin(ped.vendorPhase * 0.7)) * 0.3
+          ? -0.34 - Math.max(0, Math.sin(ped.vendorPhase * 0.7)) * 0.22
           : 0;
       const stallYawArmR = post?.role === 'vendor'
-        ? -0.16 - Math.max(0, Math.sin(ped.vendorPhase)) * 0.78
+        ? -0.55 - Math.max(0, Math.sin(ped.vendorPhase + 2.1)) * 0.4
         : post
-          ? -0.5 - Math.max(0, Math.sin(ped.vendorPhase * 0.9)) * 0.22
+          ? -0.52 - Math.max(0, Math.sin(ped.vendorPhase * 0.9)) * 0.16
           : 0;
+      // Sideways splay keeps the two arms from occupying the same plane at close
+      // range, where a mirrored pose reads as a cardboard cutout.
+      const stallSplayL = post ? 0.12 : 0.05;
+      const stallSplayR = post ? -0.1 : -0.05;
 
       const armSwingL = post ? stallYawArmL : swing !== 0 ? -swing * 0.82 : evadeRaise || idleGesture;
       if (armSwingL !== 0) {
-        this.euler.set(armSwingL, yaw, 0.05, 'YXZ');
+        this.euler.set(armSwingL, yaw, stallSplayL, 'YXZ');
         this.quat.setFromEuler(this.euler);
       } else {
         this.quat.setFromAxisAngle(Y_AXIS, yaw);
@@ -979,7 +1079,7 @@ export class PedestrianSystem {
         ? stallYawArmR
         : ped.hasBag ? -0.18 : swing !== 0 ? swing * 0.82 : evadeRaise;
       if (armSwingR !== 0) {
-        this.euler.set(armSwingR, yaw, -0.05, 'YXZ');
+        this.euler.set(armSwingR, yaw, stallSplayR, 'YXZ');
         this.quat.setFromEuler(this.euler);
       } else {
         this.quat.setFromAxisAngle(Y_AXIS, yaw);

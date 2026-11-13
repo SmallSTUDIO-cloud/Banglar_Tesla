@@ -211,6 +211,16 @@ const AWNING = ['#c9b25a', '#b8543f', '#3f6f8c', '#5b7f4b'] as const;
  */
 const ROOF_TIN = '#9ca19e';
 const ROOF_TIN_CREST = '#b3b8b5';
+/**
+ * Underside of the tin. A sheet lit from above was reading, from inside the
+ * bazaar, as a bright slab with no depth — because there was nothing between the
+ * eye and the sky but one pale plane. Real CI sheet seen from below is shadowed
+ * and rust-stained, so every covered span now carries an explicit dark soffit
+ * plane just under the bright crest/pan strips.
+ */
+const ROOF_SOFFIT = '#8a7c6b';
+/** Trusses, purlins and drop hangers under the soffit. */
+const ROOF_STEEL = '#575d5c';
 const TARPAULIN = ['#2f5f8a', '#b4622f', '#3f6b4a'] as const;
 const PRODUCE = ['#c8552f', '#7f9c3a', '#d8a52c', '#8a4a2a', '#b5402f', '#5f8f3a'] as const;
 
@@ -568,11 +578,29 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
         { y: rp.yaw, x: 0.1 },
       );
     }
-    // Purlins under the sheet, so the underside is not a blank slab.
-    for (const off of [-1.4, 1.4]) {
-      const pp = at(s + 2 + off, STREET_V + STREET_WIDTH / 2);
-      pick('detail', pp.x, pp.z).box({ x: pp.x, y: 5.34, z: pp.z },
-        { x: STREET_WIDTH + 0.5, y: 0.08, z: 0.1 }, '#6f6a5e', { y: pp.yaw });
+    // The surface the aisle actually sees: a dark, matte underside.
+    const sp = at(s + 2, STREET_V + STREET_WIDTH / 2);
+    pick('detail', sp.x, sp.z).box({ x: sp.x, y: 5.3, z: sp.z },
+      { x: STREET_WIDTH + 0.5, y: 0.04, z: 4.12 }, ROOF_SOFFIT, { y: sp.yaw, x: 0.1 });
+    // Trusses spanning the street, with a hanger under each: roof structure is
+    // what gives a covered market depth over the aisle.
+    for (const off of [-1.35, 1.35]) {
+      const tp = at(s + 2 + off, STREET_V + STREET_WIDTH / 2);
+      pick('detail', tp.x, tp.z).box({ x: tp.x, y: 5.16, z: tp.z },
+        { x: STREET_WIDTH + 0.5, y: 0.1, z: 0.12 }, ROOF_STEEL, { y: tp.yaw });
+      for (const dv of [-1.55, 0, 1.55]) {
+        const hp = at(s + 2 + off, STREET_V + STREET_WIDTH / 2 + dv);
+        pick('metal', hp.x, hp.z).box({ x: hp.x, y: 5.24, z: hp.z },
+          { x: 0.05, y: 0.14, z: 0.05 }, ROOF_STEEL, { y: hp.yaw });
+      }
+    }
+    // Two hanging bulbs per covered span: the warm points of light that read as
+    // a working market rather than a shed. Plain geometry in the detail bucket,
+    // so no light, no shadow map and no extra draw call.
+    for (const ds of [-1.2, 1.2]) {
+      const bp = at(s + 2 + ds, STREET_V + STREET_WIDTH / 2);
+      pick('metal', bp.x, bp.z).cylinder({ x: bp.x, y: 4.68, z: bp.z }, 0.012, 1.2, '#3f4348');
+      pick('detail', bp.x, bp.z).cylinder({ x: bp.x, y: 4.05, z: bp.z }, 0.075, 0.1, '#f2e0b4');
     }
   }
   // Arcade: piers on the street face with deep shade between them, so the hall
@@ -789,7 +817,6 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
   const STALL_LEN = 3.0;
   const KEEPER_V = [STREET_V + 0.42, STREET_V + STREET_WIDTH - 0.42] as const;
   const COUNTER_V = [STREET_V + 1.15, STREET_V + STREET_WIDTH - 1.15] as const;
-  const AISLE_V = STREET_V + STREET_WIDTH / 2;
   for (let s = 20; s < 54; s += 4.4) {
     const stallIndex = Math.round((s - 20) / 4.4);
     for (const side of [0, 1] as const) {
@@ -810,7 +837,10 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
       // A customer on the aisle side, facing the goods (every other bay, so the
       // aisle keeps a walking lane).
       if (side === 0 && stallIndex % 2 === 0) {
-        const sp = at(s + 1.4, AISLE_V + 0.1);
+        // Beside the counter, not in the middle of the street: the aisle centre
+        // is the walking lane, and a shopper parked in it blocks circulation
+        // (and, in a capture, the camera).
+        const sp = at(s + 1.4, COUNTER_V[0] + 0.58);
         vendorPosts.push({
           x: sp.x,
           z: sp.z,
@@ -822,8 +852,22 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
       // Counter: a planked top on posts, not a solid block — you can see under it.
       pick('detail', p.x, p.z).box({ x: p.x, y: 0.82, z: p.z },
         { x: COUNTER_DEPTH, y: 0.09, z: STALL_LEN }, wood, { y: p.yaw });
-      pick('detail', p.x, p.z).box({ x: p.x, y: 0.42, z: p.z },
-        { x: COUNTER_DEPTH - 0.16, y: 0.72, z: STALL_LEN - 0.1 }, STALL_WOOD[(side + 1) % 4], { y: p.yaw });
+      // Open frame: end panels, a back apron and four legs. A solid box read as a
+      // wall across the bottom of every close-up, and it hid the floor the
+      // stallholder stands on.
+      for (const ds of [-STALL_LEN / 2 + 0.08, STALL_LEN / 2 - 0.08]) {
+        const ep2 = at(s + ds, v);
+        pick('detail', ep2.x, ep2.z).box({ x: ep2.x, y: 0.46, z: ep2.z },
+          { x: COUNTER_DEPTH - 0.08, y: 0.68, z: 0.07 }, STALL_WOOD[(side + 2) % 4], { y: ep2.yaw });
+      }
+      const backAp = at(s, v - toAisle * (COUNTER_DEPTH / 2 - 0.05));
+      pick('detail', backAp.x, backAp.z).box({ x: backAp.x, y: 0.55, z: backAp.z },
+        { x: 0.05, y: 0.5, z: STALL_LEN - 0.2 }, STALL_WOOD[(side + 1) % 4], { y: backAp.yaw });
+      for (const ds of [-STALL_LEN / 2 + 0.08, STALL_LEN / 2 - 0.08]) {
+        const lg = at(s + ds, v + toAisle * (COUNTER_DEPTH / 2 - 0.06));
+        pick('detail', lg.x, lg.z).box({ x: lg.x, y: 0.4, z: lg.z },
+          { x: 0.06, y: 0.8, z: 0.06 }, '#6b5c43', { y: lg.yaw });
+      }
       // Goods heaped in three or four baskets along the plank, in tiers.
       for (let k = 0; k < 4; k++) {
         const gs = s - 1.05 + k * 0.7;
@@ -857,20 +901,32 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
       // stall's back edge. The first pass had them out over the counter, where
       // they read as floating panels filling the aisle view.
       const hangTint = TARPAULIN[Math.floor(stallRng() * TARPAULIN.length)];
+      const hang2 = TARPAULIN[(Math.floor(stallRng() * 3) + 1) % TARPAULIN.length];
       for (const hz of [-0.85, 0.15]) {
         const hq = at(s + hz, KEEPER_V[side] - toAisle * 0.16);
+        // Rod under the hood, then two offset planes so the stock hangs with a
+        // fold. As single thin cards they read as floating rectangles at 2 m.
+        pick('metal', hq.x, hq.z).box({ x: hq.x, y: 2.26, z: hq.z },
+          { x: 0.025, y: 0.025, z: 0.42 }, '#6b6a63', { y: hq.yaw });
         pick('detail', hq.x, hq.z).box({ x: hq.x, y: 2.02, z: hq.z },
-          { x: 0.07, y: 0.42, z: 0.3 }, hangTint, { y: hq.yaw });
+          { x: 0.045, y: 0.44, z: 0.26 }, hangTint, { y: hq.yaw });
+        const hq2 = at(s + hz + 0.07, KEEPER_V[side] - toAisle * 0.1);
+        pick('detail', hq2.x, hq2.z).box({ x: hq2.x, y: 1.99, z: hq2.z },
+          { x: 0.04, y: 0.36, z: 0.16 }, hang2, { y: hq2.yaw });
       }
-      // Tin hood over the stall: corrugated ribs along the slope, then the sheet.
-      // Ridge line and the two edge purlins, so the hood has a frame rather than
-      // floating: the corrugation itself is the sheet drawn just above.
+      // Tin hood over the stall. The sheet is narrow (1.15) so the two rows still
+      // leave a sky gap over the aisle, and its underside is the dark soffit tone
+      // rather than a pale slab. Ridge, eave purlins and posts carry it.
+      pick('detail', p.x, p.z).box({ x: p.x, y: 2.32, z: p.z },
+        { x: 1.15, y: 0.035, z: 3.4 }, ROOF_SOFFIT, { y: p.yaw, x: 0.07 });
       pick('detail', p.x, p.z).box({ x: p.x, y: 2.36, z: p.z },
-        { x: 0.1, y: 0.05, z: 3.4 }, '#6f7574', { y: p.yaw, x: 0.07 });
-      for (const dv of [-0.56, 0.56]) {
+        { x: 1.19, y: 0.02, z: 3.42 }, ROOF_TIN, { y: p.yaw, x: 0.07 });
+      pick('detail', p.x, p.z).box({ x: p.x, y: 2.39, z: p.z },
+        { x: 0.08, y: 0.05, z: 3.4 }, ROOF_STEEL, { y: p.yaw, x: 0.07 });
+      for (const dv of [-0.54, 0.54]) {
         const ep = at(s, v + toAisle * dv);
         pick('detail', ep.x, ep.z).box({ x: ep.x, y: 2.28, z: ep.z },
-          { x: 0.07, y: 0.07, z: 3.4 }, '#6f7574', { y: ep.yaw, x: 0.07 });
+          { x: 0.06, y: 0.06, z: 3.4 }, ROOF_STEEL, { y: ep.yaw, x: 0.07 });
       }
       for (const ds of [-1.5, 1.5]) {
         const pp = at(s + ds, v + toAisle * 0.55);

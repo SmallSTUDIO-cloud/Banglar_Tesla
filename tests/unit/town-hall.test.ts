@@ -273,4 +273,46 @@ describe('Town Hall market life', () => {
       '84.26,61.39,1.90', // delivery lorry at the east loading bay
     ]);
   });
+
+  it('dresses stallholders on assignment and restores them on release', async () => {
+    const { PedestrianSystem } = await import('../../src/ai/pedestrians');
+    const peds = new PedestrianSystem({ shadows: false, pedestrians: 68 } as never);
+    const internals = peds as unknown as {
+      body: { instanceColor: { getX(i: number): number; getY(i: number): number; getZ(i: number): number } };
+      activeCount: number;
+    };
+    const colourOf = (i: number) =>
+      [internals.body.instanceColor.getX(i), internals.body.instanceColor.getY(i), internals.body.instanceColor.getZ(i)];
+    const before = Array.from({ length: internals.activeCount }, (_, i) => colourOf(i));
+
+    peds.setMarketVendorPosts(posts);
+    for (let i = 0; i < 60; i++) peds.update(0.05, 67.0, 98.8, 0, 1.8);
+    expect(peds.marketCrewCount).toBeGreaterThan(0);
+
+    for (let i = 0; i < 60; i++) peds.update(0.05, 4000, 4000, 0, 1.8);
+    expect(peds.marketCrewCount).toBe(0);
+
+    // Handing the post back must hand the clothes back too: the crowd is not
+    // left permanently in shopkeeper colours, and no instance is left behind.
+    for (let i = 0; i < internals.activeCount; i++) {
+      const after = colourOf(i);
+      expect(after.map((v) => +v.toFixed(4))).toEqual(before[i].map((v) => +v.toFixed(4)));
+    }
+    // Still the same nine instanced meshes: dressing the crew costs no draw call.
+    expect(peds.group.children.length).toBe(9);
+    peds.dispose();
+  });
+
+  it('keeps shoppers out of the walking lane', () => {
+    // Shoppers face a counter from beside it; anyone parked in the middle of the
+    // bazaar street blocks circulation, and the aisle centre is the lane.
+    const seg = ROAD_SEGMENTS.find((r) => r.id === TOWN_HALL_SEGMENT_ID)!;
+    const shoppers = posts.filter((p) => p.role === 'shopper');
+    expect(shoppers.length).toBeGreaterThan(0);
+    for (const s of shoppers) {
+      const across = (s.x - seg.ax) * seg.leftX + (s.z - seg.az) * seg.leftZ;
+      // Bazaar runs v 18.1..22.3, so the lane centre is 20.2.
+      expect(Math.abs(across - 20.2)).toBeGreaterThan(0.25);
+    }
+  });
 });

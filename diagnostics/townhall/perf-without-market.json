@@ -11,29 +11,29 @@
       "geometries": 277,
       "textures": 21,
       "programs": 65,
-      "meanFrameMs": 1185
+      "meanFrameMs": 2077.5
     },
     {
       "view": "hall",
       "pedestrians": 68,
       "marketCrew": 0,
-      "drawCalls": 120,
-      "triangles": 828712,
+      "drawCalls": 122,
+      "triangles": 830428,
       "geometries": 277,
       "textures": 21,
       "programs": 65,
-      "meanFrameMs": 1328.8
+      "meanFrameMs": 1862.4
     },
     {
       "view": "aerial",
       "pedestrians": 68,
       "marketCrew": 0,
-      "drawCalls": 206,
-      "triangles": 1356071,
+      "drawCalls": 205,
+      "triangles": 1356395,
       "geometries": 277,
       "textures": 21,
       "programs": 65,
-      "meanFrameMs": 1315.6
+      "meanFrameMs": 1917.6
     }
   ]
 }

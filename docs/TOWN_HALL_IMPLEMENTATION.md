@@ -6,9 +6,11 @@ This document reports what is built on the Asad Avenue frontage at Town Hall, wh
 supported by evidence, and what is still wrong with it. It is written to be read
 alongside the screenshots in `diagnostics/townhall/`, not instead of them.
 
-Two passes are recorded here. **Pass 1** (commits `b37ffa6` → `9fe5351`) built the market
-geometry. **Pass 2** (this one) made it live, reworked the roofing, shutters and arcade,
-and completed the working yard behind the halls.
+Three passes are recorded here. **Pass 1** (`b37ffa6` → `9fe5351`) built the market
+geometry. **Pass 2** (`fb1bc65` → `d6e4d17`) made it live, reworked the roofing, shutters
+and arcade, and completed the working yard. **Pass 3** (this one) fixed the two weaknesses
+pass 2 recorded — the bright slab soffit and the vendors at close range — and validated
+the Android story as far as this sandbox allows.
 
 ---
 
@@ -142,6 +144,41 @@ see. `capture.mjs` and `perf.mjs` now put the rider on Asad Avenue at the market
 (`debugTeleport`, the game's own primitive) before shooting. Every frame in this report is
 therefore the arrival state.
 
+## 3g. Pass 3 — what changed
+
+**The soffit.** Pass 2 reported it as *"bright and slabby"*. It was worse than that: from
+the aisle the wall of stall hoods was, in one frame, a single continuous cream plane with
+no thickness and no depth. Fixed by giving every covered span an explicit dark,
+rust-stained underside plane under the bright crest/pan sheet, adding real roof structure
+(a truss across the street with drop hangers, and ridge/eave purlins on the stall hoods),
+narrowing the hoods to 1.15 so the two rows leave a sky slot instead of meeting overhead,
+and hanging two warm bulbs per covered span (plain geometry in the detail bucket — no
+lights, no shadow maps, no extra draw call).
+
+One correction on the way: the first tone chosen (`#6d6152`) was too dark and turned the
+bazaar into a tunnel. It is `#8a7c6b`, which reads as shaded tin rather than black.
+
+**Vendors at close range.** Pass 2 reported them as *"convincing at 10–20 m, plain at
+2 m"*. A measured close-up showed why, and it was not the rig: the stallholders were
+wearing the crowd's random bright colours, and their arms hung at their sides. Fixed with
+three instance-colour writes and posture, no new mesh, material or draw call:
+
+- **Dress.** Shopkeeper palette (faded checked kameez, dark lungi, or a saree when the
+  borrowed walker wears one). The original instance colours are captured on assignment and
+  written back on release, which a test proves is byte-identical to a fresh system.
+- **Pose.** A working lean over the counter (vendors ~0.13 rad, shoppers ~0.03), both arms
+  carried forward, one hand dipping to the goods on an asymmetric cycle, plus sideways
+  splay so the arms are not a mirrored plane.
+- **Variation.** Per-vendor tempo so no two counter hands move in lockstep.
+
+**Two corrections to pass 2's own report.**
+- Pass 2's commit message claimed the counters were *"planked tops on posts (you can see
+  under them)"*. They were not: the counter was a solid box, and a close-up shows it as a
+  wall across the bottom of the frame. The counters now really are open frames — end
+  panels, a back apron and four legs — so the floor the stallholder stands on is visible.
+- Shoppers were posted at the aisle centre line, i.e. in the walking lane. They now stand
+  beside the counter they are facing, and a test pins that.
+
 ## 4. World integrity
 
 `isInTownHallSite` is still the only change to generated-city behaviour.
@@ -192,6 +229,14 @@ the carriageway, the apron or over the block, checked against
 | 08 | `08-aerial` | 84.9, 62, 124.8 | aerial over the market block |
 | 09 | `09-north-yard` | 84.9, 20, 45.7 | yard behind the halls: lorries, crates, wall |
 | 10 | `10-kerb-activity` | 64.2, 1.9, 96.4 | eye level driving past: heaps, awnings, shoppers |
+| 11 | `11-vendor-closeup` | 64.06, 1.52, 82.28 | close on a stallholder at ~2 m: pose, hands, produce |
+
+**Views 04, 06 and 11 have no meaningful "before".** They sit inside the bazaar, which only
+exists after the market is built, so the stubbed control renders whatever generated
+building happens to stand there — views 06 and 11 are frames taken from inside a wall.
+They are kept because the `after` frames are real, but they are not a before/after pair
+and are not presented as one. The honest before/after pairs are 01, 02, 03, 05, 07, 08,
+09 and 10.
 
 Both sets report `errors: none`. Live state at capture:
 `{ pedestrians: 82, marketCrew: 14, marketPosts: 22 }`.
@@ -208,12 +253,11 @@ arrival state and cameras:
 
 | view | draw calls | triangles | geometries | programs | crew |
 |---|---|---|---|---|---|
-| frontage | 166 → **166** | 1,217,881 → 1,248,498 (+2.5 %) | 277 → 277 | 65 | 14 / 69 |
-| hall | 120 → **122** | 828,712 → 862,422 (+4.1 %) | 277 → 277 | 65 | 14 / 70 |
-| aerial | 206 → **205** | 1,356,071 → 1,388,393 (+2.4 %) | 277 → 277 | 65 | 14 / 70 |
+| frontage | 166 → **166** | 1,217,881 → 1,253,578 (+2.9 %) | 277 → 277 | 65 | 14 |
+| hall | 122 → **122** | 830,428 → 867,502 (+4.5 %) | 277 → 277 | 65 | 14 |
+| aerial | 205 → **205** | 1,356,395 → 1,393,473 (+2.7 %) | 277 → 277 | 65 | 14 |
 
-**Zero new draw calls at two of three views, one fewer at the aerial; no new geometries,
-no new programs.** The +32 k triangles is the roofing, stall detail and yard, and is
+**Zero new draw calls at all three views; no new geometries, no new programs.** The +32 k triangles is the roofing, stall detail and yard, and is
 partly offset by the five tall generated blocks the market replaces. For scale, that is
 ~2–4 % of a scene that is already 1.2–1.4 M triangles, in the same buckets the renderer
 was drawing before.
@@ -222,6 +266,29 @@ was drawing before.
 SwiftShader CPU rasteriser. They are **not** device measurements and must not be quoted as
 Android performance. Only draw calls, triangles, geometries and program counts are a
 meaningful device proxy. **No real-device test was run for this milestone.**
+
+## 7a. Android status — NOT MEASURED
+
+The capability was inspected before adding anything: an on-device benchmark already exists
+(`src/core/perfBench.ts`, opt-in via `?bench=1`, loaded through a dynamic import so it
+costs nothing at boot) and prints FPS, draw calls, triangles, texture bytes and JS heap per
+quality preset on the real phone. **Nothing new was added.**
+
+It could not be exercised here, and this is the honest status:
+
+| step | status |
+|---|---|
+| `python3 scripts/build-apk.py --check` | **fails**, exit 1: "Android SDK not configured" |
+| JDK for Gradle | **absent** (`java` not on PATH) |
+| Android SDK / build-tools 34 | **absent** (no `/opt/android*`, `ANDROID_HOME` unset) |
+| Physical mid-range Android device | **unavailable** — no device or adb host |
+
+So **no APK was built and no Android FPS, frame-time, memory or loading measurement was
+taken.** Per the milestone rules, the SwiftShader frame times in §7 are explicitly **not**
+Android measurements and are not presented as such. The command to run when a device and
+SDK are available is recorded in `docs/ANDROID_BUILD.md`; the benchmark protocol is
+unchanged by this pass, so any device numbers remain comparable with the CI figures on
+draw calls and triangles.
 
 ## 8. Recognizable / inaccurate / needs improvement
 
@@ -232,23 +299,25 @@ kerbside poles and sagging cables; the corrugated bazaar spine with two counter 
 with lorries at the loading bays; and the crowd plus passing rickshaws and buses on the
 road.
 
-**Inaccurate / still weak.**
-- Vendors are the shared pedestrian rig — no bazaar-specific clothing, and no hand
-  gestures beyond the reach cycle. They are convincing at 10–20 m, plain at 2 m.
+**Inaccurate / still weak (after pass 3).**
+- Vendors are still the shared pedestrian rig. Dress and posture now read at 2–5 m, but
+  there is no hand geometry contact with the produce and no separate vendor silhouette.
 - Nothing is *carried*: a shopper stands at a counter but produce never leaves it.
-- The bazaar underside is still bright and slabby in the aisle frames; the two stall hoods
-  nearly meet overhead and read as a ceiling.
+- The soffit is fixed in tone and structure, but the covered spans still stop abruptly; a
+  continuously graded underside would look better than discrete planes.
 - The terrace's rear elevation is better but still flat compared with the shopfront side.
+- Viewed from the very top of the aisle the market hall's tin still reads slightly light;
+  a dirt/rust breakup would help more than more geometry.
 - Produce colours are more saturated than the reference photographs.
 - The compound wall and gate are plausible infrastructure; they are **not** a photographed
   feature of this market and should not be described as one.
 - The ground north of the yard is still empty (it is outside the authored site), and the
   1.24-acre mapped parcel is still not the 5.5-acre precinct.
 
-**Next, in priority order.** (1) bazaar lighting — a warmer, dimmer soffit and a couple of
-hanging bulbs would do more for "busy market" than any more geometry; (2) vendor-specific
-dress and a handcart or two in the aisle; (3) carried goods / a loading cycle at the
-counters; (4) more legible per-shop Bengali beyond the ten verified names.
+**Next, in priority order.** (1) carried goods / a loading cycle at the counters — the
+one thing still missing from "people working"; (2) a handcart or two in the aisle; (3) a
+dirt/rust layer on the tin; (4) more legible per-shop Bengali beyond the ten verified
+names. The milestone's stated goals for the soffit and close-range vendors are met.
 
 ## 9. Gates
 
@@ -257,20 +326,22 @@ Run at the committed tree:
 | gate | command | result |
 |---|---|---|
 | types | `npx tsc --noEmit` | 0 errors |
-| unit/integration | `npx vitest run` | **674 passed / 65 files** |
+| unit/integration | `npx vitest run` | **676 passed / 65 files** |
 | map import | `python3 -m unittest discover -s tests/map_import` | OK |
 | APK pipeline | `python3 -m unittest discover -s tests/apk_pipeline -p 'test_*.py'` | OK |
-| production build | `npm run build` | **378.01 kB gzip** |
+| production build | `npm run build` | **378.83 kB gzip** |
 | clearance | `npx vite-node diagnostics/townhall/clearance.ts` | pass, exit 0 |
-| captures | `node diagnostics/townhall/capture.mjs … after` | 10 shots, `errors: none` |
+| captures | `node diagnostics/townhall/capture.mjs … after` | **11 shots**, `errors: none` |
+| Android | `python3 scripts/build-apk.py --check` | **exit 1 — SDK absent; not measured** (§7a) |
 | render cost | `node diagnostics/townhall/perf.mjs with-market` | §7 |
 
-`tests/unit/town-hall.test.ts` now has **15 tests**: the pass-1 delta pins plus the living
+`tests/unit/town-hall.test.ts` now has **17 tests**: the pass-1 delta pins plus the living
 market — posts exist in both roles, every post is inside the site and off the road, posts
 span both stall rows, posts are deterministic across builds, the crew costs no meshes,
 the crew engages at the market and releases when the rider leaves, the 50-unit guard
-refuses walkers standing in front of the rider, and the five yard props are pinned by
-coordinate.
+refuses walkers standing in front of the rider, the five yard props are pinned by
+coordinate, shopkeeper colours are restored byte-identically on release, and shoppers are
+kept out of the walking lane.
 
 One honest note on the test budget: a full `buildCity` takes ~4.2 s in this sandbox, so
 the four-build isolation test carries the 60 s timeout already used elsewhere in its file.
@@ -278,7 +349,7 @@ No assertion was weakened or skipped.
 
 ## 10. Not done
 
-- No release, tag or APK rebuild. `main` is untouched and nothing was merged.
-- **No device performance measurement.** Numbers here are draw calls, triangles,
-  geometries and programs plus software-rasteriser frame times (§7).
+- No release, tag or APK. `main` is untouched and nothing was merged.
+- **No device performance measurement and no APK build** — no JDK, no Android SDK, no
+  device in this environment (§7a). This is reported as unmeasured, not estimated.
 - No interior to the halls, no vendor character models, no carried goods.
