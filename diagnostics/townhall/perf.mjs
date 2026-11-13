@@ -73,7 +73,16 @@ await new Promise((r) => setTimeout(r, 1500));
 await page.evaluate(() => {
   const g = window.__banglarTesla;
   g.ui.show(null);
-  g.debugFreeCamera = true;
+});
+// Same arrival state as capture.mjs: the rider is on Asad Avenue at the market.
+// Without this the pedestrian LOD culls the market crew and the frame measured
+// is not the frame the player actually sees.
+await page.evaluate(() => {
+  window.__banglarTesla.debugTeleport(67.0, 98.8, 1.85);
+});
+await new Promise((r) => setTimeout(r, 2500));
+await page.evaluate(() => {
+  window.__banglarTesla.debugFreeCamera = true;
 });
 
 const rows = [];
@@ -104,6 +113,8 @@ for (const v of VIEWS) {
     });
     frames.shift();
     return {
+      pedestrians: g.peds?.activePedestrianCount ?? null,
+      marketCrew: g.peds?.marketCrewCount ?? null,
       drawCalls: g.renderer.info.render.calls,
       triangles: g.renderer.info.render.triangles,
       geometries: g.renderer.info.memory.geometries,

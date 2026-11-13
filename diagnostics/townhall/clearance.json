@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-11-13T10:22:41.997Z",
+  "colliderCount": 1244,
+  "city": {
+    "insideCarriageway": 0,
+    "minCentreDistance": 1.02,
+    "offenders": []
+  },
+  "market": {
+    "colliderCount": 23,
+    "touchingCarriageway": 0,
+    "minDistanceToCorridor": 0.06,
+    "bounds": {
+      "minX": 42.5,
+      "maxX": 97.1,
+      "minZ": 61.1,
+      "maxZ": 94.9
+    }
+  },
+  "pass": true
+}

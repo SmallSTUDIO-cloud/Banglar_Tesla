@@ -42,8 +42,8 @@ const VIEWS = [
     note: 'from the carriageway: the shopfront terrace head-on' },
   // Road-local s 48, v 19.8 looking back west down the bazaar street at eye
   // height: the hall arcade, its fish/vegetable boards and the stall rows.
-  { name: '04-bazar-inside', pos: [82.5, 1.65, 73.2], look: [61.4, 2.4, 79.5], fov: 70,
-    note: 'down the centre of the bazaar aisle: hall arcade, stall rows, produce' },
+  { name: '04-bazar-inside', pos: [81.9, 1.7, 74.4], look: [60.9, 2.2, 79.0], fov: 70,
+    note: 'down the centre of the bazaar aisle: stallholders, counters, produce' },
   { name: '05-junction', pos: [51.0, 2.2, 101.3], look: [67.2, 5, 85.2], fov: 62,
     note: 'Town Hall junction, three-quarter view of the market corner' },
   { name: '06-market-hall', pos: [57.4, 1.8, 80.2], look: [84.3, 3.5, 72.4], fov: 66,
@@ -53,6 +53,14 @@ const VIEWS = [
   // showed a white roof instead of the market.
   { name: '07-elevated', pos: [45.8, 34, 104.9], look: [71.8, 5, 72.4], fov: 54,
     note: 'elevated over the road: frontage, bazaar spine, halls, mosque' },
+  // The working yard is on the far side of the halls and is invisible from the
+  // road, so it needs its own frame: trucks at the loading bays, stacked crates,
+  // the compound wall and the corrugated hall roof from above.
+  { name: '09-north-yard', pos: [84.9, 20, 45.7], look: [66.3, 3, 67.7], fov: 58,
+    note: 'over the yard behind the halls: deliveries, refuse, compound wall' },
+  // Street level at the kerb among the produce, with the crowd and the traffic.
+  { name: '10-kerb-activity', pos: [64.2, 1.9, 96.4], look: [77.8, 2.1, 85.7], fov: 62,
+    note: 'driving past at eye level: produce heaps, awnings, shoppers on the kerb' },
   { name: '08-aerial', pos: [84.9, 62, 124.8], look: [71.0, 2, 76.8], fov: 55,
     note: 'aerial over the market block' },
 ];
@@ -106,7 +114,25 @@ await new Promise((r) => setTimeout(r, 1500));
 await page.evaluate(() => {
   const g = window.__banglarTesla;
   g.ui.show(null);
-  g.debugFreeCamera = true;
+});
+
+/**
+ * Put the RIDER on Asad Avenue at the market before shooting.
+ *
+ * The pedestrian system culls walkers more than ~135 units from the rickshaw and
+ * only staffs the bazaar while the rider is in the district. Moving the camera
+ * alone would therefore photograph an empty market that no player would ever
+ * see. `debugTeleport` is the game's own "drive here" primitive, so this is the
+ * arrival state, not a special one.
+ */
+const PLAYER_ANCHOR = { x: 67.0, z: 98.8, yaw: 1.85 };
+await page.evaluate((a) => {
+  const g = window.__banglarTesla;
+  g.debugTeleport(a.x, a.z, a.yaw);
+}, PLAYER_ANCHOR);
+await new Promise((r) => setTimeout(r, 2500));
+await page.evaluate(() => {
+  window.__banglarTesla.debugFreeCamera = true;
 });
 
 /**
@@ -179,7 +205,25 @@ const summary = measured.reduce(
   { maxDrawCalls: 0, maxTriangles: 0, worstMeanFrameMs: 0, measuredViews: 0 },
 );
 
-const report = { capturedAt: new Date().toISOString(), base: BASE, tag, summary, shots, errors };
+const live = await page.evaluate(() => {
+  const g = window.__banglarTesla;
+  return {
+    pedestrians: g.peds?.activePedestrianCount ?? null,
+    marketCrew: g.peds?.marketCrewCount ?? null,
+    marketPosts: g.city?.marketVendorPosts?.length ?? null,
+  };
+});
+
+const report = {
+  capturedAt: new Date().toISOString(),
+  base: BASE,
+  tag,
+  playerAnchor: PLAYER_ANCHOR,
+  live,
+  summary,
+  shots,
+  errors,
+};
 fs.writeFileSync(path.join(outDir, `capture-report${tag ? `-${tag}` : ''}.json`), JSON.stringify(report, null, 2));
 console.log('errors:', errors.length ? errors : 'none');
 

@@ -1,11 +1,21 @@
 {
-  "capturedAt": "2026-11-12T20:41:55.563Z",
+  "capturedAt": "2026-11-13T10:19:07.996Z",
   "base": "http://127.0.0.1:4211",
   "tag": "after",
+  "playerAnchor": {
+    "x": 67,
+    "z": 98.8,
+    "yaw": 1.85
+  },
+  "live": {
+    "pedestrians": 82,
+    "marketCrew": 14,
+    "marketPosts": 22
+  },
   "summary": {
-    "maxDrawCalls": 179,
-    "maxTriangles": 1338439,
-    "worstMeanFrameMs": 1848.94,
+    "maxDrawCalls": 207,
+    "maxTriangles": 1405065,
+    "worstMeanFrameMs": 1258.73,
     "measuredViews": 3
   },
   "shots": [
@@ -24,7 +34,7 @@
       "fov": 58,
       "note": "approach from the Town Hall junction: frontage running away to the east",
       "file": "diagnostics/townhall/after/01-approach-west-after.png",
-      "bytes": 677020,
+      "bytes": 702999,
       "perf": null
     },
     {
@@ -42,7 +52,7 @@
       "fov": 58,
       "note": "approach from the Post Office end, looking back along the frontage",
       "file": "diagnostics/townhall/after/02-approach-east-after.png",
-      "bytes": 556847,
+      "bytes": 609441,
       "perf": null
     },
     {
@@ -60,33 +70,33 @@
       "fov": 64,
       "note": "from the carriageway: the shopfront terrace head-on",
       "file": "diagnostics/townhall/after/03-frontage-street-after.png",
-      "bytes": 597361,
+      "bytes": 636477,
       "perf": {
-        "drawCalls": 160,
-        "triangles": 1206003,
+        "drawCalls": 169,
+        "triangles": 1253093,
         "geometries": 277,
         "textures": 21,
         "programs": 65,
-        "meanFrameMs": 1644.35,
-        "p95FrameMs": 2211.8
+        "meanFrameMs": 1132.89,
+        "p95FrameMs": 1629
       }
     },
     {
       "name": "04-bazar-inside",
       "pos": [
-        82.5,
-        1.65,
-        73.2
+        81.9,
+        1.7,
+        74.4
       ],
       "look": [
-        61.4,
-        2.4,
-        79.5
+        60.9,
+        2.2,
+        79
       ],
       "fov": 70,
-      "note": "down the centre of the bazaar aisle: hall arcade, stall rows, produce",
+      "note": "down the centre of the bazaar aisle: stallholders, counters, produce",
       "file": "diagnostics/townhall/after/04-bazar-inside-after.png",
-      "bytes": 205907,
+      "bytes": 486245,
       "perf": null
     },
     {
@@ -104,7 +114,7 @@
       "fov": 62,
       "note": "Town Hall junction, three-quarter view of the market corner",
       "file": "diagnostics/townhall/after/05-junction-after.png",
-      "bytes": 626196,
+      "bytes": 658120,
       "perf": null
     },
     {
@@ -122,15 +132,15 @@
       "fov": 66,
       "note": "inside the bazaar street: stalls, hall arcade, tin roof",
       "file": "diagnostics/townhall/after/06-market-hall-after.png",
-      "bytes": 207380,
+      "bytes": 465866,
       "perf": {
-        "drawCalls": 115,
-        "triangles": 818404,
+        "drawCalls": 118,
+        "triangles": 867060,
         "geometries": 277,
         "textures": 21,
         "programs": 65,
-        "meanFrameMs": 1821.2,
-        "p95FrameMs": 3757
+        "meanFrameMs": 1209.6,
+        "p95FrameMs": 1846.2
       }
     },
     {
@@ -148,7 +158,43 @@
       "fov": 54,
       "note": "elevated over the road: frontage, bazaar spine, halls, mosque",
       "file": "diagnostics/townhall/after/07-elevated-after.png",
-      "bytes": 1236876,
+      "bytes": 1273841,
+      "perf": null
+    },
+    {
+      "name": "09-north-yard",
+      "pos": [
+        84.9,
+        20,
+        45.7
+      ],
+      "look": [
+        66.3,
+        3,
+        67.7
+      ],
+      "fov": 58,
+      "note": "over the yard behind the halls: deliveries, refuse, compound wall",
+      "file": "diagnostics/townhall/after/09-north-yard-after.png",
+      "bytes": 856737,
+      "perf": null
+    },
+    {
+      "name": "10-kerb-activity",
+      "pos": [
+        64.2,
+        1.9,
+        96.4
+      ],
+      "look": [
+        77.8,
+        2.1,
+        85.7
+      ],
+      "fov": 62,
+      "note": "driving past at eye level: produce heaps, awnings, shoppers on the kerb",
+      "file": "diagnostics/townhall/after/10-kerb-activity-after.png",
+      "bytes": 650963,
       "perf": null
     },
     {
@@ -166,15 +212,15 @@
       "fov": 55,
       "note": "aerial over the market block",
       "file": "diagnostics/townhall/after/08-aerial-after.png",
-      "bytes": 1043977,
+      "bytes": 1068476,
       "perf": {
-        "drawCalls": 179,
-        "triangles": 1338439,
+        "drawCalls": 207,
+        "triangles": 1405065,
         "geometries": 277,
         "textures": 21,
         "programs": 65,
-        "meanFrameMs": 1848.94,
-        "p95FrameMs": 2200.2
+        "meanFrameMs": 1258.73,
+        "p95FrameMs": 1523.6
       }
     }
   ],

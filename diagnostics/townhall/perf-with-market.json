@@ -4,30 +4,36 @@
   "rows": [
     {
       "view": "frontage",
-      "drawCalls": 162,
-      "triangles": 1203027,
+      "pedestrians": 69,
+      "marketCrew": 14,
+      "drawCalls": 166,
+      "triangles": 1248498,
       "geometries": 277,
       "textures": 21,
       "programs": 65,
-      "meanFrameMs": 2125.2
+      "meanFrameMs": 1395.1
     },
     {
       "view": "hall",
-      "drawCalls": 117,
-      "triangles": 816820,
+      "pedestrians": 70,
+      "marketCrew": 14,
+      "drawCalls": 122,
+      "triangles": 862422,
       "geometries": 277,
       "textures": 21,
       "programs": 65,
-      "meanFrameMs": 2319.6
+      "meanFrameMs": 1406.5
     },
     {
       "view": "aerial",
-      "drawCalls": 182,
-      "triangles": 1339231,
+      "pedestrians": 70,
+      "marketCrew": 14,
+      "drawCalls": 205,
+      "triangles": 1388393,
       "geometries": 277,
       "textures": 21,
       "programs": 65,
-      "meanFrameMs": 2172.1
+      "meanFrameMs": 1313.3
     }
   ]
 }
