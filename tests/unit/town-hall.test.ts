@@ -43,6 +43,7 @@ const LIVE = await (async () => {
       yaw?: number;
       height: number;
     }>;
+    marketVendorPosts: Array<{ x: number; z: number; yaw: number; role: 'vendor' | 'shopper' }>;
   };
   return { city, snapshot: buildWorldSnapshot(city as never) };
 })();
@@ -163,5 +164,113 @@ describe('Town Hall Market', () => {
     const seg = ROAD_SEGMENTS.find((s) => s.id === TOWN_HALL_SEGMENT_ID);
     expect(seg).toBeDefined();
     void buildTownHall;
+  });
+});
+
+/**
+ * The living half of the market: stall posts, the borrowed crew that fills them,
+ * and the working yard behind the halls.
+ */
+describe('Town Hall market life', () => {
+  const posts = LIVE.city.marketVendorPosts;
+
+  it('publishes stall posts for the bazaar, in both roles', () => {
+    expect(posts.length).toBeGreaterThan(15);
+    expect(posts.filter((p) => p.role === 'vendor').length).toBeGreaterThan(10);
+    expect(posts.filter((p) => p.role === 'shopper').length).toBeGreaterThan(0);
+  });
+
+  it('puts every stall post inside the market site and clear of the road', () => {
+    // A vendor standing in the carriageway would be both wrong and fatal to the
+    // "never place props in a carriageway" rule.
+    for (const post of posts) {
+      expect(isInTownHallSite(post.x, post.z)).toBe(true);
+      expect(distanceToRoadCarriageway(post.x, post.z)).toBeGreaterThan(0);
+    }
+  });
+
+  it('lines the posts up with the counters that were actually built', () => {
+    // Both rows of every stall are staffed: some posts sit north of the bazaar
+    // centre line and some south, and they span the length of the street.
+    const seg = ROAD_SEGMENTS.find((r) => r.id === TOWN_HALL_SEGMENT_ID)!;
+    const along = posts.map((p) => (p.x - seg.ax) * seg.ux + (p.z - seg.az) * seg.uz);
+    const across = posts.map((p) => (p.x - seg.ax) * seg.leftX + (p.z - seg.az) * seg.leftZ);
+    expect(Math.min(...along)).toBeLessThan(25);
+    expect(Math.max(...along)).toBeGreaterThan(48);
+    expect(Math.min(...across)).toBeLessThan(19.5);
+    expect(Math.max(...across)).toBeGreaterThan(21.5);
+  });
+
+  it('keeps the stall posts deterministic across builds', async () => {
+    // Same seed, same posts: the crew must not shuffle between sessions or the
+    // market would look different every time the player arrives.
+    const [{ buildCity }, { SignAtlas }] = await Promise.all([
+      import('../../src/world/city'),
+      import('../../src/world/textures'),
+    ]);
+    const again = buildCity(new SignAtlas() as never, { shadows: true } as never) as unknown as {
+      marketVendorPosts: typeof posts;
+    };
+    expect(again.marketVendorPosts).toEqual(posts);
+  }, 60_000);
+
+  it('staffs the bazaar from walkers, without adding meshes', async () => {
+    const { PedestrianSystem } = await import('../../src/ai/pedestrians');
+    const peds = new PedestrianSystem({ shadows: false, pedestrians: 68 } as never);
+    // The crew intentionally costs no draw calls: the system keeps exactly the
+    // same nine instanced meshes it had before the market existed.
+    expect(peds.group.children.length).toBe(9);
+
+    peds.setMarketVendorPosts(posts);
+    // Rider standing on the frontage: the bazaar engages.
+    for (let i = 0; i < 40; i++) peds.update(0.05, 67.0, 98.8, 0, 1.8);
+    expect(peds.marketCrewCount).toBeGreaterThan(0);
+
+    // Rider drives away past the keep radius: every post is handed back.
+    for (let i = 0; i < 5; i++) peds.update(0.05, 4000, 4000, 0, 1.8);
+    expect(peds.marketCrewCount).toBe(0);
+    peds.dispose();
+  });
+
+  it('never borrows a walker standing in front of the rider', async () => {
+    const { PedestrianSystem } = await import('../../src/ai/pedestrians');
+    const peds = new PedestrianSystem({ shadows: false, pedestrians: 68 } as never);
+    peds.setMarketVendorPosts(posts);
+
+    // Park every walker right on the rider. If the crew selection ignored
+    // distance it would still staff the stalls and visibly teleport people out
+    // of the frame; the guard means it must decline instead.
+    const agents = (peds as unknown as { peds: Array<{ worldX: number; worldZ: number }> }).peds;
+    // Re-pin every frame: once a walker is released it walks back to its own
+    // pavement, which would legitimately be far enough to be borrowed again.
+    for (let i = 0; i < 20; i++) {
+      for (const a of agents) {
+        a.worldX = 64.9;
+        a.worldZ = 98.1;
+      }
+      peds.update(0.05, 64.9, 98.1, 0, 1.8);
+    }
+    expect(peds.marketCrewCount).toBe(0);
+    peds.dispose();
+  });
+
+  it('documents the five prop colliders the yard added', () => {
+    // 4 delivery lorries at the loading bays + 1 compound-wall run along the
+    // yard's north edge. Pinned by centre and height so the +5 in the world
+    // baseline is a stated delta rather than silent drift.
+    const props = LIVE.city.colliders.filter((c) => c.kind === 'prop');
+    const key = (c: { cx?: number; cz?: number; height: number }) =>
+      `${c.cx!.toFixed(2)},${c.cz!.toFixed(2)},${c.height.toFixed(2)}`;
+    const yard = props
+      .filter((c) => c.height > 1.7 && c.height < 2.0)
+      .map(key)
+      .sort();
+    expect(yard).toEqual([
+      '49.20,71.54,1.90', // delivery lorry at the west loading bay
+      '61.69,67.92,1.90', // delivery lorry
+      '66.42,62.70,1.80', // compound wall along the yard's north edge
+      '73.70,64.45,1.90', // delivery lorry
+      '84.26,61.39,1.90', // delivery lorry at the east loading bay
+    ]);
   });
 });

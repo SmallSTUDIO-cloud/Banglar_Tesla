@@ -1,11 +1,11 @@
 {
  "_note": "Golden generated-world reference. Compared field-by-field by tests/unit/world-baseline.test.ts. Regenerate only via `npm run baseline:update-world` with BASELINE_ACCEPT set to a reason. Building positions are world units (1 unit = 2.778 real m) rounded to 1 cm. segmentId is derived by nearest-centreline attribution, not recorded by the generator.",
  "capturedWith": "npx vite-node tools/snapshot-world.ts",
- "acceptedReason": "Town Hall Market reconstruction (docs/TOWN_HALL_RESEARCH.md): the authored market occupies verified OSM way 223068917 ground, so 5 generated apartment blocks inside that envelope are suppressed and 8 authored market buildings (6 terrace bays, 1 hall, 1 mosque) are added. Measured delta: removed=5 at (65.42,81.92) (78.71,80.44) (91.22,75.71) (45.91,76.62) (52.33,85.86); added=8. The other 840 buildings are byte-identical; digest c60e15b5 -> 49d542e1.",
+ "acceptedReason": "Town Hall living-market pass (docs/TOWN_HALL_IMPLEMENTATION.md): 5 new prop colliders in the market's working yard behind the halls — 4 delivery lorries at the loading bays and 1 compound-wall run along the yard's north edge (s 21..50, where the live build has no generated buildings). buildings stays 848 with digest 49d542e1; every other count is unchanged. No road, landmark or building placement moves.",
  "digest": "49d542e1",
  "counts": {
   "buildings": 848,
-  "props": 390,
+  "props": 395,
   "walls": 1,
   "trees": 108,
   "utilityPoles": 138,
