@@ -5,6 +5,12 @@ import { RivalRaceSystem } from '../../src/blacklist/raceSystem';
 /**
  * Deterministic, unobstructed reference timings, not a substitute for human
  * play. A deadline should not expire before the racers can complete the course.
+ *
+ * This simulates up to 450 s of racing at 60 fps for every blacklist and
+ * open-street event, which realistically needs 5-7 s of CPU on a dev machine.
+ * It was left on vitest's 5 s default and failed intermittently for that
+ * reason alone (measured 5.3-7.0 s over three consecutive runs on untouched
+ * source), so it now declares the headroom it actually needs.
  */
 describe('race deadline calibration', () => {
   it('gives every normal AI finisher breathing room before the authored deadline', () => {
@@ -33,5 +39,5 @@ describe('race deadline calibration', () => {
       race.cancel();
     }
     expect(failures).toEqual([]);
-  });
+  }, 60_000);
 });

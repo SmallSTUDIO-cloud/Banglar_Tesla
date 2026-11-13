@@ -7,6 +7,14 @@
  */
 
 import { clamp } from '../core/mathx';
+import { landmarkById, type Landmark } from './landmarks';
+import {
+  arcLengthOf,
+  nearestOf,
+  poseAt,
+  projectOntoPolyline,
+  type Vec2,
+} from './roadGeometry';
 import {
   MOHAMMADPUR_EDGES,
   MOHAMMADPUR_NODES,
@@ -57,6 +65,20 @@ export interface RoadSegment {
   osmWayId?: number;
   jamProne: boolean;
   deadEnd: boolean;
+  /**
+   * Optional authored centreline, *including* both endpoints.
+   *
+   * Absent on every segment except the ones listed in
+   * `COLLINEAR_SUBDIVISIONS`. When present, `vertices[0]` equals `(ax,az)` and
+   * the last vertex equals `(bx,bz)` exactly, so the junction nodes and the
+   * gameplay graph are untouched. Interior vertices are not nodes.
+   *
+   * Consume via `src/world/roadGeometry.ts` (`poseAt`, `offsetPoint`,
+   * `projectOntoPolyline`, `arcLengthOf`) rather than doing vector algebra here.
+   * `length` below remains the **chord** between the junctions; polyline length
+   * is a separate query and is never substituted for it silently.
+   */
+  vertices?: readonly Vec2[];
   // Backwards-compatible summary fields for minimap/legacy callers
   axis: 'x' | 'z';
   center: number;
@@ -134,6 +156,52 @@ for (const e of MOHAMMADPUR_EDGES) {
   b.incidentEdgeIds.push(seg.id);
 }
 
+/* ----------------------- Phase 1: collinear subdivision ------------------- */
+
+/**
+ * Phase 1 polyline prototype — **collinear**, deliberately.
+ *
+ * `asad_4` is the single segment given an authored centreline, with vertices at
+ * 0 %, 50 % and 100 % of its existing chord. The polyline is therefore exactly
+ * collinear with the chord it replaces, so it changes *nothing* geometrically:
+ * the same junction nodes, the same asphalt footprint, the same arc length, the
+ * same lane graph, the same buildings, the same race distances.
+ *
+ * Its purpose is to prove the whole polyline pipeline (derivation, span
+ * resampling, sampling, rendering, minimap) end-to-end on a real and heavily
+ * referenced segment while both golden baselines stay at zero diff. Real curved
+ * geometry for this segment is a **separate, unapproved** proposal.
+ *
+ * Endpoints are written from `ax/az` and `bx/bz` directly, never recomputed from
+ * the fraction, so `vertices[0] === (ax,az)` and the last vertex `=== (bx,bz)`
+ * hold exactly and junction identity cannot drift by a rounding step.
+ */
+const COLLINEAR_SUBDIVISIONS: Record<string, readonly number[]> = {
+  asad_4: [0, 0.5, 1],
+};
+
+function applyCollinearSubdivisions(): void {
+  for (const [id, fractions] of Object.entries(COLLINEAR_SUBDIVISIONS)) {
+    const seg = segmentMap.get(id);
+    if (!seg) {
+      throw new Error(`[layout] collinear subdivision targets unknown segment "${id}"`);
+    }
+    const sorted = [...fractions].sort((p, q) => p - q);
+    if (sorted.length < 2 || sorted[0] !== 0 || sorted[sorted.length - 1] !== 1) {
+      throw new Error(`[layout] subdivision for "${id}" must start at 0 and end at 1`);
+    }
+    seg.vertices = sorted.map((f, i) => {
+      if (i === 0) return { x: seg.ax, z: seg.az };
+      if (i === sorted.length - 1) return { x: seg.bx, z: seg.bz };
+      // Multiplication by the fraction is exact enough that the interior vertex
+      // stays collinear to <1e-14 world units (<3e-14 m).
+      return { x: seg.ax + (seg.bx - seg.ax) * f, z: seg.az + (seg.bz - seg.az) * f };
+    });
+  }
+}
+
+applyCollinearSubdivisions();
+
 export const GRAPH_NODES: GraphNode[] = [...nodeMap.values()];
 for (const n of GRAPH_NODES) {
   let maxHalf = 3.0;
@@ -188,30 +256,97 @@ function worldToCell(v: number): number {
   return clamp(Math.floor((v - GRID_MIN) / CELL_SIZE), 0, GRID_COLS - 1);
 }
 
-for (const s of ROAD_SEGMENTS) {
-  const pad = s.halfWidth + s.sidewalk + 8;
-  const c0x = worldToCell(Math.min(s.ax, s.bx) - pad);
-  const c1x = worldToCell(Math.max(s.ax, s.bx) + pad);
-  const c0z = worldToCell(Math.min(s.az, s.bz) - pad);
-  const c1z = worldToCell(Math.max(s.az, s.bz) + pad);
-  for (let cz = c0z; cz <= c1z; cz++) {
-    for (let cx = c0x; cx <= c1x; cx++) {
-      spatialCells[cellIdx(cx, cz)].segments.push(s);
+/**
+ * Rebuild the coarse spatial hash used by `distanceToRoadCarriageway`,
+ * `distanceToRoadCorridor` and `isFootprintClearOfCorridor`.
+ *
+ * The index is derived state, so it has an explicit lifecycle instead of being a
+ * side effect of two top-level loops. That matters because the index was
+ * previously built once at import time: a segment pushed onto `ROAD_SEGMENTS`
+ * afterwards was invisible to every corridor query, so a test that injected a
+ * road could not observe corridor collisions at all.
+ *
+ * `buildCity()` and the gameplay runtime only ever read a complete index, so in
+ * production this runs once. Tests that mutate the segment list call it to
+ * restore the invariant "the index describes exactly the segments present".
+ *
+ * Idempotent: it clears every bucket first, so calling it repeatedly with the
+ * same input cannot accumulate duplicates and inflate a bucket.
+ */
+export function rebuildRoadSpatialIndex(): void {
+  for (const cell of spatialCells) {
+    cell.segments.length = 0;
+    cell.nodes.length = 0;
+  }
+
+  for (const s of ROAD_SEGMENTS) {
+    const pad = s.halfWidth + s.sidewalk + 8;
+    const c0x = worldToCell(Math.min(s.ax, s.bx) - pad);
+    const c1x = worldToCell(Math.max(s.ax, s.bx) + pad);
+    const c0z = worldToCell(Math.min(s.az, s.bz) - pad);
+    const c1z = worldToCell(Math.max(s.az, s.bz) + pad);
+    for (let cz = c0z; cz <= c1z; cz++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        spatialCells[cellIdx(cx, cz)].segments.push(s);
+      }
+    }
+  }
+
+  for (const n of GRAPH_NODES) {
+    const pad = n.outerRadius + 8;
+    const c0x = worldToCell(n.x - pad);
+    const c1x = worldToCell(n.x + pad);
+    const c0z = worldToCell(n.z - pad);
+    const c1z = worldToCell(n.z + pad);
+    for (let cz = c0z; cz <= c1z; cz++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        spatialCells[cellIdx(cx, cz)].nodes.push(n);
+      }
     }
   }
 }
 
-for (const n of GRAPH_NODES) {
-  const pad = n.outerRadius + 8;
-  const c0x = worldToCell(n.x - pad);
-  const c1x = worldToCell(n.x + pad);
-  const c0z = worldToCell(n.z - pad);
-  const c1z = worldToCell(n.z + pad);
-  for (let cz = c0z; cz <= c1z; cz++) {
-    for (let cx = c0x; cx <= c1x; cx++) {
-      spatialCells[cellIdx(cx, cz)].nodes.push(n);
-    }
+rebuildRoadSpatialIndex();
+
+/**
+ * Diagnostics for the corridor index. Tests use this to prove the index actually
+ * contains a newly added road, rather than assuming the query saw it.
+ */
+export function roadSpatialIndexStats(): {
+  cells: number;
+  segmentEntries: number;
+  nodeEntries: number;
+  distinctSegments: number;
+  cellSize: number;
+  gridMin: number;
+  gridCols: number;
+} {
+  let segmentEntries = 0;
+  let nodeEntries = 0;
+  const distinct = new Set<string>();
+  for (const cell of spatialCells) {
+    segmentEntries += cell.segments.length;
+    nodeEntries += cell.nodes.length;
+    for (const s of cell.segments) distinct.add(s.id);
   }
+  return {
+    cells: spatialCells.length,
+    segmentEntries,
+    nodeEntries,
+    distinctSegments: distinct.size,
+    cellSize: CELL_SIZE,
+    gridMin: GRID_MIN,
+    gridCols: GRID_COLS,
+  };
+}
+
+/**
+ * True when the index's cell for `(x, z)` contains `segmentId`. Used by tests to
+ * assert a road is genuinely query-visible.
+ */
+export function roadSpatialIndexHasSegmentAt(x: number, z: number, segmentId: string): boolean {
+  const bucket = spatialCells[cellIdx(worldToCell(x), worldToCell(z))];
+  return bucket.segments.some((s) => s.id === segmentId);
 }
 
 export function pointToSegmentDistance(
@@ -219,12 +354,14 @@ export function pointToSegmentDistance(
   pz: number,
   s: RoadSegment,
 ): { dist: number; t: number; cx: number; cz: number } {
-  const vx = px - s.ax;
-  const vz = pz - s.az;
-  const proj = clamp(vx * s.ux + vz * s.uz, 0, s.length);
-  const cx = s.ax + s.ux * proj;
-  const cz = s.az + s.uz * proj;
-  return { dist: Math.hypot(px - cx, pz - cz), t: proj / s.length, cx, cz };
+  // Polyline projection. `t` stays a normalised fraction of the road's own
+  // length, now the arc length, so its meaning ("how far along, 0..1") is
+  // unchanged while the point it refers to follows the drawn centreline.
+  const proj = projectOntoPolyline(s, px, pz);
+  const cx = proj.x;
+  const cz = proj.z;
+  const arc = arcLengthOf(s);
+  return { dist: Math.hypot(px - cx, pz - cz), t: arc === 0 ? 0 : proj.s / arc, cx, cz };
 }
 
 /**
@@ -238,10 +375,10 @@ export function distanceToRoadCarriageway(x: number, z: number): number {
   let minSigned = 999;
   for (let i = 0; i < bucket.segments.length; i++) {
     const s = bucket.segments[i];
-    const vx = x - s.ax;
-    const vz = z - s.az;
-    const proj = clamp(vx * s.ux + vz * s.uz, 0, s.length);
-    const d = Math.hypot(x - (s.ax + s.ux * proj), z - (s.az + s.uz * proj)) - s.halfWidth;
+    // Polyline projection so a curved carriageway is measured against the road
+    // that is actually drawn. Straight segments are bit-identical.
+    const proj = projectOntoPolyline(s, x, z);
+    const d = Math.hypot(x - proj.x, z - proj.z) - s.halfWidth;
     if (d < minSigned) minSigned = d;
   }
   for (let i = 0; i < bucket.nodes.length; i++) {
@@ -262,10 +399,9 @@ export function distanceToRoadCorridor(x: number, z: number): number {
   let minSigned = 999;
   for (let i = 0; i < bucket.segments.length; i++) {
     const s = bucket.segments[i];
-    const vx = x - s.ax;
-    const vz = z - s.az;
-    const proj = clamp(vx * s.ux + vz * s.uz, 0, s.length);
-    const d = Math.hypot(x - (s.ax + s.ux * proj), z - (s.az + s.uz * proj)) - (s.halfWidth + s.sidewalk);
+    // Polyline projection, matching distanceToRoadCarriageway.
+    const proj = projectOntoPolyline(s, x, z);
+    const d = Math.hypot(x - proj.x, z - proj.z) - (s.halfWidth + s.sidewalk);
     if (d < minSigned) minSigned = d;
   }
   for (let i = 0; i < bucket.nodes.length; i++) {
@@ -331,38 +467,69 @@ export function isFootprintClearOfCorridor(
 }
 
 /** Nearest drivable point + left-hand lane heading on the Mohammadpur street network. */
+/**
+ * Drivable pose for approaching a place: on the place's OWN segment, in the
+ * near lane just inside the curb.
+ *
+ * Deliberately not `snapToNearestRoad`: that snaps to whichever centreline is
+ * closest, which near a junction can be a different (crossing) street — 9.2 m
+ * from the marker at Town Hall Bazar, i.e. outside `MISSION.acceptRadius`, so a
+ * teleport there could never trigger the pickup.
+ */
+export function placeApproachPose(placeId: string): { x: number; z: number; yaw: number } | null {
+  const place = placeById(placeId);
+  if (!place) return null;
+  const seg = segmentById(place.segmentId);
+  if (!seg) return { x: place.x, z: place.z, yaw: place.heading };
+  // Polyline projection so the approach pose stays on the asphalt on a curved
+  // road. The lateral sign and the half-metre inset are unchanged; only the
+  // frame they are applied in is now the local span frame rather than the chord.
+  const proj = projectOntoPolyline(seg, place.x, place.z);
+  const side = proj.lateral >= 0 ? 1 : -1;
+  // Stay on the asphalt, half a metre inside the curb, on the marker's side.
+  const laneOffset = (seg.halfWidth - 0.5) * side;
+  const frame = poseAt(seg, proj.s);
+  return {
+    x: frame.x + frame.leftX * laneOffset,
+    z: frame.z + frame.leftZ * laneOffset,
+    yaw: place.heading,
+  };
+}
+
 export function snapToNearestRoad(
   x: number,
   z: number,
   allowGali = true,
+  /**
+   * Explicit road scope. Defaults to every segment, which is correct for
+   * gameplay ("what road am I on?"). Generation passes that must not react to
+   * *new* roads pass a frozen subset so adding a road elsewhere cannot change
+   * an existing building's orientation.
+   */
+  scope: readonly RoadSegment[] = ROAD_SEGMENTS,
 ): { x: number; z: number; yaw: number; segment: RoadSegment } {
-  let bestSeg = ROAD_SEGMENTS[0];
-  let bestDist = Infinity;
-  let bestX = x;
-  let bestZ = z;
-  for (const s of ROAD_SEGMENTS) {
-    if (!allowGali && s.kind === 'gali') continue;
-    const margin = Math.min(4, s.length * 0.2);
-    const vx = x - s.ax;
-    const vz = z - s.az;
-    const proj = clamp(vx * s.ux + vz * s.uz, margin, s.length - margin);
-    const cx = s.ax + s.ux * proj;
-    const cz = s.az + s.uz * proj;
-    const d = Math.hypot(x - cx, z - cz);
-    if (d < bestDist) {
-      bestDist = d;
-      bestSeg = s;
-      bestX = cx;
-      bestZ = cz;
-    }
+  // Selection and clamping live in `roadGeometry.nearestOf` so they can be
+  // tested against synthetic curved geometry. The margin is unchanged: the same
+  // junction clearance the previous chord implementation used.
+  const snap = nearestOf(scope, x, z, {
+    marginOf: (s) => Math.min(4, s.length * 0.2),
+    skip: (s) => !allowGali && s.kind === 'gali',
+  });
+
+  if (!snap) {
+    // Every segment was excluded (only reachable if the graph had no non-gali
+    // road). Preserve the previous fallback rather than throwing.
+    const fallback = scope[0] ?? ROAD_SEGMENTS[0];
+    return { x, z, yaw: Math.atan2(fallback.ux, fallback.uz), segment: fallback };
   }
-  // Offset slightly onto the Bangladesh left-hand lane
-  const laneOffset = Math.min(1.6, bestSeg.halfWidth * 0.42);
+
+  // Offset slightly onto the Bangladesh left-hand lane, along the *local* normal
+  const laneOffset = Math.min(1.6, snap.segment.halfWidth * 0.42);
   return {
-    x: bestX + bestSeg.leftX * laneOffset,
-    z: bestZ + bestSeg.leftZ * laneOffset,
-    yaw: Math.atan2(bestSeg.ux, bestSeg.uz),
-    segment: bestSeg,
+    x: snap.pose.x + snap.pose.leftX * laneOffset,
+    z: snap.pose.z + snap.pose.leftZ * laneOffset,
+    yaw: Math.atan2(snap.pose.ux, snap.pose.uz),
+    segment: snap.segment,
   };
 }
 
@@ -389,16 +556,27 @@ function makePlaceOnSegment(
   kind: PlaceDef['kind'] = 'both',
 ): PlaceDef {
   const s = segmentById(segmentId) ?? ROAD_SEGMENTS[0];
-  const along = clamp(tAlong, 0.22, 0.78) * s.length;
-  const cx = s.ax + s.ux * along;
-  const cz = s.az + s.uz * along;
-  const curb = s.halfWidth * 0.58 * side;
-  const heading = side === 1 ? Math.atan2(s.ux, s.uz) : Math.atan2(-s.ux, -s.uz);
+  // Fraction of the *arc* length, so a curved segment places the marker the same
+  // proportion of the way along the road it actually is. For the straight and
+  // collinear segments in the graph today this equals the chord fraction exactly.
+  const along = clamp(tAlong, 0.22, 0.78) * arcLengthOf(s);
+  const frame = poseAt(s, along);
+  const cx = frame.x;
+  const cz = frame.z;
+  // v0.7.0: sit just outside the curb instead of at 0.58 x half-width, which
+  // is *inside* the carriageway. The curb line is chosen over mid-sidewalk on
+  // purpose: it is unambiguous of the asphalt, still well within
+  // MISSION.acceptRadius of a vehicle, and as far as possible from the building
+  // frontage, so a marker cannot end up buried in a shopfront (which mid-
+  // sidewalk placement caused at the bus stand).
+  const curb = (s.halfWidth + PLACE_CURB_CLEARANCE) * side;
+  // Local tangent: the chord tangent is wrong anywhere but the chord's own axis.
+  const heading = side === 1 ? Math.atan2(frame.ux, frame.uz) : Math.atan2(-frame.ux, -frame.uz);
   return {
     id,
     nameKey,
-    x: Math.round((cx + s.leftX * curb) * 10) / 10,
-    z: Math.round((cz + s.leftZ * curb) * 10) / 10,
+    x: Math.round((cx + frame.leftX * curb) * 10) / 10,
+    z: Math.round((cz + frame.leftZ * curb) * 10) / 10,
     kind,
     heading,
     marker: 3.2,
@@ -406,16 +584,90 @@ function makePlaceOnSegment(
   };
 }
 
+/**
+ * Project `(x, z)` onto the nearest point of a named road segment.
+ * Returns the projection parameter plus the signed lateral offset, where a
+ * positive value means the point lies on the segment's `leftX`/`leftZ` side.
+ */
+function projectOntoSegment(
+  x: number,
+  z: number,
+  segmentId: string,
+): { along: number; lateral: number; segment: RoadSegment } {
+  const s = segmentById(segmentId) ?? ROAD_SEGMENTS[0];
+  // Polyline projection: on a curved centreline the chord projection picks the
+  // wrong `along` and the wrong lateral sign for points on the inside of a bend.
+  // For a straight segment this is bit-identical to the previous chord maths.
+  const proj = projectOntoPolyline(s, x, z);
+  return { along: proj.s, lateral: proj.lateral, segment: s };
+}
+
+/**
+ * Build a named place from a *verified* OSM landmark instead of an arbitrary
+ * fraction along a road.
+ *
+ * The marker sits on the sidewalk apron directly outside the carriageway on the
+ * side the real feature occupies, so it never intrudes on a traffic lane while
+ * still reading as the shopfront the player drives past.
+ */
+function makePlaceAtLandmark(
+  id: string,
+  nameKey: string,
+  landmarkId: string,
+  kind: PlaceDef['kind'] = 'both',
+): PlaceDef {
+  const lm: Landmark = landmarkById(landmarkId) ?? {
+    id: landmarkId,
+    nameEn: landmarkId,
+    nameBn: landmarkId,
+    category: 'road',
+    x: 0,
+    z: 0,
+    source: { osmId: 0, osmType: 'node', lat: 0, lon: 0 },
+    confidence: 'approx',
+  };
+  const { along, lateral, segment: s } = projectOntoSegment(lm.x, lm.z, lm.frontageSegmentId ?? '');
+  // Prefer the polygon-voted side; fall back to the point's own side, and to
+  // the segment's left if the point sits exactly on the centreline.
+  const side: 1 | -1 = lm.frontageSide ?? (lateral >= 0 ? 1 : -1);
+  // Just clear of the asphalt: half the carriageway plus most of the sidewalk.
+  const apron = s.halfWidth + s.sidewalk * 0.55;
+  // `along` is an arc position from the polyline projection, so the apron point
+  // must be built from the local span frame rather than the chord frame.
+  const frame = poseAt(s, along);
+  const heading = side === 1 ? Math.atan2(frame.ux, frame.uz) : Math.atan2(-frame.ux, -frame.uz);
+  const px = frame.x + frame.leftX * apron * side;
+  const pz = frame.z + frame.leftZ * apron * side;
+  return {
+    id,
+    nameKey,
+    x: Math.round(px * 10) / 10,
+    z: Math.round(pz * 10) / 10,
+    kind,
+    heading,
+    marker: 3.2,
+    segmentId: s.id,
+  };
+}
+
+/** How far outside the carriageway a place marker sits, in metres. */
+export const PLACE_CURB_CLEARANCE = 0.35;
+
 export const PLACES: PlaceDef[] = [
   makePlaceOnSegment('stand', 'place.stand', 'asad_1', 0.26, 1, 'both'),
-  makePlaceOnSegment('bazaar', 'place.bazaar', 'asad_3', 0.68, 1, 'both'),
+  // v0.7.0: Town Hall Bazar was previously pinned to an arbitrary point on
+  // asad_3, ~39 m west of the real market. Now anchored to OSM way 223068917
+  // (amenity=marketplace, addr:street=Asad Avenue).
+  makePlaceAtLandmark('bazaar', 'place.bazaar', 'town_hall_bazar', 'both'),
   makePlaceOnSegment('tea', 'place.tea', 'nurjahan_1', 0.52, 1, 'both'),
   makePlaceOnSegment('school', 'place.school', 'iqbal_1', 0.55, 1, 'both'),
   makePlaceOnSegment('garage', 'place.garage', 'shershah_1', 0.48, -1, 'both'),
   makePlaceOnSegment('pharmacy', 'place.pharmacy', 'asad_4', 0.62, 1, 'both'),
   makePlaceOnSegment('launch', 'place.launch', 'satmasjid_1', 0.58, 1, 'both'),
   makePlaceOnSegment('mosque', 'place.mosque', 'ring_2', 0.72, 1, 'both'),
-  makePlaceOnSegment('market', 'place.market', 'ring_3', 0.45, -1, 'both'),
+  // v0.7.0: "Krishi Market Corner" was previously placed on Ring Road, 55-75 m
+  // from the real wholesale market. Now anchored to OSM way 494999392.
+  makePlaceAtLandmark('market', 'place.market', 'krishi_market', 'both'),
   makePlaceOnSegment('bridge', 'place.bridge', 'babar_2', 0.52, 1, 'both'),
   makePlaceOnSegment('library', 'place.library', 'tajmahal_3', 0.5, 1, 'both'),
   makePlaceOnSegment('salimullah', 'place.salimullah', 'salimullah_1', 0.54, -1, 'both'),

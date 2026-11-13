@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import { mulberry32 } from '../core/mathx';
+import { STOREFRONTS } from './storefronts';
 
 const cache = new Map<string, THREE.Texture>();
 let maxAnisotropy = 4;
@@ -388,20 +389,118 @@ export const SHOP_SIGNS: SignSpec[] = [
  * Compact 1024x512 signboard atlas (16 crisp 256x128 Bangla signboards).
  * Uses only ~2 MB of RGBA memory instead of 16+ MB for 2048x2048!
  */
+/**
+ * Named boards for landmarks the player should recognise without reading the
+ * HUD. Text comes from the verified OSM feature names in `landmarks.ts`.
+ */
+const TOWN_HALL_SIGN: SignSpec = {
+  title: 'টাউন হল বাজার',
+  sub: 'TOWN HALL BAZAR',
+  bg: '#7a1418',
+  fg: '#fdf3d8',
+  accent: '#f0b429',
+};
+
+const KRISHI_SIGN: SignSpec = {
+  title: 'কৃষি মার্কেট',
+  sub: 'KRISHI MARKET',
+  bg: '#0d4d2b',
+  fg: '#f4fbe8',
+  accent: '#9ad46a',
+};
+
+const GENEVA_SIGN: SignSpec = {
+  title: 'জেনেভা ক্যাম্প',
+  sub: 'GENEVA CAMP',
+  bg: '#1b3a5c',
+  fg: '#eef4fb',
+  accent: '#7fb2e5',
+};
+
+const MOSQUE_SIGN: SignSpec = {
+  title: 'টাউন হল মসজিদ',
+  sub: 'TOWN HALL MOSQUE',
+  bg: '#14432f',
+  fg: '#eaf7ee',
+  accent: '#6fbf8f',
+};
+
+const RING_ROAD_SIGN: SignSpec = {
+  title: 'রিং রোড',
+  sub: 'RING ROAD',
+  bg: '#123a2a',
+  fg: '#f2f8ee',
+  accent: '#9ec97a',
+};
+
+const TAJMAHAL_SIGN: SignSpec = {
+  title: 'তাজমহল রোড',
+  sub: 'TAJMAHAL ROAD',
+  bg: '#3a2118',
+  fg: '#fbf1e4',
+  accent: '#d99a55',
+};
+
+/** Landmark ids that get a bespoke board, in atlas order. */
+export const LANDMARK_SIGN_IDS = [
+  'town_hall_bazar',
+  'krishi_market',
+  'geneva_camp',
+  'town_hall_mosque',
+  'ring_road',
+  'tajmahal_road',
+] as const;
+
+/** Boards drawn for `LANDMARK_SIGN_IDS`, positionally matched. */
+const LANDMARK_SIGNS: SignSpec[] = [
+  TOWN_HALL_SIGN,
+  KRISHI_SIGN,
+  GENEVA_SIGN,
+  MOSQUE_SIGN,
+  RING_ROAD_SIGN,
+  TAJMAHAL_SIGN,
+];
+
+/**
+ * Boards for verified named businesses. The business name is the real OSM
+ * `name`; the second line is a generic Bengali category descriptor from the OSM
+ * tag, never an invented Bengali rendering of the name itself.
+ */
+const STOREFRONT_SIGNS: SignSpec[] = STOREFRONTS.map((shop, i) => ({
+  title: shop.name,
+  sub: shop.categoryBn || undefined,
+  bg: ['#12332a', '#2d1f3a', '#3a2318', '#102d3a'][i % 4],
+  fg: '#f7f3e8',
+  accent: ['#8fc07a', '#b79ad4', '#d9a25a', '#79b4cc'][i % 4],
+}));
+
+/** Storefront ids in atlas order, positionally matched to STOREFRONT_SIGNS. */
+export const STOREFRONT_SIGN_IDS: readonly string[] = STOREFRONTS.map((s) => s.id);
+
 export class SignAtlas {
   readonly texture: THREE.CanvasTexture;
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private slots: SignSlot[] = [];
+  /** Storefront id -> atlas slot, resolved during redraw. */
+  private storefrontSlots = new Map<string, SignSlot>();
   private cols = 4;
-  private rows = 4;
+  /**
+   * Rows are derived from the cell count, never hard-coded: the atlas now holds
+   * generic shopfront signs, named landmark boards and verified storefront
+   * boards, and a stale row count silently draws the last cells past the canvas
+   * edge (they simply vanish). One shared texture keeps this a single draw.
+   */
+  private rows = Math.ceil(
+    (SHOP_SIGNS.length + LANDMARK_SIGNS.length + STOREFRONT_SIGNS.length) / 4,
+  );
   private cellW = 256;
   private cellH = 128;
 
   constructor() {
     this.canvas = document.createElement('canvas');
     this.canvas.width = this.cols * this.cellW; // 1024
-    this.canvas.height = this.rows * this.cellH; // 512
+    this.canvas.height = this.rows * this.cellH;
     this.ctx = this.canvas.getContext('2d')!;
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
@@ -413,11 +512,36 @@ export class SignAtlas {
     this.slots = [];
     this.ctx.fillStyle = '#181818';
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    for (let i = 0; i < this.cols * this.rows; i++) {
-      const spec = SHOP_SIGNS[i % SHOP_SIGNS.length];
-      this.drawCell(i, spec);
+    // Generic shopfront signs first, so their indices are stable for the
+    // building pass, then named boards which are addressed by id.
+    for (let i = 0; i < SHOP_SIGNS.length; i++) {
+      this.drawCell(i, SHOP_SIGNS[i % SHOP_SIGNS.length]);
+    }
+    for (let i = 0; i < LANDMARK_SIGNS.length; i++) {
+      this.drawCell(SHOP_SIGNS.length + i, LANDMARK_SIGNS[i]);
+    }
+    this.storefrontSlots.clear();
+    for (let i = 0; i < STOREFRONT_SIGNS.length; i++) {
+      const index = SHOP_SIGNS.length + LANDMARK_SIGNS.length + i;
+      this.drawCell(index, STOREFRONT_SIGNS[i]);
+      this.storefrontSlots.set(STOREFRONT_SIGN_IDS[i], this.slots[index]);
     }
     this.texture.needsUpdate = true;
+  }
+
+  /**
+   * Atlas slot for a named landmark board, or `undefined` when that landmark
+   * has no bespoke sign (callers should fall back to a generic shop sign).
+   */
+  landmarkSlot(landmarkId: string): SignSlot | undefined {
+    const i = (LANDMARK_SIGN_IDS as readonly string[]).indexOf(landmarkId);
+    if (i < 0) return undefined;
+    return this.slots[SHOP_SIGNS.length + i];
+  }
+
+  /** Atlas slot for a verified named storefront board. */
+  storefrontSlot(storefrontId: string): SignSlot | undefined {
+    return this.storefrontSlots.get(storefrontId);
   }
 
   private drawCell(index: number, spec: SignSpec): void {
@@ -470,8 +594,14 @@ export class SignAtlas {
     };
   }
 
+  /**
+   * A generic shopfront sign. Deliberately restricted to the generic cells so a
+   * random shopfront can never be labelled as a specific market: named boards
+   * are only reachable through {@link landmarkSlot}.
+   */
   slot(index: number): SignSlot {
-    return this.slots[((index % this.slots.length) + this.slots.length) % this.slots.length];
+    const n = SHOP_SIGNS.length;
+    return this.slots[((index % n) + n) % n];
   }
 
   get count(): number {

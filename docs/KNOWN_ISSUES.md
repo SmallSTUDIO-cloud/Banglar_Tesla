@@ -114,3 +114,97 @@ produced with fixed-string or correctly-escaped patterns.
 
 **Checks run at the same time:** `tsc --noEmit` clean; 236/236 unit tests across
 40 files; 5/5 Android pipeline tests; `vite build` successful.
+
+## v0.7.0 geographic-accuracy pass (2026-11-08)
+
+Full detail, measurements and provenance in
+[`GEOGRAPHIC_ACCURACY.md`](./GEOGRAPHIC_ACCURACY.md).
+
+**Fixed:** "Town Hall Kacha Bazar" and "Krishi Market Corner" were HUD labels
+pinned to arbitrary fractions along a road segment. Town Hall was ~39 m west of
+the real market on the wrong segment; Krishi was ~55–75 m away on **Ring Road**
+instead of Humayun Road. Both are now anchored to verified OSM features
+(223068917 and 494999392) and pinned by regression tests. Place ids were kept,
+so existing race waypoints still resolve.
+
+**Added:** a landmark registry with provenance gates that fail on fabricated
+coordinates; market-apron vendor clustering (18 carts, ≥1.36 m off the asphalt);
+named Bengali entrance boards.
+
+**Open:**
+
+| Issue | Detail |
+|---|---|
+| No Android device test | No performance claim is made for mid-range hardware. Software-GL screenshots prove geometry, not frame rate. |
+
+> Visual verification is no longer open: it was resolved later the same day.
+> See the "visual verification & marker audit" section below.
+
+**Pre-existing issues, and what happened to them:**
+
+- 12 of 14 `PLACES` markers were **inside** the carriageway (−1.6 to −2.6 m),
+  because `makePlaceOnSegment` offset by `halfWidth × 0.58`. **Fixed** — all 12
+  were relocated to the curb line after auditing every consumer; `bazaar` and
+  `market` were landmark-anchored, already correct, and left alone. See
+  `GEOGRAPHIC_ACCURACY.md` section 10.
+- `vnext-race-timing.test.ts` was already failing its 5 s default timeout on
+  untouched source (measured 5.26 / 5.36 / 6.99 s); it now declares 60 s.
+- `src/audio/audio.ts:735` tests for a place id `'shia'` that never existed in
+  `PLACES` (the id is `mosque`), so that branch is dead.
+- Geneva Camp has two conflicting polygons in the OSM extract; only the northern
+  `place=quarter` node is used, and the conflict is documented rather than
+  silently picked.
+
+### v0.7.0 follow-up (2026-11-08) — visual verification & marker audit
+
+Full record: [`GEOGRAPHIC_ACCURACY.md`](./GEOGRAPHIC_ACCURACY.md) sections 9-10.
+
+**Resolved:** screenshots **are** obtainable — the repo's own harness
+(`npm run shots`, `@sparticuz/chromium` + SwiftShader) works in this environment.
+The earlier "cannot capture screenshots" conclusion was wrong; it came from
+trying `playwright install chromium`, whose download is blocked, instead of the
+harness already in the tree.
+
+**Defects found by inspection and fixed:**
+
+| Defect | Fix |
+| --- | --- |
+| Town Hall market board embedded inside a 12.2 m building | Board moved onto the vendor apron line; building-rejection test added |
+| Krishi board had a street tree through the panel | Board slides along its own frontage past both buildings and trees |
+| 12 of 14 place markers sat inside the carriageway | All now just outside the curb line |
+| Debug teleport could land 9.24 m away (outside the 5.8 m accept radius) via `snapToNearestRoad` | Replaced with a place-own-segment approach pose |
+| First building-rejection test used an AABB, dropping valid boards | Replaced with a 3x3 oriented-footprint sample grid |
+
+**New automated gate:** `npm run test:geography` boots the built game headlessly
+and validates markers/boards against the live 849-collider building set.
+
+**Still open:** no Android device test; no performance claim. Procedural
+shopfront names are placeholders, not real businesses.
+
+### v0.7.0 corridor character (2026-11-08) — Ring Road & Tajmahal Road
+
+Full record: [`GEOGRAPHIC_ACCURACY.md`](./GEOGRAPHIC_ACCURACY.md) section 11.
+
+**Docs corrected in this pass:**
+
+| Was | Now |
+|---|---|
+| "12 of 14 markers sit inside the carriageway… left untouched" (section 8) | 12 were relocated to the curb line; `bazaar`/`market` were landmark-anchored and already correct |
+| Marker clearance quoted as "0.32–0.40 m" and, separately, "0.99–1.54 m" | 12 relocated markers: **+0.32 to +0.40 m**. 2 landmark-anchored markers: **+1.54 m** (bazaar) and **+1.21 m** (market). All 14 validated. |
+| Section 10 titled "all 12 relocated" | "12 relocated, all 14 validated", with the distinction spelled out |
+| "No matching OSM feature for the Shia mosque" | **Wrong.** Way 438545522 "Shia Jame Masjid" exists, 7.9 m from Ring Road |
+| "Open — blocks milestone complete: no visual verification" | Resolved; screenshots captured and inspected |
+
+**Added:** Ring Road / Tajmahal Road identity — Shia Jame Masjid, Mohammadpur
+Graveyard and Eidgah structures; corridor and storefront boards for 8 real named
+businesses; corridor-specific vendor activity.
+
+**Defect caught by rendering:** the mosque was seated after infill and overlapped
+a 15.25 m building by 5.6 x 2.9 m. Fixed by reserving landmark parcels before
+building generation; `test:geography` now asserts zero structure overlap.
+
+**Not built on purpose:** Tokyo Square and Queen's College are real but lie west
+of the playable world edge (−218). Marked `outsideWorld`; no geometry created.
+
+**Still open:** no Android device test and no FPS claim. Draw calls measured at
+169 with the corridor work merged into existing buckets (zero added draw calls).

@@ -2,17 +2,49 @@
  * Offline Mohammadpur (Dhaka-1207) street-network & landmark dataset.
  *
  * Licensing & Honesty Note:
- * - Core road connectivity, street alignments, junction topology, road classes,
- *   and landmark locations are derived from OpenStreetMap data for Mohammadpur,
- *   Dhaka ("Data © OpenStreetMap contributors, licensed under ODbL 1.0",
- *   https://www.openstreetmap.org/copyright), projected around (23.7624°N,
- *   90.3646°E) at a compact 0.36x urban gameplay scale so players experience
- *   continuous Dhaka street density without multi-kilometre empty stretches.
- * - Segments with `source: 'osm'` correspond to verified OpenStreetMap ways
- *   (OSM way IDs recorded below). Segments with `source: 'approx_lane'` are
- *   clearly marked procedural residential connectors / narrow galis added for
- *   loop continuity and tactical jam detours, never mislabelled as exact survey
- *   ways. All buildings, shopfronts and props are procedural approximations.
+ *
+ * This is **not** a survey-accurate reproduction of Mohammadpur's street
+ * network, and it must not be described as one.
+ *
+ * - **Node coordinates below are hand-placed**, not generated from OSM. They
+ *   were placed by eye to trace real OSM road corridors, then connected into
+ *   straight chords. All figures below are produced by
+ *   `npm run audit:roads` (`scripts/audit-road-coverage.ts`) against
+ *   `data/mohammadpur/mohammadpur.osm.json` (1,610 ways, 8,273 vertices,
+ *   sha256 9d88fd3b…d100ec8), audited 2026-10-29. Method: OSM edges clipped to
+ *   the playable box with Liang–Barsky, driveable ways only, true
+ *   point-to-segment distances sampled at segment **chord midpoints**, world
+ *   units converted by exactly 1/0.36 = 2.7778 m:
+ *     - segment midpoints are a median **12.2 m** from the nearest drivable OSM
+ *       road polyline (p90 31.7 m, max 52.6 m); **57 of 70** are within 25 m and
+ *       68 of 70 within 50 m. So the corridors trace real streets, but the
+ *       "every one within 25 m (median 5 m)" claim previously made here was
+ *       **not reproducible** and has been replaced;
+ *     - the graph is a straight-line approximation with no curvature;
+ *     - it contains **15.3 km against 47.4 km** of in-box drivable length, i.e.
+ *       **32.3 % of network length**. (An earlier revision of this comment
+ *       said "16.2 km real / ~34 %"; the ratio agrees but the absolute figure
+ *       does not, and it is not reproducible, so it is withdrawn.) The dense
+ *       residential galis that give Mohammadpur its fabric are absent, which is
+ *       why the world reads as a coarse lattice;
+ *     - a *separate* comparison — midpoint against the one way a segment's own
+ *       `osmWayId` names — has a median of 78 m. That is expected and is **not**
+ *       an accuracy figure: the way id records provenance for name, class and
+ *       width, not the geometry used. The 12.2 m figure above is the accuracy
+ *       measure.
+ * - Segments marked `source: 'osm'` follow a real corridor but carry no verified
+ *   per-vertex survey geometry; the `osmWayId` records which way the corridor
+ *   came from. Segments marked `source: 'approx_lane'` (21 of 70) are purely
+ *   procedural connectors added for loop continuity and jam detours.
+ * - Road *names* are real (verified in the OSM extract, several only tagged in
+ *   Bengali: সাতমসজিদ রোড, ইকবাল রোড, বাবর রোড). Road *geometry* is not.
+ * - Only landmark coordinates in `src/world/landmarks.ts` are exact: they are
+ *   re-derived from stored OSM lat/lon to within 5 mm by unit tests.
+ * - All buildings, shopfronts and props are procedural approximations.
+ *
+ * Data © OpenStreetMap contributors, ODbL 1.0
+ * (https://www.openstreetmap.org/copyright), projected around (23.7624°N,
+ * 90.3646°E) at a compact 0.36x urban gameplay scale.
  */
 
 export type OsmSourceKind = 'osm' | 'approx_lane';
@@ -96,16 +128,16 @@ export const MOHAMMADPUR_NODES: RawMapNode[] = [
   { id: 'tajmahal_e', x: -12, z: -112, label: 'Tajmahal × Shahjahan North' },
   { id: 'aziz_gali', x: -86, z: -96, label: 'Aziz Moholla Lane' },
 
-  // --- Northern Spine: Humayun Road & Babar / Babor Road (OSM way/32766053, 33393815) ---
+  // --- Northern Spine: Humayun Road & Babor Road (OSM way/32766053, 33393815) ---
   { id: 'humayun_w', x: -126, z: -136, label: 'Humayun Road West' },
   { id: 'humayun_shahjahan', x: 6, z: -168, label: 'Humayun × Shahjahan' },
   { id: 'humayun_e', x: 84, z: -188, label: 'Humayun Road East' },
   { id: 'humayun_far_e', x: 162, z: -172, label: 'Geneva Camp East Connector' },
 
-  { id: 'babar_w', x: -138, z: -214, label: 'Babar Road West (Block F)' },
-  { id: 'babar_mid', x: -18, z: -228, label: 'Babar Road Mid (Johuri Moholla)' },
-  { id: 'babar_humayun', x: 56, z: -236, label: 'Babar × Humayun North', signal: true },
-  { id: 'babar_e', x: 146, z: -244, label: 'Babar Road East (Block B)' },
+  { id: 'babar_w', x: -138, z: -214, label: 'Babor Road West (Block F)' },
+  { id: 'babar_mid', x: -18, z: -228, label: 'Babor Road Mid (Johuri Moholla)' },
+  { id: 'babar_humayun', x: 56, z: -236, label: 'Babor × Humayun North', signal: true },
+  { id: 'babar_e', x: 146, z: -244, label: 'Babor Road East (Block B)' },
   { id: 'johuri_deadend', x: -18, z: -256, label: 'Johuri Moholla Cul-de-sac' }, // dead end!
 ];
 
@@ -185,11 +217,11 @@ export const MOHAMMADPUR_EDGES: RawMapEdge[] = [
   { id: 'aurangzeb_humayun', from: 'aurangzeb_mid', to: 'humayun_e', nameEn: 'Geneva Camp East Rd', nameBn: 'জেনেভা ক্যাম্প পূর্ব সড়ক', kind: 'gali', width: 6.6, sidewalk: 1.8, source: 'approx_lane' },
   { id: 'iqbal_humayun', from: 'iqbal_aurangzeb', to: 'humayun_far_e', nameEn: 'College Gate North Rd', nameBn: 'কলেজ গেট সংযোগ সড়ক', kind: 'medium', width: 8.0, sidewalk: 2.0, source: 'approx_lane' },
 
-  // Babar / Babor Road (OSM way/33393815, 33397465, 608263619 — Johuri Moholla northern Mohammadpur)
-  { id: 'babar_0', from: 'ring_north', to: 'babar_w', nameEn: 'Babar Road West', nameBn: 'বাবর রোড পশ্চিম', kind: 'medium', width: 8.6, sidewalk: 2.2, source: 'osm', osmWayId: 608263619 },
-  { id: 'babar_1', from: 'babar_w', to: 'babar_mid', nameEn: 'Babar Road', nameBn: 'বাবর রোড', kind: 'medium', width: 9.0, sidewalk: 2.3, source: 'osm', osmWayId: 608263619 },
-  { id: 'babar_2', from: 'babar_mid', to: 'babar_humayun', nameEn: 'Babar Road', nameBn: 'বাবর রোড', kind: 'medium', width: 9.0, sidewalk: 2.3, source: 'osm', osmWayId: 33393815 },
-  { id: 'babar_3', from: 'babar_humayun', to: 'babar_e', nameEn: 'Babar Road', nameBn: 'বাবর রোড', kind: 'medium', width: 9.0, sidewalk: 2.3, source: 'osm', osmWayId: 33393815 },
+  // Babor Road (OSM way/33393815, 33397465, 608263619 — Johuri Moholla northern Mohammadpur)
+  { id: 'babar_0', from: 'ring_north', to: 'babar_w', nameEn: 'Babor Road West', nameBn: 'বাবর রোড পশ্চিম', kind: 'medium', width: 8.6, sidewalk: 2.2, source: 'osm', osmWayId: 608263619 },
+  { id: 'babar_1', from: 'babar_w', to: 'babar_mid', nameEn: 'Babor Road', nameBn: 'বাবর রোড', kind: 'medium', width: 9.0, sidewalk: 2.3, source: 'osm', osmWayId: 608263619 },
+  { id: 'babar_2', from: 'babar_mid', to: 'babar_humayun', nameEn: 'Babor Road', nameBn: 'বাবর রোড', kind: 'medium', width: 9.0, sidewalk: 2.3, source: 'osm', osmWayId: 33393815 },
+  { id: 'babar_3', from: 'babar_humayun', to: 'babar_e', nameEn: 'Babor Road', nameBn: 'বাবর রোড', kind: 'medium', width: 9.0, sidewalk: 2.3, source: 'osm', osmWayId: 33393815 },
   { id: 'babar_link_w', from: 'humayun_w', to: 'babar_w', nameEn: 'Kaderia Madrasa Rd', nameBn: 'কাদেরিয়া মাদ্রাসা রোড', kind: 'gali', width: 6.4, sidewalk: 1.8, source: 'approx_lane' },
   { id: 'babar_link_m', from: 'humayun_shahjahan', to: 'babar_mid', nameEn: 'Johuri Moholla Rd', nameBn: 'জহুরি মহল্লা রোড', kind: 'gali', width: 6.4, sidewalk: 1.8, source: 'approx_lane' },
   { id: 'babar_link_h', from: 'humayun_e', to: 'babar_humayun', nameEn: 'Humayun North Link', nameBn: 'হুমায়ুন উত্তর সড়ক', kind: 'medium', width: 8.0, sidewalk: 2.1, source: 'osm', osmWayId: 33393820 },

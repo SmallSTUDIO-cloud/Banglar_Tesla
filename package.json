@@ -2,7 +2,7 @@
   "name": "banglar-tesla",
   "private": true,
   "version": "0.6.7",
-  "description": "Banglar Tesla — a 3D Mohammadpur, Dhaka rickshaw driving simulator.",
+  "description": "Banglar Tesla \u2014 a 3D Mohammadpur, Dhaka rickshaw driving simulator.",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
@@ -12,6 +12,11 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "baseline:update": "vite-node scripts/update-gameplay-baseline.ts",
+    "baseline:update-world": "vite-node scripts/update-world-baseline.ts",
+    "baseline:update-lanes": "vite-node scripts/update-lane-graph-baseline.ts",
+    "snapshot:world": "vite-node tools/snapshot-world.ts",
+    "snapshot:lanes": "vite-node tools/snapshot-lanegraph.ts",
     "test:watch": "vitest",
     "test:e2e": "node tests/e2e/run-e2e.mjs",
     "test:ui": "node tests/e2e/ui-flow.mjs",
@@ -24,7 +29,10 @@
     "benchmark": "node tests/e2e/benchmark-suite.mjs",
     "shots": "node tests/e2e/shoot.mjs",
     "perf": "node tests/e2e/perf.mjs",
-    "test:vnext-repair": "node tests/e2e/verify-vnext-repair.mjs"
+    "test:vnext-repair": "node tests/e2e/verify-vnext-repair.mjs",
+    "test:geography": "node tests/e2e/verify-geography.mjs",
+    "audit:roads": "vite-node scripts/audit-road-coverage.ts",
+    "audit:scope": "vite-node scripts/audit-map-scope.ts"
   },
   "dependencies": {
     "three": "0.186.1"

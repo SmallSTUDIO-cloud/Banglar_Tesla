@@ -19,9 +19,25 @@ import * as THREE from 'three';
 import type { QualitySettings } from '../core/config';
 import { WORLD } from '../core/config';
 import { clamp, mulberry32 } from '../core/mathx';
+import { buildingRngFor, postBuildingRng } from './buildingRng';
+import {
+  canonicalSegments,
+  isLegacyRoadSegment,
+  legacyInfillOrdinal,
+  legacyInteriorOrdinal,
+} from './legacyFillLayout';
+import { legacyFrontageDecision } from './frontageLayout';
+import { buildTownHall, isInTownHallSite } from './townHall';
+import {
+  derivedFillOrdinal,
+  RegionBudgetLedger,
+  regionKeyOf,
+} from './regionFill';
 import type { BreakableProp } from './destruction';
 import { Bucket, matteMaterial, tintedMaterial } from './geo';
 import { addStreetTree, type StreetTree } from './treeModel';
+import { planCorridorStructures } from './corridorIdentity';
+import { arcLengthOf, placementAt, renderStrips } from './roadGeometry';
 import { PosterAtlas } from './posterAtlas';
 import { EDUCATION_POSTERS, educationPosterTexture, snackPacketAtlas } from './streetPrint';
 import { DAMAGE_ZONES, roadDamageAt } from './roadDamage';
@@ -115,6 +131,24 @@ export interface CityResult {
   treeCount: number;
   treeSites: readonly { x: number; z: number }[];
   utilityPoleSites: readonly { x: number; z: number }[];
+  /**
+   * Verified corridor landmark structures actually built this session (Ring Road
+   * and Tajmahal Road). Exposed so the live geography validator can assert they
+   * never overlap a building. Empty when none could be seated.
+   */
+  landmarkStructures: readonly {
+    landmarkId: string;
+    kind: string;
+    x: number;
+    z: number;
+    halfX: number;
+    halfZ: number;
+  }[];
+  /**
+   * Stall posts inside the Town Hall bazaar. `PedestrianSystem` borrows walkers
+   * to staff them, so the market reads as occupied without any new meshes.
+   */
+  marketVendorPosts: readonly import('./townHall').MarketVendorPost[];
   interiorCount: number;
   courtyardCount: number;
   courtyardSites: readonly { x: number; z: number }[];
@@ -147,6 +181,21 @@ const SECTOR_GRID = 4;
 const SECTOR_COUNT = SECTOR_GRID * SECTOR_GRID;
 const SECTOR_MIN = -285;
 const SECTOR_SPAN = 570;
+
+/**
+ * Extent of the world the shipped road graph generates buildings over
+ * (`[-224, 224]` on both axes — the block-interior candidate grid).
+ *
+ * Region fill is scoped to areas *outside* this box. A road that happens to run
+ * through the mapped blocks is a different, unresolved question (building-vs-road
+ * precedence, `docs/REGIONAL_FILL.md` §7.2), and this system must not answer it by
+ * quietly adding or evicting shipped buildings.
+ */
+const SHIPPED_EXTENT = 224;
+
+function insideShippedExtent(x: number, z: number): boolean {
+  return Math.abs(x) <= SHIPPED_EXTENT && Math.abs(z) <= SHIPPED_EXTENT;
+}
 
 function sectorIndex(x: number, z: number): number {
   const sx = clamp(Math.floor(((x - SECTOR_MIN) / SECTOR_SPAN) * SECTOR_GRID), 0, SECTOR_GRID - 1);
@@ -350,35 +399,44 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
   for (const seg of ROAD_SEGMENTS) {
     const yaw = Math.atan2(seg.ux, seg.uz);
-    const mx = (seg.ax + seg.bx) * 0.5;
-    const mz = (seg.az + seg.bz) * 0.5;
     const asphaltTint = seg.kind === 'main' ? '#868b92' : seg.kind === 'medium' ? '#7f8389' : '#777a7e';
 
-    // Continuous asphalt carriageway ribbon between junction centres (flush y = 0.014)
-    bRoad.box(
-      { x: mx, y: 0.007, z: mz },
-      { x: seg.width, y: 0.014, z: seg.length },
-      asphaltTint,
-      { y: yaw },
-    );
+    // Continuous asphalt carriageway ribbon between junction centres (flush y = 0.014).
+    //
+    // Emitted once per polyline span so an authored centreline paints as a real
+    // ribbon rather than a straight chord. For a segment with no `vertices` this
+    // is a single box identical to the previous one. For the collinear Phase 1
+    // prototype (`asad_4`) it is two half-length boxes that tile the original
+    // footprint exactly — the seam sits at the midpoint with no gap and no
+    // overlap, so nothing about the surface changes.
+    for (const span of renderStrips(seg)) {
+      bRoad.box(
+        { x: (span.ax + span.bx) * 0.5, y: 0.007, z: (span.az + span.bz) * 0.5 },
+        { x: seg.width, y: 0.014, z: span.length },
+        asphaltTint,
+        { y: Math.atan2(span.ux, span.uz) },
+      );
+    }
 
     // Dashed white centreline + solid main-avenue edge lines (trimmed away from junction centres)
     const trimStart = Math.min(seg.length * 0.35, 8.5);
     const trimEnd = Math.max(trimStart, seg.length - 8.5);
     if (seg.kind !== 'gali' && trimEnd - trimStart > 8) {
       for (let d = trimStart; d <= trimEnd - 2.5; d += 6.2) {
-        const px = seg.ax + seg.ux * (d + 1.4);
-        const pz = seg.az + seg.uz * (d + 1.4);
+        const pf1 = placementAt(seg, (d + 1.4), 0);
+        const px = pf1.x;
+        const pz = pf1.z;
         bRoad.box({ x: px, y: 0.016, z: pz }, { x: 0.13, y: 0.003, z: 2.6 }, '#e6e2d3', { y: yaw });
       }
     }
     if (seg.kind === 'main' && trimEnd - trimStart > 8) {
       const innerLen = trimEnd - trimStart;
-      const imx = seg.ax + seg.ux * (trimStart + innerLen * 0.5);
-      const imz = seg.az + seg.uz * (trimStart + innerLen * 0.5);
+      const pf2 = placementAt(seg, (trimStart + innerLen * 0.5), 0);
+      const imx = pf2.x;
+      const imz = pf2.z;
       for (const side of [-1, 1]) {
-        const ex = imx + seg.leftX * (seg.halfWidth - 0.38) * side;
-        const ez = imz + seg.leftZ * (seg.halfWidth - 0.38) * side;
+        const ex = imx + pf2.leftX * (seg.halfWidth - 0.38) * side;
+        const ez = imz + pf2.leftZ * (seg.halfWidth - 0.38) * side;
         bRoad.box({ x: ex, y: 0.016, z: ez }, { x: 0.11, y: 0.003, z: innerLen }, '#e0b94c', { y: yaw });
       }
     }
@@ -389,13 +447,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       { dist: seg.length - 9.2, active: seg.kind === 'main' && seg.length > 34 },
     ]) {
       if (!end.active) continue;
-      const zx = seg.ax + seg.ux * end.dist;
-      const zz = seg.az + seg.uz * end.dist;
+      const pf3 = placementAt(seg, end.dist, 0);
+      const zx = pf3.x;
+      const zz = pf3.z;
       const stripes = Math.floor((seg.width - 1.4) / 0.85);
       for (let s = 0; s < stripes; s++) {
         const off = -((stripes - 1) * 0.5) * 0.85 + s * 0.85;
         bRoad.box(
-          { x: zx + seg.leftX * off, y: 0.017, z: zz + seg.leftZ * off },
+          { x: zx + pf3.leftX * off, y: 0.017, z: zz + pf3.leftZ * off },
           { x: 0.42, y: 0.003, z: 2.1 },
           '#ece8da',
           { y: yaw },
@@ -412,12 +471,15 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       const kerbCenter = (seg.halfWidth + 0.09) * side;
       for (let i = 0; i < steps; i++) {
         const along = (i + 0.5) * actualLen;
-        const sx = seg.ax + seg.ux * along + seg.leftX * lateralCenter;
-        const sz = seg.az + seg.uz * along + seg.leftZ * lateralCenter;
-        const s0x = seg.ax + seg.ux * (along - actualLen * 0.44) + seg.leftX * lateralCenter;
-        const s0z = seg.az + seg.uz * (along - actualLen * 0.44) + seg.leftZ * lateralCenter;
-        const s1x = seg.ax + seg.ux * (along + actualLen * 0.44) + seg.leftX * lateralCenter;
-        const s1z = seg.az + seg.uz * (along + actualLen * 0.44) + seg.leftZ * lateralCenter;
+        const pf4 = placementAt(seg, along, lateralCenter);
+        const sx = pf4.x;
+        const sz = pf4.z;
+        const pf5 = placementAt(seg, (along - actualLen * 0.44), lateralCenter);
+        const s0x = pf5.x;
+        const s0z = pf5.z;
+        const pf6 = placementAt(seg, (along + actualLen * 0.44), lateralCenter);
+        const s1x = pf6.x;
+        const s1z = pf6.z;
         // Skip slab if ANY part of it would intrude into a crossing carriageway or junction!
         if (
           distanceToRoadCarriageway(sx, sz) < seg.sidewalk * 0.38 ||
@@ -433,8 +495,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           { y: yaw },
         );
         // Black-and-white / yellow-and-black painted Dhaka concrete kerb stone!
-        const kx = seg.ax + seg.ux * along + seg.leftX * kerbCenter;
-        const kz = seg.az + seg.uz * along + seg.leftZ * kerbCenter;
+        const pf7 = placementAt(seg, along, kerbCenter);
+        const kx = pf7.x;
+        const kz = pf7.z;
         const kerbCol = seg.kind === 'main' ? (i % 2 === 0 ? '#e6ebe8' : '#23282d') : '#7b756b';
         bWalk.box({ x: kx, y: 0.055, z: kz }, { x: 0.18, y: 0.11, z: actualLen + 0.02 }, kerbCol, { y: yaw });
       }
@@ -447,15 +510,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     const CREST_HEIGHT_BY_SEG: Record<string, number> = {
       asad_0: 0.44, // Beribadh Embankment Approach ramp
       ring_2: 0.40, // Ring Road Shia Mosque Overpass crest
-      babar_2: 0.46, // Babar Road Canal Box-Culvert bridge
+      babar_2: 0.46, // Babor Road Canal Box-Culvert bridge
       satmasjid_2: 0.42, // Satmasjid Road Southern Culvert rise
       asad_5: 0.36, // Asad Gate Crown straight
     };
     const crestH = CREST_HEIGHT_BY_SEG[seg.id] ?? 0;
     if (crestH > 0 && seg.length >= 46) {
       const cd = seg.length * 0.5;
-      const cxp = seg.ax + seg.ux * cd;
-      const czp = seg.az + seg.uz * cd;
+      const pf8 = placementAt(seg, cd, 0);
+      const cxp = pf8.x;
+      const czp = pf8.z;
       const crestDepth = Math.min(26, seg.length - 20);
       humps.push({
         x: cxp,
@@ -486,8 +550,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       }
       // Low painted concrete culvert guard-kerbs strictly outside the carriageway!
       for (const side of [-1, 1] as const) {
-        const px = cxp + seg.leftX * (seg.halfWidth + 0.32) * side;
-        const pz = czp + seg.leftZ * (seg.halfWidth + 0.32) * side;
+        const px = cxp + pf8.leftX * (seg.halfWidth + 0.32) * side;
+        const pz = czp + pf8.leftZ * (seg.halfWidth + 0.32) * side;
         if (isClearOfRoads(px, pz, 0.15)) {
           bWalk.box(
             { x: px, y: crestH * 0.55 + 0.24, z: pz },
@@ -508,8 +572,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     // Speed breakers on busy approaches (never inside junctions or on culvert crests)
     if (crestH === 0 && seg.length > 44 && (seg.jamProne || seg.kind === 'medium') && rng() < 0.46) {
       const hd = seg.length * (0.42 + rng() * 0.16);
-      const hx = seg.ax + seg.ux * hd;
-      const hz = seg.az + seg.uz * hd;
+      const pf9 = placementAt(seg, hd, 0);
+      const hx = pf9.x;
+      const hz = pf9.z;
       const hHeight = seg.kind === 'main' ? 0.058 : 0.065;
       humps.push({
         x: hx,
@@ -531,7 +596,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       for (let c = 0; c < chevronCount; c++) {
         const off = -((chevronCount - 1) * 0.5) * 0.9 + c * 0.9;
         bRoad.box(
-          { x: hx + seg.leftX * off, y: hHeight + 0.012, z: hz + seg.leftZ * off },
+          { x: hx + pf9.leftX * off, y: hHeight + 0.012, z: hz + pf9.leftZ * off },
           { x: 0.38, y: 0.005, z: 1.25 },
           c % 2 === 0 ? '#f2be38' : '#f2efe4',
           { y: yaw },
@@ -544,8 +609,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     for (let m = 0; m < numManholes; m++) {
       const d = 12 + ((m + 0.45) / numManholes) * Math.max(8, seg.length - 24);
       const off = (rng() - 0.5) * (seg.width * 0.42);
-      const mxp = seg.ax + seg.ux * d + seg.leftX * off;
-      const mzp = seg.az + seg.uz * d + seg.leftZ * off;
+      const pf10 = placementAt(seg, d, off);
+      const mxp = pf10.x;
+      const mzp = pf10.z;
       // Outer concrete collar + dark cast-iron WASA manhole lid + waffle inner ring (flush at y = 0.018!)
       bWalk.cylinder({ x: mxp, y: 0.013, z: mzp }, 0.52, 0.012, '#6d6960');
       bMetal.cylinder({ x: mxp, y: 0.017, z: mzp }, 0.40, 0.012, '#3a342f');
@@ -556,8 +622,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
       // Roadside cast-iron storm-drain grate right next to the left/right curb!
       const side = m % 2 === 0 ? 1 : -1;
-      const gx = seg.ax + seg.ux * d + seg.leftX * (seg.halfWidth - 0.34) * side;
-      const gz = seg.az + seg.uz * d + seg.leftZ * (seg.halfWidth - 0.34) * side;
+      const pf11 = placementAt(seg, d, (seg.halfWidth - 0.34) * side);
+      const gx = pf11.x;
+      const gz = pf11.z;
       bMetal.box({ x: gx, y: 0.016, z: gz }, { x: 0.46, y: 0.01, z: 0.78 }, '#22262a', { y: yaw });
       for (let sl = -2; sl <= 2; sl++) {
         const sx = gx + seg.ux * sl * 0.13;
@@ -571,8 +638,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     for (let w = 0; w < wearCount; w++) {
       const d = 10 + rng() * Math.max(6, seg.length - 20);
       const off = (rng() - 0.5) * (seg.width * 0.65);
-      const wx = seg.ax + seg.ux * d + seg.leftX * off;
-      const wz = seg.az + seg.uz * d + seg.leftZ * off;
+      const pf12 = placementAt(seg, d, off);
+      const wx = pf12.x;
+      const wz = pf12.z;
       const roll = rng();
       if (roll < 0.38) {
         // Dark fresh bitumen repair patch + tar seam border
@@ -587,8 +655,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       } else if (roll < 0.66) {
         // Repaired zigzag tar road crack
         for (let c = 0; c < 4; c++) {
-          const cx = wx + seg.ux * c * 0.55 + seg.leftX * ((c % 2 === 0 ? 1 : -1) * 0.14);
-          const cz = wz + seg.uz * c * 0.55 + seg.leftZ * ((c % 2 === 0 ? 1 : -1) * 0.14);
+          const cx = wx + pf12.ux * c * 0.55 + pf12.leftX * ((c % 2 === 0 ? 1 : -1) * 0.14);
+          const cz = wz + pf12.uz * c * 0.55 + pf12.leftZ * ((c % 2 === 0 ? 1 : -1) * 0.14);
           bRoad.box(
             { x: cx, y: 0.0165, z: cz },
             { x: 0.07, y: 0.003, z: 0.68 },
@@ -605,8 +673,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       } else {
         // Glossy roadside rainwater / tea-wash puddle near the curb!
         const side = rng() < 0.5 ? 1 : -1;
-        const px = seg.ax + seg.ux * d + seg.leftX * (seg.halfWidth - 0.85) * side;
-        const pz = seg.az + seg.uz * d + seg.leftZ * (seg.halfWidth - 0.85) * side;
+        const pf13 = placementAt(seg, d, (seg.halfWidth - 0.85) * side);
+        const px = pf13.x;
+        const pz = pf13.z;
         bPuddle.cylinder({ x: px, y: 0.017, z: pz }, 0.72 + rng() * 0.55, 0.003, '#3b4a56');
       }
     }
@@ -621,20 +690,22 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       for (let k = 0; k < 7; k++) {
         const along = damage.begin + span * (k + .5) / 7;
         const off = (k % 3 - 1) * seg.halfWidth * .38;
-        const x = seg.ax + seg.ux * along + seg.leftX * off;
-        const z = seg.az + seg.uz * along + seg.leftZ * off;
+        const pf14 = placementAt(seg, along, off);
+        const x = pf14.x;
+        const z = pf14.z;
         bRoad.box({ x, y: .0155, z }, { x: 1.7, y: .003, z: 2.5 },
           k % 2 ? '#646266' : '#595b60', { y: yaw + (k % 2 ? .13 : -.09) });
         for (let seam = 0; seam < 3; seam++) {
-          bRoad.box({ x: x + seg.leftX * (seam - 1) * .48, y: .018, z: z + seg.leftZ * (seam - 1) * .48 },
+          bRoad.box({ x: x + pf14.leftX * (seam - 1) * .48, y: .018, z: z + pf14.leftZ * (seam - 1) * .48 },
             { x: .035, y: .002, z: 1.0 }, '#25272b', { y: yaw + (seam % 2 ? .35 : -.32) });
         }
       }
       for (const fraction of [.36, .67]) {
         const along = damage.begin + span * fraction;
         const off = fraction < .5 ? -.9 : .9;
-        const x = seg.ax + seg.ux * along + seg.leftX * off;
-        const z = seg.az + seg.uz * along + seg.leftZ * off;
+        const pf15 = placementAt(seg, along, off);
+        const x = pf15.x;
+        const z = pf15.z;
         if (PLACES.some((place) => Math.hypot(place.x - x, place.z - z) < 12)) continue;
         const radius = .63, depth = .055;
         const basin = potholeSurface(radius, potholes.length + 37, false);
@@ -652,8 +723,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     if (regularPotholeCount < 8 && seg.kind !== 'gali' && seg.length > 58) {
       const d = seg.length * 0.56;
       const off = Math.min(1.15, seg.halfWidth * 0.32);
-      const px = seg.ax + seg.ux * d + seg.leftX * off;
-      const pz = seg.az + seg.uz * d + seg.leftZ * off;
+      const pf16 = placementAt(seg, d, off);
+      const px = pf16.x;
+      const pz = pf16.z;
       if (        Math.hypot(px - WORLD.playerSpawn.x, pz - WORLD.playerSpawn.z) > 20 &&
         PLACES.every((place) => Math.hypot(place.x - px, place.z - pz) > 16) &&
         potholes.every((hole) => Math.hypot(hole.x - px, hole.z - pz) > 35)) {
@@ -680,13 +752,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     for (let d = 11, idx = 0; d <= seg.length - 11; d += lampSpacing, idx++) {
       const side: 1 | -1 = seg.kind === 'main' ? (idx % 2 === 0 ? 1 : -1) : 1;
       const curbDist = seg.halfWidth + Math.min(seg.sidewalk * 0.72, 1.55);
-      const lx = seg.ax + seg.ux * d + seg.leftX * curbDist * side;
-      const lz = seg.az + seg.uz * d + seg.leftZ * curbDist * side;
+      const pf17 = placementAt(seg, d, curbDist * side);
+      const lx = pf17.x;
+      const lz = pf17.z;
       if (!isClearOfRoads(lx, lz, 0.95)) continue;
 
       // Inward normal toward road centre: (-leftX * side, -leftZ * side)
-      const inX = -seg.leftX * side;
-      const inZ = -seg.leftZ * side;
+      const inX = -pf17.leftX * side;
+      const inZ = -pf17.leftZ * side;
       const armYaw = Math.atan2(inX, inZ);
 
       // Galvanized streetlamp column + concrete plinth + overhanging cobra-head LED luminaire
@@ -738,8 +811,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
       // Concrete DESCO utility pole + transformer crossbar on opposite/same sidewalk for overhead wires
       const poleSide: 1 | -1 = -side as 1 | -1;
-      const ex = seg.ax + seg.ux * d + seg.leftX * curbDist * poleSide;
-      const ez = seg.az + seg.uz * d + seg.leftZ * curbDist * poleSide;
+      const pf18 = placementAt(seg, d, curbDist * poleSide);
+      const ex = pf18.x;
+      const ez = pf18.z;
       if (isClearOfRoads(ex, ez, 0.95)) {
         bWalk.box({ x: ex, y: 3.6, z: ez }, { x: 0.22, y: 7.2, z: 0.22 }, '#8a857c', { y: yaw });
         // Only the concrete column is solid, not its crossbar, wires or paper
@@ -754,14 +828,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         // Occasional high-mounted meter/service cabinet on the EXISTING pole;
         // no ground obstacle or footprint added to the pedestrian corridor.
         if (lampBreakId % 4 === 2) {
-          const px = ex - seg.leftX * poleSide * 0.15;
-          const pz = ez - seg.leftZ * poleSide * 0.15;
-          const cabinetYaw = Math.atan2(-seg.leftX * poleSide, -seg.leftZ * poleSide);
+          const px = ex - pf18.leftX * poleSide * 0.15;
+          const pz = ez - pf18.leftZ * poleSide * 0.15;
+          const cabinetYaw = Math.atan2(-pf18.leftX * poleSide, -pf18.leftZ * poleSide);
           const detail = sectorDetails[sectorIndex(ex, ez)];
           detail.box({ x: px, y: 3.05, z: pz },
             { x: 0.43, y: 0.52, z: 0.24 }, '#777d76', { y: cabinetYaw });
-          detail.box({ x: px - seg.leftX * poleSide * 0.126, y: 3.05,
-            z: pz - seg.leftZ * poleSide * 0.126 },
+          detail.box({ x: px - pf18.leftX * poleSide * 0.126, y: 3.05,
+            z: pz - pf18.leftZ * poleSide * 0.126 },
             { x: 0.28, y: 0.30, z: 0.016 }, '#4c5754', { y: cabinetYaw });
         }
         bMetal.box({ x: ex, y: 6.85, z: ez }, { x: 1.15, y: 0.08, z: 0.08 }, '#41474e', { y: yaw });
@@ -775,7 +849,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         // Occasional pasted teaching/community notice, tightly flush to the
         // pole. No separate collider, transparent foliage or runtime update.
         if (lampBreakId % 7 === 1 && posterCount < 90) {
-          const faceX = -seg.leftX * poleSide, faceZ = -seg.leftZ * poleSide;
+          const faceX = -pf18.leftX * poleSide, faceZ = -pf18.leftZ * poleSide;
           const posterYaw = Math.atan2(faceX, faceZ);
           sectorPosters[sectorIndex(ex, ez)].quad(
             { x: ex + faceX * 0.128, y: 2.12, z: ez + faceZ * 0.128 },
@@ -785,7 +859,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
         // Selected utility poles carry a small printed edition of the supplied
         // poster. The larger wall editions below retain full reading size.
         if (lampBreakId % 23 === 4 && educationPosterCount < 12) {
-          const nx = -seg.leftX * poleSide, nz = -seg.leftZ * poleSide;
+          const nx = -pf18.leftX * poleSide, nz = -pf18.leftZ * poleSide;
           const boardYaw = Math.atan2(nx, nz);
           const design = educationPosterCount % 2;
           const w = design === 0 ? 0.72 : 0.86;
@@ -803,8 +877,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       // mesh until buildings are placed, so trunks cannot end up inside infill.
       const td = d + lampSpacing * 0.48;
       if (td <= seg.length - 10) {
-        const tx = seg.ax + seg.ux * td + seg.leftX * (curbDist + 0.18) * side;
-        const tz = seg.az + seg.uz * td + seg.leftZ * (curbDist + 0.18) * side;
+        const pf19 = placementAt(seg, td, (curbDist + 0.18) * side);
+        const tx = pf19.x;
+        const tz = pf19.z;
         if (isClearOfRoads(tx, tz, 1.15)) {
           const height = 3.2 + rng() * 1.4;
           const flowering = rng() < 0.22;
@@ -840,8 +915,22 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     halfZ: number;
     yaw: number;
     radius: number;
+    /** True when contributed by a legacy segment (see `legacyPrecedence`). */
+    legacy?: boolean;
   }
   const placedBuildings: PlacedFootprint[] = [];
+  /**
+   * Footprints contributed by *legacy* segments only.
+   *
+   * The block-interior pass orders its candidates by distance to the nearest
+   * placed building. Using the full list would let a building added by a new
+   * road reorder interior candidates across the whole city, so the pass reads
+   * this frozen-scope snapshot instead. For the shipped 70-segment graph the
+   * two lists are identical at that point.
+   */
+  const legacyPlacedBuildings: PlacedFootprint[] = [];
+  let collectLegacyFootprints = true;
+
 
   // Static parcel broad phase: test only neighboring center cells before SAT.
   // This changes neither the ordered candidate set nor the overlap rule; it
@@ -851,13 +940,34 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   let maxParcelRadius = 0;
   const parcelKey = (x: number, z: number): string => `${x},${z}`;
   const addFootprint = (footprint: PlacedFootprint): void => {
+    if (collectLegacyFootprints) footprint.legacy = true;
     placedBuildings.push(footprint);
+    if (collectLegacyFootprints) legacyPlacedBuildings.push(footprint);
     maxParcelRadius = Math.max(maxParcelRadius, footprint.radius);
     const key = parcelKey(Math.floor(footprint.x / PARCEL_CELL), Math.floor(footprint.z / PARCEL_CELL));
     let cell = parcelCells.get(key);
     if (!cell) { cell = []; parcelCells.set(key, cell); }
     cell.push(footprint);
   };
+
+  // --- Reserve verified landmark parcels before any building is generated ---
+  // Corridor landmarks (Ring Road Shia Jame Masjid, Tajmahal Road graveyard and
+  // Eidgah) are real places whose parcels procedural infill would otherwise
+  // occupy: seating the mosque *after* the frontage existed left it overlapping
+  // a 15.25 m block by 5.6 x 2.9 m. Registering the footprint through
+  // `addFootprint` (so the parcel broad phase sees it too) makes the landmark
+  // take precedence over generated infill, which is the correct ordering.
+  const corridorStructures = planCorridorStructures();
+  for (const st of corridorStructures) {
+    addFootprint({
+      x: st.x,
+      z: st.z,
+      halfX: st.halfX,
+      halfZ: st.halfZ,
+      yaw: st.yaw,
+      radius: Math.hypot(st.halfX, st.halfZ),
+    });
+  }
 
   // Bounding circles used to reject neighboring angled facades with large
   // empty wedges between their real footprints. A SAT test allows close,
@@ -884,8 +994,24 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     width: number,
     depth: number,
     yaw: number,
+    /**
+     * Legacy precedence. When true the candidate belongs to the shipped world,
+     * so buildings contributed by *new* roads may not evict it. Without this a
+     * road added today would silently delete an existing building by placing a
+     * fresh one beside it — a world change dressed up as locality.
+     *
+     * Corridor checks are unaffected: a legacy building is still refused when a
+     * road carriageway itself covers it. Only the building-vs-building parcel
+     * contest is weighted, and only in favour of what already existed.
+     */
+    legacyPrecedence = false,
   ): boolean => {
     if (!isFootprintClearOfCorridor(cx, cz, width, depth, yaw, 0.55)) return false;
+    // The Town Hall Market envelope is authored (`townHall.ts`), so the generic
+    // generator must not drop a block through it. This is the only deliberate
+    // removal from the shipped 845-building world; the frontage walk keeps its
+    // positions and draws, so a suppressed candidate costs exactly itself.
+    if (isInTownHallSite(cx, cz)) return false;
     const candidate: PlacedFootprint = {
       x: cx, z: cz, halfX: width / 2, halfZ: depth / 2, yaw,
       radius: Math.hypot(width, depth) / 2,
@@ -898,28 +1024,86 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     for (let dz = -reach; dz <= reach; dz++) {
       for (let dx = -reach; dx <= reach; dx++) {
         const cell = parcelCells.get(parcelKey(gx + dx, gz + dz));
-        if (cell && !cell.every((other) => footprintSeparated(candidate, other, 0.28))) return false;
+        if (cell && !cell.every((other) => {
+          if (legacyPrecedence && other.legacy !== true) return true;
+          return footprintSeparated(candidate, other, 0.28);
+        })) return false;
       }
     }
     return true;
   };
 
   let signCursor = 0;
-  for (const seg of ROAD_SEGMENTS) {
-    const yaw = Math.atan2(seg.ux, seg.uz);
+  for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
+    collectLegacyFootprints = isLegacyRoadSegment(seg.id);
+    // Per-segment, id-seeded stream: building output no longer depends on how
+    // many draws props/trees consumed, nor on how many segments precede this one.
+    // See `src/world/buildingRng.ts`.
+    const bRng = buildingRngFor(seg.id);
+    // Walk the building frontage by ARC length: on a curved road a straight
+    // walk would under-count, because the chord is shorter than the road.
+    const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
       let along = 9.5;
-      while (along < seg.length - 9.5) {
-        const bWidth = seg.kind === 'main' ? 9.5 + rng() * 5.5 : 7.5 + rng() * 4.5;
-        const bDepth = 8.2 + rng() * 4.4;
-        const setback = seg.halfWidth + seg.sidewalk + bDepth * 0.5 + 0.95 + rng() * 0.65;
-        const cx = seg.ax + seg.ux * (along + bWidth * 0.5) + seg.leftX * setback * side;
-        const cz = seg.az + seg.uz * (along + bWidth * 0.5) + seg.leftZ * setback * side;
+      let step = 0;
+      while (along < arc - 9.5) {
+        // --- Candidate identity, decided before anything is tested ----------
+        //
+        // Every draw this candidate will ever use is taken here, in the order
+        // the accepted path has always taken them (width, depth, setback,
+        // floors, tint, brick, commercial, gap). Placement is a pure filter
+        // applied afterwards, so a rejected candidate can no longer shift its
+        // neighbours' geometry *or* their randomness — the two couplings that
+        // turned one road into 35 unexplained evictions
+        // (docs/SYNTHETIC_ROAD_AUDIT.md).
+        //
+        // Shipped segments replay the accept/reject pattern they were generated
+        // with (`frontageLayout.ts`), which also fixes the walk's step length.
+        // A segment added later has no frozen pattern and is decided live; its
+        // step length is still derived from its own width, never from the
+        // outcome.
+        const frozen = legacyFrontageDecision(seg.id, side, step);
+        const bWidth = seg.kind === 'main' ? 9.5 + bRng() * 5.5 : 7.5 + bRng() * 4.5;
+        const bDepth = 8.2 + bRng() * 4.4;
+        const setback = seg.halfWidth + seg.sidewalk + bDepth * 0.5 + 0.95 + bRng() * 0.65;
+        if (frozen === 'r') {
+          // The shipped world left this lot empty (parcel contest, sector budget
+          // or an authored anchor). Only 3 draws are consumed, exactly as the
+          // original walk did, and the step keeps its 4.5 m retry length.
+          along += 4.5;
+          step++;
+          continue;
+        }
+        const drawFloors = bRng();
+        const drawTint = bRng();
+        const drawBrick = bRng();
+        // Commercial-ness is only rolled on residential galis: on any other
+        // kind the original expression short-circuited before drawing, so
+        // drawing unconditionally here would shift every later value.
+        const drawCommercial = seg.kind === 'gali' ? bRng() : 1;
+        const drawGap = bRng();
+        // Step length is a property of the candidate, not of the outcome.
+        const advance = bWidth + (drawGap < 0.88 ? 0.32 : 0.72);
+        // Local polyline frame at this building's own centre. On a straight or
+        // collinear segment this is bit-identical to the chord maths it replaces.
+        // On a curve the building follows the road it actually fronts and its box
+        // is rotated to the local tangent instead of to a line crossing it.
+        const frame = placementAt(seg, along + bWidth * 0.5, setback * side);
+        const cx = frame.x;
+        const cz = frame.z;
+        const yaw = frame.yaw;
 
         // Face normal pointing FROM building TOWARD the street: (-leftX * side, -leftZ * side)
-        const faceYaw = Math.atan2(-seg.leftX * side, -seg.leftZ * side);
+        const faceYaw = Math.atan2(-frame.leftX * side, -frame.leftZ * side);
 
-        if (canPlaceBuilding(cx, cz, bDepth, bWidth, yaw)) {
+        if (!canPlaceBuilding(cx, cz, bDepth, bWidth, yaw)) {
+          // Rejected now (a road added later covers this parcel): skip the
+          // building, keep the walk and the stream exactly where they were.
+          along += advance;
+          step++;
+          continue;
+        }
+        {
           addFootprint({
             x: cx, z: cz, halfX: bDepth / 2, halfZ: bWidth / 2, yaw,
             radius: Math.hypot(bDepth, bWidth) / 2,
@@ -927,10 +1111,10 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
 
           const floors =
             seg.kind === 'main'
-              ? 3 + Math.floor(rng() * 4) // 3..6 storeys on Asad Ave / Ring Rd
+              ? 3 + Math.floor(drawFloors * 4) // 3..6 storeys on Asad Ave / Ring Rd
               : seg.kind === 'medium'
-                ? 2 + Math.floor(rng() * 4) // 2..5 storeys on Tajmahal / Nurjahan / Sher Shah Suri
-                : 2 + Math.floor(rng() * 3); // 2..4 storeys on residential galis
+                ? 2 + Math.floor(drawFloors * 4) // 2..5 storeys on Tajmahal / Nurjahan / Sher Shah Suri
+                : 2 + Math.floor(drawFloors * 3); // 2..4 storeys on residential galis
           const floorH = 3.05;
           const height = floors * floorH;
           const secIdx = sectorIndex(cx, cz);
@@ -941,8 +1125,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           const bSgn = sectorSigns[secIdx];
           const bPoster = sectorPosters[secIdx];
 
-          const tint = PLASTER_TINTS[Math.floor(rng() * PLASTER_TINTS.length)];
-          const useBrick = rng() < 0.18;
+          const tint = PLASTER_TINTS[Math.floor(drawTint * PLASTER_TINTS.length)];
+          const useBrick = drawBrick < 0.18;
           // Coordinate-derived style does not consume the seeded layout RNG:
           // building footprints, signs, stalls and navigation stay unchanged.
           const frontageStyle = Math.abs(Math.round(cx * 13 + cz * 7)) % 7;
@@ -958,8 +1142,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           }
 
           // Grounded concrete foundation plinth + shopfront entrance apron bridging onto footpath!
-          const fx = -seg.leftX * side;
-          const fz = -seg.leftZ * side;
+          const fx = -frame.leftX * side;
+          const fz = -frame.leftZ * side;
           bDet.box(
             { x: cx + fx * 0.55, y: 0.13, z: cz + fz * 0.55 },
             { x: bDepth + 1.35, y: 0.26, z: bWidth + 0.28 },
@@ -968,8 +1152,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           );
 
           // 4-sided concrete floor-slab stringcourses (`ছাদের কার্নিশ`) & side-wall windows + sunshades!
-          const sideYawL = Math.atan2(seg.ux, seg.uz);
-          const sideYawR = Math.atan2(-seg.ux, -seg.uz);
+          const sideYawL = Math.atan2(frame.ux, frame.uz);
+          const sideYawR = Math.atan2(-frame.ux, -frame.uz);
           for (let fl = 1; fl <= floors; fl++) {
             const slabY = fl * floorH;
             bDet.box(
@@ -981,17 +1165,17 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             if (fl < floors) {
               const winY = fl * floorH + 1.48;
               for (const sDir of [-1, 1] as const) {
-                const wx = cx + seg.ux * (bWidth * 0.5 + 0.03) * sDir;
-                const wz = cz + seg.uz * (bWidth * 0.5 + 0.03) * sDir;
+                const wx = cx + frame.ux * (bWidth * 0.5 + 0.03) * sDir;
+                const wz = cz + frame.uz * (bWidth * 0.5 + 0.03) * sDir;
                 const sYaw = sDir === 1 ? sideYawL : sideYawR;
                 for (const dOff of [-bDepth * 0.24, bDepth * 0.24]) {
                   const ox = wx - fx * dOff;
                   const oz = wz - fz * dOff;
                   bDet.box({ x: ox, y: winY, z: oz }, { x: 1.18, y: 1.12, z: 0.06 }, windowShade, { y: sYaw });
-                  litWindow(secIdx, ox + seg.ux * 0.075 * sDir, winY,
-                    oz + seg.uz * 0.075 * sDir, sYaw, 0.96, 0.88);
+                  litWindow(secIdx, ox + frame.ux * 0.075 * sDir, winY,
+                    oz + frame.uz * 0.075 * sDir, sYaw, 0.96, 0.88);
                   bDet.box(
-                    { x: ox + seg.ux * 0.18 * sDir, y: winY + 0.62, z: oz + seg.uz * 0.18 * sDir },
+                    { x: ox + frame.ux * 0.18 * sDir, y: winY + 0.62, z: oz + frame.uz * 0.18 * sDir },
                     { x: 1.42, y: 0.08, z: 0.42 },
                     '#9a9386',
                     { y: sYaw },
@@ -1005,8 +1189,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           // ventilation grilles and drain downpipes; all remain inside the OBB.
           if (bWidth > 8.5) {
             for (const sideDir of [-1, 1] as const) {
-              const sideX = cx + seg.ux * (bWidth * 0.5 + 0.025) * sideDir;
-              const sideZ = cz + seg.uz * (bWidth * 0.5 + 0.025) * sideDir;
+              const sideX = cx + frame.ux * (bWidth * 0.5 + 0.025) * sideDir;
+              const sideZ = cz + frame.uz * (bWidth * 0.5 + 0.025) * sideDir;
               const sideFace = sideDir === 1 ? sideYawL : sideYawR;
               bShut.quad({ x: sideX - fx * 1.35, y: 1.15, z: sideZ - fz * 1.35 },
                 1.55, 2.1, '#4d5b59', { y: sideFace });
@@ -1019,17 +1203,17 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 const design = (Math.abs(Math.round(cx * 7 + cz * 13)) % 2);
                 const w = design === 0 ? 1.78 : 2.05;
                 const h = design === 0 ? 2.53 : 2.05;
-                const px = sideX - fx * 3.35 + seg.ux * 0.065;
-                const pz = sideZ - fz * 3.35 + seg.uz * 0.065;
-                bDet.box({ x: px - seg.ux * 0.018, y: 1.63, z: pz - seg.uz * 0.018 },
+                const px = sideX - fx * 3.35 + frame.ux * 0.065;
+                const pz = sideZ - fz * 3.35 + frame.uz * 0.065;
+                bDet.box({ x: px - frame.ux * 0.018, y: 1.63, z: pz - frame.uz * 0.018 },
                   { x: w + 0.09, y: h + 0.09, z: 0.028 }, '#eee9db', { y: sideYawL });
                 sectorEducation[secIdx].quad({ x: px, y: 1.63, z: pz },
                   w, h, '#ffffff', { y: sideYawL }, EDUCATION_POSTERS[design]);
                 educationPosterCount++;
               }
               if (sideDir === 1 && frontageStyle === 0 && posterCount < 90) {
-                const posterX = sideX - fx * 2.7 + seg.ux * 0.045;
-                const posterZ = sideZ - fz * 2.7 + seg.uz * 0.045;
+                const posterX = sideX - fx * 2.7 + frame.ux * 0.045;
+                const posterZ = sideZ - fz * 2.7 + frame.uz * 0.045;
                 const design = Math.abs(Math.round(cx * 7 + cz * 11));
                 // One in eleven printed notices is non-partisan civic/election
                 // information; most are education, markets and cleanliness.
@@ -1058,7 +1242,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           );
           if (floors >= 3) {
             bDet.box(
-              { x: cx + seg.ux * 1.5, y: height + 1.25, z: cz + seg.uz * 1.5 },
+              { x: cx + frame.ux * 1.5, y: height + 1.25, z: cz + frame.uz * 1.5 },
               { x: 2.6, y: 2.5, z: 2.8 },
               tint,
               { y: yaw },
@@ -1076,8 +1260,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             bPoster.quad({ x: bx + fx * 0.055, y: height + 2.03, z: bz + fz * 0.055 },
               3.84, 1.60, '#ffffff', { y: faceYaw }, posterAtlas.billboard(billboardCount));
             for (const side of [-1, 1]) {
-              bDet.box({ x: bx + seg.ux * side * 1.42 - fx * 0.06,
-                y: height + 0.85, z: bz + seg.uz * side * 1.42 - fz * 0.06 },
+              bDet.box({ x: bx + frame.ux * side * 1.42 - fx * 0.06,
+                y: height + 0.85, z: bz + frame.uz * side * 1.42 - fz * 0.06 },
                 { x: 0.10, y: 1.55, z: 0.11 }, '#525652', { y: faceYaw });
             }
             billboardCount++;
@@ -1089,13 +1273,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
           // Intermittent limewash edge and rain-stained sill distinguish the
           // otherwise uniform upper blocks. Both join the sector detail mesh.
           if (!useBrick && (frontageStyle === 2 || frontageStyle === 6)) {
-            bDet.box({ x: frontX + seg.ux * (bWidth * 0.45) + fx * 0.035,
-              y: height * 0.54, z: frontZ + seg.uz * (bWidth * 0.45) + fz * 0.035 },
+            bDet.box({ x: frontX + frame.ux * (bWidth * 0.45) + fx * 0.035,
+              y: height * 0.54, z: frontZ + frame.uz * (bWidth * 0.45) + fz * 0.035 },
               { x: 0.19, y: height * 0.76, z: 0.045 },
               frontageStyle === 2 ? '#aeb6a3' : '#ada99b', { y: faceYaw });
           }
 
-          const isCommercial = seg.kind !== 'gali' || rng() < 0.45;
+          const isCommercial = seg.kind !== 'gali' || drawCommercial < 0.45;
           // A few occupied shops stay warm at dusk; the pane and small ground
           // spill join the existing sector light mesh (zero real-time lights).
           if (isCommercial && frontageStyle === 0 && bWidth > 9) {
@@ -1110,8 +1294,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             const shopBays = Math.max(1, Math.floor(bWidth / 3.8));
             for (let sb = 0; sb < shopBays; sb++) {
               const bayOff = -((shopBays - 1) * 0.5) * 3.4 + sb * 3.4;
-              const sx = frontX + seg.ux * bayOff;
-              const sz = frontZ + seg.uz * bayOff;
+              const sx = frontX + frame.ux * bayOff;
+              const sz = frontZ + frame.uz * bayOff;
               const isGrocery = sb === 0 && [1, 3, 4, 5].includes(frontageStyle);
               if ((frontageStyle === 1 || frontageStyle === 4) && sb === 0) {
                 // Busy mudi dokan: dark recessed shelves, pale rice/lentil sacks,
@@ -1124,16 +1308,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                     { x: 2.35, y: 0.075, z: 0.24 }, '#76533c', { y: faceYaw });
                   for (let item = -2; item <= 2; item++) {
                     const color = ['#c69f56', '#e3c681', '#6d965f', '#be7141', '#b6a880'][item + 2];
-                    bDet.box({ x: sx + seg.ux * item * 0.43 + fx * 0.19,
-                      y: shelfY + 0.18, z: sz + seg.uz * item * 0.43 + fz * 0.19 },
+                    bDet.box({ x: sx + frame.ux * item * 0.43 + fx * 0.19,
+                      y: shelfY + 0.18, z: sz + frame.uz * item * 0.43 + fz * 0.19 },
                       { x: 0.31, y: 0.27, z: 0.13 }, color, { y: faceYaw });
                   }
                 }
                 bDet.box({ x: sx + fx * 0.30, y: 0.66, z: sz + fz * 0.30 },
                   { x: 1.65, y: 0.15, z: 0.42 }, '#8b603e', { y: faceYaw });
                 for (const end of [-1, 1]) {
-                  bDet.box({ x: sx + seg.ux * end * 0.94 + fx * 0.20,
-                    y: 0.35, z: sz + seg.uz * end * 0.94 + fz * 0.20 },
+                  bDet.box({ x: sx + frame.ux * end * 0.94 + fx * 0.20,
+                    y: 0.35, z: sz + frame.uz * end * 0.94 + fz * 0.20 },
                     { x: 0.40, y: 0.56, z: 0.25 }, '#c0a16e', { y: faceYaw });
                 }
               } else if ((frontageStyle === 3 || frontageStyle === 5) && sb === 0) {
@@ -1143,8 +1327,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 bDet.box({ x: sx + fx * 0.07, y: 1.42, z: sz + fz * 0.07 },
                   { x: 2.65, y: 2.55, z: 0.035 }, '#263137', { y: faceYaw });
                 for (const edge of [-1, 1] as const) {
-                  bDet.box({ x: sx + seg.ux * edge * 1.26 + fx * 0.11, y: 1.45,
-                    z: sz + seg.uz * edge * 1.26 + fz * 0.11 },
+                  bDet.box({ x: sx + frame.ux * edge * 1.26 + fx * 0.11, y: 1.45,
+                    z: sz + frame.uz * edge * 1.26 + fz * 0.11 },
                     { x: 0.11, y: 2.65, z: 0.12 }, '#796f60', { y: faceYaw });
                 }
                 bDet.box({ x: sx + fx * 0.15, y: 0.82, z: sz + fz * 0.15 },
@@ -1158,8 +1342,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                     { x: 1.86, y: 0.07, z: 0.13 }, '#8a6548', { y: faceYaw });
                 }
                 for (let bundle = -1; bundle <= 1; bundle++) {
-                  bDet.box({ x: sx + seg.ux * bundle * 0.52 + fx * 0.12,
-                    y: 1.66, z: sz + seg.uz * bundle * 0.52 + fz * 0.12 },
+                  bDet.box({ x: sx + frame.ux * bundle * 0.52 + fx * 0.12,
+                    y: 1.66, z: sz + frame.uz * bundle * 0.52 + fz * 0.12 },
                     { x: 0.38, y: 0.31, z: 0.09 },
                     frontageStyle === 5
                       ? ['#b99452', '#637948', '#91775c'][bundle + 1]
@@ -1169,8 +1353,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                   // Produce sacks and a shallow street-facing display shelf;
                   // no change to footprint/collision or sidewalk clearance.
                   for (let sack = -1; sack <= 1; sack++) {
-                    bDet.box({ x: sx + seg.ux * sack * 0.53 + fx * 0.23,
-                      y: 0.43, z: sz + seg.uz * sack * 0.53 + fz * 0.23 },
+                    bDet.box({ x: sx + frame.ux * sack * 0.53 + fx * 0.23,
+                      y: 0.43, z: sz + frame.uz * sack * 0.53 + fz * 0.23 },
                       { x: 0.38, y: 0.38, z: 0.24 },
                       ['#b69a72', '#9b8565', '#b7a180'][sack + 1], { y: faceYaw });
                   }
@@ -1185,8 +1369,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                 bDet.box({ x: sx + fx * 0.13, y: 0.67, z: sz + fz * 0.13 },
                   { x: 1.97, y: 0.80, z: 0.27 }, '#77573d', { y: faceYaw });
                 for (let item = -1; item <= 1; item++) {
-                  bDet.box({ x: sx + seg.ux * item * 0.48 + fx * 0.23,
-                    y: 1.16, z: sz + seg.uz * item * 0.48 + fz * 0.23 },
+                  bDet.box({ x: sx + frame.ux * item * 0.48 + fx * 0.23,
+                    y: 1.16, z: sz + frame.uz * item * 0.48 + fz * 0.23 },
                     { x: 0.30, y: 0.21, z: 0.20 },
                     ['#b08e61', '#7d8a69', '#bd9971'][item + 1], { y: faceYaw });
                 }
@@ -1204,12 +1388,12 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                   { x: 2.30, y: 0.027, z: 0.025 }, '#5e4d39', { y: faceYaw });
                 for (let string = -1; string <= 1; string++) {
                   const off = string * 0.77;
-                  bDet.box({ x: sx + seg.ux * off + fx * 0.33,
-                    y: 1.86, z: sz + seg.uz * off + fz * 0.33 },
+                  bDet.box({ x: sx + frame.ux * off + fx * 0.33,
+                    y: 1.86, z: sz + frame.uz * off + fz * 0.33 },
                     { x: 0.014, y: 1.05, z: 0.014 }, '#d3c3a3');
                   for (let packet = 0; packet < 3; packet++) {
-                    const px = sx + seg.ux * off + fx * 0.36;
-                    const pz = sz + seg.uz * off + fz * 0.36;
+                    const px = sx + frame.ux * off + fx * 0.36;
+                    const pz = sz + frame.uz * off + fz * 0.36;
                     sectorSnacks[secIdx].quad(
                       { x: px, y: 2.16 - packet * 0.37, z: pz },
                       0.32, 0.34, '#ffffff', { y: faceYaw },
@@ -1219,7 +1403,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               }
               // Vertical shopfront concrete pilaster beside shutter bay
               bDet.box(
-                { x: sx + seg.ux * 1.48, y: 1.45, z: sz + seg.uz * 1.48 },
+                { x: sx + frame.ux * 1.48, y: 1.45, z: sz + frame.uz * 1.48 },
                 { x: 0.24, y: 2.65, z: 0.18 },
                 '#9e9688',
                 { y: faceYaw },
@@ -1254,8 +1438,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               const design = educationPosterCount % 2;
               const w = design === 0 ? 1.72 : 1.95;
               const h = design === 0 ? 2.44 : 1.95;
-              const px = frontX + seg.ux * 3.7 + fx * 0.075;
-              const pz = frontZ + seg.uz * 3.7 + fz * 0.075;
+              const px = frontX + frame.ux * 3.7 + fx * 0.075;
+              const pz = frontZ + frame.uz * 3.7 + fz * 0.075;
               bDet.box({ x: px - fx * 0.018, y: 1.58, z: pz - fz * 0.018 },
                 { x: w + 0.09, y: h + 0.09, z: 0.028 }, '#e7e2d5', { y: faceYaw });
               sectorEducation[secIdx].quad({ x: px, y: 1.58, z: pz },
@@ -1264,7 +1448,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             }
             for (const pDir of [-1.55, 1.55]) {
               bDet.box(
-                { x: frontX + seg.ux * pDir, y: 1.32, z: frontZ + seg.uz * pDir },
+                { x: frontX + frame.ux * pDir, y: 1.32, z: frontZ + frame.uz * pDir },
                 { x: 0.32, y: 2.55, z: 0.28 },
                 '#8f8779',
                 { y: faceYaw },
@@ -1292,8 +1476,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               }
               const bars = frontageStyle === 1 ? 2 : 1;
               for (let bar = -bars; bar <= bars; bar++) {
-                bDet.box({ x: frontX + fx * 0.82 + seg.ux * (balW * bar / (bars + 3)),
-                  y: by + 0.08, z: frontZ + fz * 0.82 + seg.uz * (balW * bar / (bars + 3)) },
+                bDet.box({ x: frontX + fx * 0.82 + frame.ux * (balW * bar / (bars + 3)),
+                  y: by + 0.08, z: frontZ + fz * 0.82 + frame.uz * (balW * bar / (bars + 3)) },
                   { x: 0.045, y: 0.72, z: 0.06 }, '#676963', { y: faceYaw });
               }
             } else if (seg.kind !== 'gali' && (frontageStyle === 2 || frontageStyle === 5)) {
@@ -1303,8 +1487,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               bDet.box({ x: frontX + fx * 0.82, y: by + 0.46, z: frontZ + fz * 0.82 },
                 { x: balW, y: 0.055, z: 0.065 }, '#545d58', { y: faceYaw });
               for (let bar = -2; bar <= 2; bar++) {
-                bDet.box({ x: frontX + fx * 0.82 + seg.ux * balW * bar / 6,
-                  y: by + 0.29, z: frontZ + fz * 0.82 + seg.uz * balW * bar / 6 },
+                bDet.box({ x: frontX + fx * 0.82 + frame.ux * balW * bar / 6,
+                  y: by + 0.29, z: frontZ + fz * 0.82 + frame.uz * balW * bar / 6 },
                   { x: 0.045, y: 0.35, z: 0.05 }, '#545d58', { y: faceYaw });
               }
             } else {
@@ -1316,9 +1500,9 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             for (const bSide of [-1, 1] as const) {
               bDet.box(
                 {
-                  x: frontX + fx * 0.42 + seg.ux * (balW * 0.49) * bSide,
+                  x: frontX + fx * 0.42 + frame.ux * (balW * 0.49) * bSide,
                   y: by + 0.08,
-                  z: frontZ + fz * 0.42 + seg.uz * (balW * 0.49) * bSide,
+                  z: frontZ + fz * 0.42 + frame.uz * (balW * 0.49) * bSide,
                 },
                 { x: 0.06, y: 0.82, z: 0.84 },
                 railCol,
@@ -1333,16 +1517,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             );
             // One sliding-door mullion breaks the large unlit dark rectangles
             // without introducing transparent glass or per-window objects.
-            bDet.box({ x: frontX + fx * 0.078 + seg.ux * (frontageStyle === 4 ? 0.36 : -0.12),
+            bDet.box({ x: frontX + fx * 0.078 + frame.ux * (frontageStyle === 4 ? 0.36 : -0.12),
               y: by + 0.62,
-              z: frontZ + fz * 0.078 + seg.uz * (frontageStyle === 4 ? 0.36 : -0.12) },
+              z: frontZ + fz * 0.078 + frame.uz * (frontageStyle === 4 ? 0.36 : -0.12) },
               { x: 0.045, y: 1.85, z: 0.045 },
               frontageStyle === 4 ? '#b0a99a' : '#738180', { y: faceYaw });
             // A single faded cloth panel on occasional balconies suggests an
             // occupied home without glass transparency or extra texture passes.
             if ((frontageStyle === 0 || frontageStyle === 5) && fl % 2 === 1) {
-              bDet.quad({ x: frontX + fx * 0.098 + seg.ux * 0.41,
-                y: by + 0.69, z: frontZ + fz * 0.098 + seg.uz * 0.41 },
+              bDet.quad({ x: frontX + fx * 0.098 + frame.ux * 0.41,
+                y: by + 0.69, z: frontZ + fz * 0.098 + frame.uz * 0.41 },
                 0.70, 1.55, frontageStyle === 0 ? '#b6a888' : '#839d94',
                 { y: faceYaw });
             }
@@ -1357,14 +1541,14 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             // gets a framed two-pane window. Keep it clear of the AC on the
             // opposite side; skip narrow plots and all interior/side faces.
             if (bWidth >= 9.7 && seg.kind !== 'gali' && (fl + frontageStyle) % 2 === 0) {
-              const wx = frontX - seg.ux * (balW * 0.5 + 0.88);
-              const wz = frontZ - seg.uz * (balW * 0.5 + 0.88);
+              const wx = frontX - frame.ux * (balW * 0.5 + 0.88);
+              const wz = frontZ - frame.uz * (balW * 0.5 + 0.88);
               const wy = by + 0.86;
               bDet.box({ x: wx + fx * 0.065, y: wy, z: wz + fz * 0.065 },
                 { x: 1.30, y: 1.24, z: 0.028 }, '#2e3d42', { y: faceYaw });
               for (const edge of [-1, 1]) {
-                bDet.box({ x: wx + fx * 0.09 + seg.ux * edge * 0.65, y: wy,
-                  z: wz + fz * 0.09 + seg.uz * edge * 0.65 },
+                bDet.box({ x: wx + fx * 0.09 + frame.ux * edge * 0.65, y: wy,
+                  z: wz + fz * 0.09 + frame.uz * edge * 0.65 },
                   { x: 0.055, y: 1.30, z: 0.07 }, '#a29c8d', { y: faceYaw });
               }
               bDet.box({ x: wx + fx * 0.095, y: wy - 0.65, z: wz + fz * 0.095 },
@@ -1374,8 +1558,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
               bDet.box({ x: wx + fx * 0.105, y: wy, z: wz + fz * 0.105 },
                 { x: 0.035, y: 1.21, z: 0.045 }, '#a4aaa2', { y: faceYaw });
               if (frontageStyle % 2 === 0) {
-                bDet.quad({ x: wx + fx * 0.112 - seg.ux * 0.32, y: wy,
-                  z: wz + fz * 0.112 - seg.uz * 0.32 },
+                bDet.quad({ x: wx + fx * 0.112 - frame.ux * 0.32, y: wy,
+                  z: wz + fz * 0.112 - frame.uz * 0.32 },
                   0.47, 1.09, '#8c938b', { y: faceYaw });
               }
               litWindow(secIdx, wx + fx * 0.116, wy, wz + fz * 0.116,
@@ -1384,13 +1568,13 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             if ((fl + secIdx) % 3 === 0) {
               // Terracotta balcony planter pot + greenery
               bDet.cylinder(
-                { x: frontX + fx * 0.64 - seg.ux * (balW * 0.32), y: by - 0.16, z: frontZ + fz * 0.64 - seg.uz * (balW * 0.32) },
+                { x: frontX + fx * 0.64 - frame.ux * (balW * 0.32), y: by - 0.16, z: frontZ + fz * 0.64 - frame.uz * (balW * 0.32) },
                 0.16,
                 0.26,
                 '#9c4a2d',
               );
               bDet.cone(
-                { x: frontX + fx * 0.64 - seg.ux * (balW * 0.32), y: by + 0.12, z: frontZ + fz * 0.64 - seg.uz * (balW * 0.32) },
+                { x: frontX + fx * 0.64 - frame.ux * (balW * 0.32), y: by + 0.12, z: frontZ + fz * 0.64 - frame.uz * (balW * 0.32) },
                 0.24,
                 0.38,
                 '#2f6f3e',
@@ -1399,16 +1583,16 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             // A few older plaster facades show short rain-stained seams below
             // the cornice; keep them high, matte and off shop signs/windows.
             if (frontageStyle === 0 && fl % 2 === 1 && !useBrick) {
-              bDet.box({ x: frontX + seg.ux * (bWidth * 0.43) + fx * 0.075,
-                y: by + 1.15, z: frontZ + seg.uz * (bWidth * 0.43) + fz * 0.075 },
+              bDet.box({ x: frontX + frame.ux * (bWidth * 0.43) + fx * 0.075,
+                y: by + 1.15, z: frontZ + frame.uz * (bWidth * 0.43) + fz * 0.075 },
                 { x: 0.18, y: 0.92, z: 0.016 }, '#aca596', { y: faceYaw });
             }
             // Wall-mounted outdoor split AC: painted casing, inset dark fan
             // grille, radial blades, louvers, bracket and copper drain line.
             // Everything joins the existing sector detail mesh (no new pass).
             if ((fl + secIdx) % 2 === 0) {
-              const ax = frontX + seg.ux * (bWidth * 0.38) + fx * 0.22;
-              const az = frontZ + seg.uz * (bWidth * 0.38) + fz * 0.22;
+              const ax = frontX + frame.ux * (bWidth * 0.38) + fx * 0.22;
+              const az = frontZ + frame.uz * (bWidth * 0.38) + fz * 0.22;
               const ay = by + 0.9;
               bDet.box({ x: ax, y: ay, z: az }, { x: 0.78, y: 0.54, z: 0.34 }, '#d8dedb', { y: faceYaw });
               bDet.box({ x: ax + fx * 0.177, y: ay, z: az + fz * 0.177 },
@@ -1426,12 +1610,12 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
                   { y: faceYaw, z: blade * Math.PI / 3 });
               }
               for (const side of [-1, 1]) {
-                bDet.box({ x: ax + seg.ux * side * 0.26 - fx * 0.035,
-                  y: ay - 0.31, z: az + seg.uz * side * 0.26 - fz * 0.035 },
+                bDet.box({ x: ax + frame.ux * side * 0.26 - fx * 0.035,
+                  y: ay - 0.31, z: az + frame.uz * side * 0.26 - fz * 0.035 },
                   { x: 0.08, y: 0.09, z: 0.24 }, '#687675', { y: faceYaw });
               }
-              bDet.box({ x: ax + seg.ux * 0.43 - fx * 0.16, y: ay - 0.22,
-                z: az + seg.uz * 0.43 - fz * 0.16 },
+              bDet.box({ x: ax + frame.ux * 0.43 - fx * 0.16, y: ay - 0.22,
+                z: az + frame.uz * 0.43 - fz * 0.16 },
                 { x: 0.035, y: 0.44, z: 0.035 }, '#997657');
             }
           }
@@ -1459,40 +1643,68 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             yaw,
           });
 
-          // Shop-house row: mostly narrow 0.3–0.7 m seams, occasional wider
-          // utility break. Preserve the single RNG draw and the street graph.
-          along += bWidth + (rng() < 0.88 ? 0.32 : 0.72);
-        } else {
-          along += 4.5;
         }
+        // One advance for both outcomes: whether this candidate was placed
+        // cannot move the next one.
+        along += advance;
+        step++;
       }
     }
   }
 
   // Slender infill where the primary apartment pass left an actual empty lot.
   // The same oriented-footprint/road-corridor checks protect driving width.
+  // One ledger per build. Created here because three passes consult it: the two
+  // infill passes and the block-interior region phase.
+  const regionBudgetLedger = new RegionBudgetLedger();
+  const legacySegments = canonicalSegments(ROAD_SEGMENTS).filter((sg) => isLegacyRoadSegment(sg.id));
+  const newSegments = canonicalSegments(ROAD_SEGMENTS).filter((sg) => !isLegacyRoadSegment(sg.id));
   let infillCount = 0;
   const infillBySector = new Uint8Array(SECTOR_COUNT);
-  for (const seg of ROAD_SEGMENTS) {
+  for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
+    collectLegacyFootprints = isLegacyRoadSegment(seg.id);
     if (infillCount >= 112) break;
-    const yaw = Math.atan2(seg.ux, seg.uz);
+    const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
-      for (let along = 9.5; along < seg.length - 9.5 && infillCount < 112; along += 5.2) {
+      for (let along = 9.5; along < arc - 9.5 && infillCount < 112; along += 5.2) {
         const width = 4.55, depth = 6.4;
         const frontDist = seg.halfWidth + seg.sidewalk + 1.0;
-        const cx = seg.ax + seg.ux * along + seg.leftX * (frontDist + depth / 2) * side;
-        const cz = seg.az + seg.uz * along + seg.leftZ * (frontDist + depth / 2) * side;
+        // Local polyline frame; identical on straight and collinear segments.
+        const frame = placementAt(seg, along, (frontDist + depth / 2) * side);
+        const cx = frame.x;
+        const cz = frame.z;
+        const yaw = frame.yaw;
+        // Region fill comes only from a *new* road, and only outside the shipped
+        // extent. An unfrozen candidate along a shipped road is a lot the
+        // shipped world left empty (sector budget, count cap, or a rejected
+        // overlap) and must stay empty, or fill would occupy parcels the
+        // shipped passes resolve later and evict shipped buildings (measured:
+        // 3 of 845 before this rule, `docs/REGIONAL_FILL.md` §7.1).
+        if (legacyInfillOrdinal(cx, cz) === undefined &&
+            (isLegacyRoadSegment(seg.id) || insideShippedExtent(cx, cz))) continue;
         if (!canPlaceBuilding(cx, cz, depth, width, yaw)) continue;
         const sec = sectorIndex(cx, cz);
         // Distribute the frontage pass across the city instead of consuming
         // the whole budget on the first long road's empty parcels.
         if (infillBySector[sec] >= 8) continue;
-        const faceX = -seg.leftX * side, faceZ = -seg.leftZ * side;
+        const faceX = -frame.leftX * side, faceZ = -frame.leftZ * side;
         const frontX = cx + faceX * (depth / 2 + 0.025);
         const frontZ = cz + faceZ * (depth / 2 + 0.025);
         const faceYaw = Math.atan2(faceX, faceZ);
-        const tint = PLASTER_TINTS[(infillCount * 3 + sec) % PLASTER_TINTS.length];
-        const floors = (infillCount + sec) % 3 === 0 ? 3 : 2;
+        // Frozen ordinal for the shipped world; a new road's frontage derives its
+        // own ordinal from position and spends a per-region budget, so it can
+        // neither take a legacy lot nor exhaust another region's allowance.
+        const legacyOrdA = legacyInfillOrdinal(cx, cz);
+        const isLegacyA = legacyOrdA !== undefined;
+        const ord = isLegacyA ? (legacyOrdA as number) : derivedFillOrdinal(cx, cz);
+        if (!isLegacyA) {
+          if (!regionBudgetLedger.tryConsume(regionKeyOf(cx, cz))) continue;
+          collectLegacyFootprints = false;
+        } else {
+          collectLegacyFootprints = true;
+        }
+        const tint = PLASTER_TINTS[(ord * 3 + sec) % PLASTER_TINTS.length];
+        const floors = (ord + sec) % 3 === 0 ? 3 : 2;
         const height = floors * 3.1;
         sectorWalls[sec].box({ x: cx, y: height / 2, z: cz }, { x: depth, y: height, z: width }, tint, { y: yaw });
         sectorDetails[sec].box({ x: cx, y: height + 0.08, z: cz }, { x: depth + 0.15, y: 0.16, z: width + 0.15 }, '#9d9888', { y: yaw });
@@ -1526,7 +1738,18 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   // vendor courts, missions and vehicle lanes free. Sector budgets bound cost.
   let interiorCount = 0;
   const interiorBySector = new Uint8Array(SECTOR_COUNT);
-  const interiorCandidates: Array<{ x: number; z: number; sec: number; order: number }> = [];
+
+  // Every interior candidate comes from the frozen legacy list, so its footprint
+  // is legacy by construction. Set this explicitly: the flag is otherwise left
+  // holding whatever the last infill segment set, which after a new road would be
+  // `false` and would let a later pass evict these buildings.
+  collectLegacyFootprints = true;
+  // `regionFill` marks a candidate produced by the extension grid, i.e. one the
+  // shipped world never considered. Candidates *inside* the legacy box that the
+  // shipped world happened to leave unused also lack a frozen ordinal, but they
+  // must stay unused — giving them region budgets would add buildings to the
+  // shipped city (measured: +135 before this flag existed).
+  const interiorCandidates: Array<{ x: number; z: number; sec: number; order: number; regionFill: boolean }> = [];
   for (let gz = -224; gz <= 224; gz += 11.8) {
     for (let gx = -224; gx <= 224; gx += 11.8) {
       const x = gx + (Math.floor((gz + 224) / 11.8) % 2 ? 3.1 : 0);
@@ -1540,24 +1763,118 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       // receive comparable attention without special-casing a landmark.
       const tie = (Math.imul(Math.round(x * 4), 73856093) ^
         Math.imul(Math.round(z * 4), 19349663)) >>> 0;
-      const gap = placedBuildings.reduce((d, b) =>
+      const gap = legacyPlacedBuildings.reduce((d, b) =>
         Math.min(d, Math.hypot(x - b.x, z - b.z) - b.radius), 50);
       // Fill the actual largest unexplained voids first; jitter breaks ties
       // without turning the city into a regular checkerboard of identical lots.
-      interiorCandidates.push({ x, z, sec: sectorIndex(x, z), order: -gap + tie / 4294967296 });
+      interiorCandidates.push({ x, z, sec: sectorIndex(x, z), order: -gap + tie / 4294967296, regionFill: false });
+    }
+  }
+
+  // Region-fill candidate grid for areas the shipped world never covered.
+  //
+  // The legacy loop above is untouched and still runs over exactly [-224, 224],
+  // so every shipped candidate keeps its exact coordinates and `order` value.
+  // This second pass runs ONLY when non-legacy segments exist, and only covers
+  // their extent, so with the shipped 70-segment graph it contributes nothing and
+  // the world is unchanged. Legacy segments deliberately do not widen the box:
+  // widening it without new roads would add buildings to the shipped world.
+  if (newSegments.length > 0) {
+    const LEGACY_BOX = SHIPPED_EXTENT;
+    const step = 11.8;
+    const pad = 48;
+    // Seeded from the segments themselves, not from the legacy box: seeding a
+    // max accumulator with `-LEGACY_BOX` clips it at `-224`, which let a road far
+    // west of the city drag the grid 470 m back toward the shipped blocks
+    // (measured: 154 buildings with no new road within 43 m of them).
+    let extMinX = Infinity, extMaxX = -Infinity;
+    let extMinZ = Infinity, extMaxZ = -Infinity;
+    for (const sg of newSegments) {
+      extMinX = Math.min(extMinX, sg.ax, sg.bx);
+      extMaxX = Math.max(extMaxX, sg.ax, sg.bx);
+      extMinZ = Math.min(extMinZ, sg.az, sg.bz);
+      extMaxZ = Math.max(extMaxZ, sg.az, sg.bz);
+    }
+    // Centreline distance to the nearest new segment. The corridor test below
+    // measures against *all* roads, so without this a candidate in the pad ring
+    // could be filled merely because a legacy road is nearby, sprouting new
+    // buildings just outside the shipped blocks with no new road to justify them.
+    const newRoadDistance = (x: number, z: number): number => {
+      let best = Infinity;
+      for (const sg of newSegments) {
+        const t = Math.max(0, Math.min(sg.length,
+          (x - sg.ax) * sg.ux + (z - sg.az) * sg.uz));
+        const d = Math.hypot(x - (sg.ax + sg.ux * t), z - (sg.az + sg.uz * t));
+        if (d < best) best = d;
+      }
+      return best;
+    };
+    const startX = Math.floor((extMinX - pad) / step) * step;
+    const startZ = Math.floor((extMinZ - pad) / step) * step;
+    for (let gz = startZ; gz <= extMaxZ + pad; gz += step) {
+      for (let gx = startX; gx <= extMaxX + pad; gx += step) {
+        // The legacy box is entirely covered by the loop above.
+        if (gx >= -LEGACY_BOX && gx <= LEGACY_BOX && gz >= -LEGACY_BOX && gz <= LEGACY_BOX) continue;
+        const x = gx + (Math.floor((gz + LEGACY_BOX) / step) % 2 ? 3.1 : 0);
+        const z = gz + ((Math.floor((gx + LEGACY_BOX) / step) % 3) - 1) * 1.6;
+        const roadDistance = distanceToRoadCorridor(x, z);
+        if (roadDistance < 2.2 || roadDistance > 43 || newRoadDistance(x, z) > 43 ||
+            PLACES.some((place) => Math.hypot(x - place.x, z - place.z) < 16) ||
+            GRAPH_NODES.some((node) => Math.hypot(x - node.x, z - node.z) < node.outerRadius + 7)) continue;
+        const tie = (Math.imul(Math.round(x * 4), 73856093) ^
+          Math.imul(Math.round(z * 4), 19349663)) >>> 0;
+        const gap = legacyPlacedBuildings.reduce((d, b) =>
+          Math.min(d, Math.hypot(x - b.x, z - b.z) - b.radius), 50);
+        interiorCandidates.push({ x, z, sec: sectorIndex(x, z), order: -gap + tie / 4294967296, regionFill: true });
+      }
     }
   }
   interiorCandidates.sort((a, b) => a.order - b.order);
-  for (const { x, z, sec } of interiorCandidates) {
-      if (interiorBySector[sec] >= 12 || interiorCount >= 160) continue;
-      const road = snapToNearestRoad(x, z).segment;
+
+  // Two phases, in this order, and never interleaved.
+  //
+  // Phase 1 is the shipped world: identical candidates, identical order, identical
+  // counters, therefore identical output. Phase 2 is everything the shipped world
+  // did not contain, governed by per-region budgets from `regionFill.ts`.
+  //
+  // Ordering matters. If a new region's candidate were visited during phase 1 it
+  // could claim a sector's last slot, or spend the global cap, and change the
+  // shipped city. Running the legacy phase to completion first makes that
+  // impossible by construction rather than by a tuning constant.
+  const legacyPhase = interiorCandidates.filter((c) => !c.regionFill);
+  const regionPhase = interiorCandidates.filter((c) => c.regionFill);
+
+  for (const { x, z, sec, regionFill } of [...legacyPhase, ...regionPhase]) {
+      const legacyOrd = legacyInteriorOrdinal(x, z);
+      if (!regionFill && legacyOrd === undefined) continue;
+      const isLegacy = !regionFill;
+      // Frozen ordinal: a legacy candidate's size and style are properties of
+      // the candidate itself, not of a running counter, so losing one candidate
+      // elsewhere in the city can no longer resize this one
+      // (see `legacyFillLayout.ts`). A new-region candidate derives its ordinal
+      // from its own position for exactly the same reason.
+      const ord: number = isLegacy ? (legacyOrd as number) : derivedFillOrdinal(x, z);
+      const regionKey = regionKeyOf(x, z);
+      if (isLegacy) {
+        if (interiorBySector[sec] >= 12 || interiorCount >= 160) continue;
+      } else if (regionBudgetLedger.remainingIn(regionKey) <= 0) {
+        continue;
+      }
+      // Frozen road scope for legacy candidates: a road added later must not
+      // re-orient an existing interior building by becoming its nearest
+      // centreline. New-region candidates use the full graph, because for them
+      // the new road *is* their context.
+      const road = snapToNearestRoad(x, z, true, isLegacy ? legacySegments : ROAD_SEGMENTS).segment;
       const yaw = Math.atan2(road.ux, road.uz);
-      const width = 5.9 + ((interiorCount + sec) % 3) * 0.75;
-      const depth = 6.3 + ((interiorCount + sec * 2) % 3) * 0.62;
-      if (!canPlaceBuilding(x, z, depth, width, yaw)) continue;
-      const floorCount = 2 + (interiorCount + sec) % 3;
+      const width = 5.9 + ((ord + sec) % 3) * 0.75;
+      const depth = 6.3 + ((ord + sec * 2) % 3) * 0.62;
+      if (!canPlaceBuilding(x, z, depth, width, yaw, isLegacy)) continue;
+      if (!isLegacy && !regionBudgetLedger.tryConsume(regionKey)) continue;
+      // Legacy footprints earn legacy precedence; new-region ones do not.
+      collectLegacyFootprints = isLegacy;
+      const floorCount = 2 + (ord + sec) % 3;
       const h = floorCount * 2.85;
-      const tint = PLASTER_TINTS[(interiorCount * 5 + sec) % PLASTER_TINTS.length];
+      const tint = PLASTER_TINTS[(ord * 5 + sec) % PLASTER_TINTS.length];
       const wall = sectorWalls[sec], details = sectorDetails[sec];
       wall.box({ x, y: h / 2, z }, { x: depth, y: h, z: width }, tint, { y: yaw });
       details.box({ x, y: h + 0.2, z }, { x: depth + 0.22, y: 0.4, z: width + 0.22 }, '#999186', { y: yaw });
@@ -1582,7 +1899,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
             { x: 1.25, y: 0.09, z: 0.24 }, '#b5aa94', { y: faceYaw });
         }
       }
-      if ((interiorCount + sec) % 4 === 0) {
+      if ((ord + sec) % 4 === 0) {
         details.box({ x: x - fx * 1.2, y: h + 0.95, z: z - fz * 1.2 },
           { x: 1.9, y: 1.5, z: 2.15 }, tint, { y: yaw });
       }
@@ -1593,9 +1910,15 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       colliders.push({ minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez,
         height: h, cameraBlocking: true, kind: 'building', cx: x, cz: z,
         halfX: depth / 2, halfZ: width / 2, yaw });
-      interiorBySector[sec]++;
-      interiorCount++;
+      // Only the shipped world's candidates advance the legacy counters; a new
+      // region's consumption is already recorded by its own region ledger.
+      if (isLegacy) {
+        interiorBySector[sec]++;
+        interiorCount++;
+      }
   }
+  // Every later pass reasons about legacy footprints only, so restore the flag.
+  collectLegacyFootprints = true;
 
   // Genuine open frontage is often too shallow for even a two-storey shop.
   // Fill eligible lots with small roofed tea stalls / planted courtyards, not
@@ -1605,18 +1928,23 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   let courtyardCount = 0;
   const courtyardSites: { x: number; z: number }[] = [];
   const courtyardBySector = new Uint8Array(SECTOR_COUNT);
-  for (const seg of ROAD_SEGMENTS) {
+  for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
     if (courtyardCount >= 36) break;
-    const yaw = Math.atan2(seg.ux, seg.uz);
+    const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
-      for (let along = 18; along < seg.length - 18 && courtyardCount < 36; along += 9.5) {
+      for (let along = 18; along < arc - 18 && courtyardCount < 36; along += 9.5) {
         const width = 5.2, depth = 3.4;
         const distance = seg.halfWidth + seg.sidewalk + 1.25 + depth / 2;
-        const x = seg.ax + seg.ux * along + seg.leftX * distance * side;
-        const z = seg.az + seg.uz * along + seg.leftZ * distance * side;
+        const frame = placementAt(seg, along, distance * side);
+        const x = frame.x;
+        const z = frame.z;
+        const yaw = frame.yaw;
+        // Same scope rule as the infill passes: a new road through the mapped
+        // blocks does not claim courtyards there.
+        if (!isLegacyRoadSegment(seg.id) && insideShippedExtent(x, z)) continue;
         const sec = sectorIndex(x, z);
         if (courtyardBySector[sec] >= 3 || !canPlaceBuilding(x, z, depth, width, yaw)) continue;
-        const frontX = -seg.leftX * side, frontZ = -seg.leftZ * side;
+        const frontX = -frame.leftX * side, frontZ = -frame.leftZ * side;
         const d = sectorDetails[sec];
         // Terracotta/brick pavers break the monotonous gray ground plane;
         // a narrow shop counter and woven roof identify the occupied parcel.
@@ -1758,27 +2086,43 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
   // Second parcel size for leftover narrow street-front seams. The large
   // apartment pass cannot fit here, but actual shop-houses often can. Keep a
   // clear junction sightline and every authored mission/POI forecourt.
-  for (const seg of ROAD_SEGMENTS) {
+  for (const seg of canonicalSegments(ROAD_SEGMENTS)) {
+    collectLegacyFootprints = isLegacyRoadSegment(seg.id);
     if (infillCount >= 126) break;
-    const yaw = Math.atan2(seg.ux, seg.uz);
+    const arc = arcLengthOf(seg);
     for (const side of [-1, 1] as const) {
-      for (let along = 9; along < seg.length - 9 && infillCount < 126; along += 3.4) {
+      for (let along = 9; along < arc - 9 && infillCount < 126; along += 3.4) {
         const width = 3.05, depth = 4.6;
         const distance = seg.halfWidth + seg.sidewalk + 0.85 + depth / 2;
-        const cx = seg.ax + seg.ux * along + seg.leftX * distance * side;
-        const cz = seg.az + seg.uz * along + seg.leftZ * distance * side;
+        const frame = placementAt(seg, along, distance * side);
+        const cx = frame.x;
+        const cz = frame.z;
+        const yaw = frame.yaw;
+        // Same rule as the first seam pass: region fill only from new roads,
+        // only outside the shipped extent.
+        if (legacyInfillOrdinal(cx, cz) === undefined &&
+            (isLegacyRoadSegment(seg.id) || insideShippedExtent(cx, cz))) continue;
         const sec = sectorIndex(cx, cz);
         if (infillBySector[sec] >= 12 ||
             PLACES.some(p => Math.hypot(cx - p.x, cz - p.z) < 10) ||
             GRAPH_NODES.some(n => Math.hypot(cx - n.x, cz - n.z) < n.outerRadius + 4) ||
             !canPlaceBuilding(cx, cz, depth, width, yaw)) continue;
-        const fx = -seg.leftX * side, fz = -seg.leftZ * side;
+        const fx = -frame.leftX * side, fz = -frame.leftZ * side;
         const faceYaw = Math.atan2(fx, fz);
         const x = cx + fx * (depth / 2 + 0.03);
         const z = cz + fz * (depth / 2 + 0.03);
         const height = 6.15;
+        const legacyOrdB = legacyInfillOrdinal(cx, cz);
+        const isLegacyB = legacyOrdB !== undefined;
+        const ord = isLegacyB ? (legacyOrdB as number) : derivedFillOrdinal(cx, cz);
+        if (!isLegacyB) {
+          if (!regionBudgetLedger.tryConsume(regionKeyOf(cx, cz))) continue;
+          collectLegacyFootprints = false;
+        } else {
+          collectLegacyFootprints = true;
+        }
         sectorWalls[sec].box({ x: cx, y: height / 2, z: cz },
-          { x: depth, y: height, z: width }, PLASTER_TINTS[(sec + infillCount) % PLASTER_TINTS.length], { y: yaw });
+          { x: depth, y: height, z: width }, PLASTER_TINTS[(sec + ord) % PLASTER_TINTS.length], { y: yaw });
         sectorDetails[sec].box({ x: cx, y: height + 0.12, z: cz },
           { x: depth + 0.15, y: 0.24, z: width + 0.12 }, '#9c9383', { y: yaw });
         sectorShutters[sec].quad({ x, y: 1.42, z }, 2.47, 2.51, '#536b6d', { y: faceYaw });
@@ -1817,36 +2161,122 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
       cx: tree.x, cz: tree.z, halfX: trunkHalf, halfZ: trunkHalf, yaw: 0 });
   }
 
-  // Iconic Mohammadpur Mosque Landmarks (Shia Mosque near Ring×Tajmahal & Satmasjid near Satmasjid Rd)
-  for (const mSpec of [
-    { x: -188, z: -34, color: '#f3efe4', dome: '#1e7b5a' },
-    { x: -34, z: 254, color: '#e6d3b5', dome: '#c59b48' },
-  ]) {
-    if (isFootprintClearOfCorridor(mSpec.x, mSpec.z, 12, 12, 0, 1.0)) {
-      const sIdx = sectorIndex(mSpec.x, mSpec.z);
-      const bDet = sectorDetails[sIdx];
-      bDet.box({ x: mSpec.x, y: 4.2, z: mSpec.z }, { x: 11.5, y: 8.4, z: 11.5 }, mSpec.color);
-      bDet.cone({ x: mSpec.x, y: 10.6, z: mSpec.z }, 3.8, 4.4, mSpec.dome);
+  // ---- Corridor landmark structures (v0.7.0 identity layer) --------------
+  // Ring Road and Tajmahal Road previously had no recognisable landmark at all.
+  // Each structure below is seated from a verified OSM feature (see
+  // `corridorIdentity.ts`), merged into the existing per-sector detail buckets so
+  // this adds NO draw calls, no new material and no new geometry family — which
+  // is what keeps it affordable on mid-range Android.
+  //
+  // Placement was already validated against road corridors before this point;
+  // the `isFootprintClearOfCorridor` re-check here is a belt-and-braces guard so
+  // no structure can ever be built into a carriageway.
+  const builtLandmarkStructures: CityResult['landmarkStructures'] = [];
+  for (const st of corridorStructures) {
+    if (!isFootprintClearOfCorridor(st.x, st.z, st.halfX * 2, st.halfZ * 2, st.yaw, 0.5)) continue;
+    (builtLandmarkStructures as unknown as Array<Record<string, unknown>>).push({
+      landmarkId: st.landmarkId,
+      kind: st.kind,
+      x: st.x,
+      z: st.z,
+      halfX: st.halfX,
+      halfZ: st.halfZ,
+    });
+    const bDet = sectorDetails[sectorIndex(st.x, st.z)];
+    const hx = st.halfX;
+    const hz = st.halfZ;
+
+    if (st.kind === 'mosque') {
+      // Compact neighbourhood mosque: prayer hall, dome, four corner minarets.
+      const bodyH = 6.4;
+      bDet.box({ x: st.x, y: bodyH / 2, z: st.z }, { x: hx * 2, y: bodyH, z: hz * 2 }, st.body, { y: st.yaw });
+      bDet.box({ x: st.x, y: bodyH + 0.15, z: st.z }, { x: hx * 2 + 0.2, y: 0.3, z: hz * 2 + 0.2 }, st.body, { y: st.yaw });
+      bDet.cone({ x: st.x, y: bodyH + 2.3, z: st.z }, Math.min(hx, hz) * 0.78, 2.6, st.accent);
       for (const [ox, oz] of [
-        [-5.2, -5.2],
-        [5.2, -5.2],
-        [-5.2, 5.2],
-        [5.2, 5.2],
+        [-hx + 0.5, -hz + 0.5],
+        [hx - 0.5, -hz + 0.5],
+        [-hx + 0.5, hz - 0.5],
+        [hx - 0.5, hz - 0.5],
       ]) {
-        bDet.cylinder({ x: mSpec.x + ox, y: 7.5, z: mSpec.z + oz }, 0.65, 15.0, mSpec.color);
-        bDet.cone({ x: mSpec.x + ox, y: 15.9, z: mSpec.z + oz }, 0.85, 1.9, mSpec.dome);
+        const mx = st.x + ox * Math.cos(st.yaw) + oz * Math.sin(st.yaw);
+        const mz = st.z - ox * Math.sin(st.yaw) + oz * Math.cos(st.yaw);
+        bDet.cylinder({ x: mx, y: bodyH * 0.72, z: mz }, 0.42, bodyH * 1.44, st.body);
+        bDet.cone({ x: mx, y: bodyH * 1.44 + 0.55, z: mz }, 0.56, 1.25, st.accent);
       }
-      colliders.push({
-        minX: mSpec.x - 6,
-        maxX: mSpec.x + 6,
-        minZ: mSpec.z - 6,
-        maxZ: mSpec.z + 6,
-        height: 15,
-        cameraBlocking: true,
-        kind: 'building',
+    } else if (st.kind === 'commercial') {
+      // Tokyo Square: stepped commercial mass with a signage band.
+      const h1 = 13.2;
+      bDet.box({ x: st.x, y: h1 / 2, z: st.z }, { x: hx * 2, y: h1, z: hz * 2 }, st.body, { y: st.yaw });
+      bDet.box({ x: st.x, y: h1 * 0.62, z: st.z }, { x: hx * 2 + 0.5, y: 1.5, z: hz * 2 + 0.5 }, st.accent, { y: st.yaw });
+      bDet.box({ x: st.x, y: h1 + 0.2, z: st.z }, { x: hx * 1.5, y: 0.4, z: hz * 1.5 }, '#9c9383', { y: st.yaw });
+      // Ground-floor colonnade, cheap: two lintel boxes.
+      bDet.box({ x: st.x, y: 3.1, z: st.z }, { x: hx * 2 + 0.7, y: 0.35, z: hz * 2 + 0.7 }, '#b9b2a3', { y: st.yaw });
+    } else if (st.kind === 'college') {
+      // Queen's College: long institutional block, low-pitch roof, portico.
+      const h2 = 10.6;
+      bDet.box({ x: st.x, y: h2 / 2, z: st.z }, { x: hx * 2, y: h2, z: hz * 2 }, st.body, { y: st.yaw });
+      bDet.box({ x: st.x, y: h2 + 0.55, z: st.z }, { x: hx * 2 + 0.6, y: 0.9, z: hz * 2 + 0.6 }, st.accent, { y: st.yaw });
+      // Entrance portico facing the road.
+      bDet.box({ x: st.x, y: 2.9, z: st.z }, { x: 4.6, y: 5.8, z: 1.4 }, '#eef0ec', { y: st.yaw });
+      bDet.box({ x: st.x, y: 6.1, z: st.z }, { x: 5.4, y: 0.45, z: 2.0 }, st.accent, { y: st.yaw });
+    } else if (st.kind === 'grave-yard') {
+      // Low boundary wall plus a scatter of headstones. No new materials.
+      const wallH = 1.15;
+      bDet.box({ x: st.x, y: wallH / 2, z: st.z }, { x: hx * 2, y: wallH, z: 0.22 }, st.body, { y: st.yaw });
+      bDet.box({ x: st.x, y: wallH / 2, z: st.z }, { x: 0.22, y: wallH, z: hz * 2 }, st.body, { y: st.yaw });
+      for (let i = 0; i < 7; i++) {
+        const ox = -hx + 1.4 + (i % 3) * (hx * 0.85);
+        const oz = -hz + 1.6 + Math.floor(i / 3) * (hz * 0.62);
+        const gx = st.x + ox * Math.cos(st.yaw) + oz * Math.sin(st.yaw);
+        const gz = st.z - ox * Math.sin(st.yaw) + oz * Math.cos(st.yaw);
+        bDet.box({ x: gx, y: 0.34, z: gz }, { x: 0.5, y: 0.68, z: 0.28 }, st.accent, { y: st.yaw });
+      }
+    } else {
+      // Eidgah: open prayer ground — paved slab, low wall, mihrab arch.
+      bDet.quad({ x: st.x, y: 0.06, z: st.z }, hx * 2, hz * 2, st.body, {
+        x: -Math.PI / 2,
+        y: st.yaw,
       });
+      bDet.box({ x: st.x, y: 0.55, z: st.z }, { x: hx * 2, y: 1.1, z: 0.2 }, st.accent, { y: st.yaw });
+      bDet.box({ x: st.x, y: 0.55, z: st.z }, { x: 0.2, y: 1.1, z: hz * 2 }, st.accent, { y: st.yaw });
+      // Mihrab niche: two piers plus a lintel.
+      for (const side of [-1, 1]) {
+        const px2 = st.x + side * 1.5;
+        bDet.box({ x: px2, y: 1.6, z: st.z }, { x: 0.45, y: 3.2, z: 0.5 }, st.body);
+      }
+      bDet.box({ x: st.x, y: 3.4, z: st.z }, { x: 3.6, y: 0.45, z: 0.55 }, st.accent);
     }
+
+    colliders.push({
+      minX: st.x - hx - 0.3,
+      maxX: st.x + hx + 0.3,
+      minZ: st.z - hz - 0.3,
+      maxZ: st.z + hz + 0.3,
+      height: st.kind === 'commercial' ? 13.2 : st.kind === 'college' ? 11 : 8,
+      cameraBlocking: true,
+      kind: 'building',
+    });
   }
+
+  // Mohammadpur Town Hall Market. Authored geometry drawn into the buckets that
+  // already exist, so it adds no draw calls; its colliders join the static set.
+  // The site exclusion above keeps the generator out of the same ground.
+  const townHall = buildTownHall({
+    signAtlas,
+    sectorOf: sectorIndex,
+    walls: sectorWalls,
+    details: sectorDetails,
+    signs: sectorSigns,
+    shutters: sectorShutters,
+    bricks: sectorBricks,
+    metal: bMetal,
+    walk: bWalk,
+    glow: bGlow,
+    signSlotStart: signCursor,
+    wirePairs,
+    utilityPoleSites,
+  });
+  for (const c of townHall.colliders) colliders.push(c);
 
   // Overhead Dhaka utility cables chunked by 6x6 sector so off-screen wires
   // frustum-cull cleanly and opaque dark charcoal avoids full-city alpha overdraw!
@@ -2146,21 +2576,27 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     scale: number;
   }
   const litterItems: LitterItem[] = [];
+  // Litter used to continue the shared stream and therefore began at absolute
+  // draw 7,151. Pinning that exact state keeps it bit-identical while removing
+  // its dependence on the props stage and the building pass.
+  const litterRng = postBuildingRng();
   for (let si = 0; si < ROAD_SEGMENTS.length && litterItems.length < 136; si++) {
     const seg = ROAD_SEGMENTS[si];
     const perSeg = seg.jamProne ? 4 : seg.kind === 'main' ? 3 : 2;
     for (let k = 0; k < perSeg && litterItems.length < 136; k++) {
-      const along = 6 + rng() * Math.max(4, seg.length - 12);
-      const side: 1 | -1 = rng() < 0.5 ? 1 : -1;
-      const lat = (seg.halfWidth - 0.35 + rng() * 0.65) * side;
+      // Arc length, so a curved road is not under-sampled at its far end.
+      const along = 6 + litterRng() * Math.max(4, arcLengthOf(seg) - 12);
+      const side: 1 | -1 = litterRng() < 0.5 ? 1 : -1;
+      const lat = (seg.halfWidth - 0.35 + litterRng() * 0.65) * side;
+      const frame = placementAt(seg, along, lat);
       litterItems.push({
-        baseX: seg.ax + seg.ux * along + seg.leftX * lat,
-        baseZ: seg.az + seg.uz * along + seg.leftZ * lat,
-        ux: seg.ux,
-        uz: seg.uz,
-        baseYaw: rng() * Math.PI * 2,
-        phase: rng() * Math.PI * 2,
-        scale: 0.75 + rng() * 0.65,
+        baseX: frame.x,
+        baseZ: frame.z,
+        ux: frame.ux,
+        uz: frame.uz,
+        baseYaw: litterRng() * Math.PI * 2,
+        phase: litterRng() * Math.PI * 2,
+        scale: 0.75 + litterRng() * 0.65,
       });
     }
   }
@@ -2240,6 +2676,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     potholeDepthAt,
     roadDamageAt,
     heightAt,
+    landmarkStructures: builtLandmarkStructures,
     lampPositions,
     signAnchors,
     spawn: { ...WORLD.playerSpawn },
@@ -2255,6 +2692,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     treeCount: treeSites.length,
     treeSites,
     utilityPoleSites,
+    marketVendorPosts: townHall.vendorPosts,
     interiorCount,
     courtyardCount,
     courtyardSites,

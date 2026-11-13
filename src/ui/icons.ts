@@ -12,6 +12,11 @@ export const ICONS = {
     26,
   ),
   compass: svg(`<circle cx="12" cy="12" r="8.4"/><path d="M14.8 9.2l-1.5 4.1-4.1 1.5 1.5-4.1z"/>`, 26),
+  // Folded map: outline with two fold creases and a location pin.
+  map: svg(
+    `<path d="M3 6.2 9 3.6l6 2.6 6-2.6v14.2l-6 2.6-6-2.6-6 2.6z"/><path d="M9 3.6v14.2"/><path d="M15 6.2v14.2"/><circle cx="12" cy="11" r="1.5"/>`,
+    26,
+  ),
   calendar: svg(
     `<rect x="3.6" y="5" width="16.8" height="15" rx="2.4"/><path d="M3.6 9.6h16.8M8.2 3.4v3.2M15.8 3.4v3.2"/><path d="M7.4 13.2h2.2M11 13.2h2.2M14.6 13.2h2.2M7.4 16.6h2.2M11 16.6h2.2"/>`,
     26,

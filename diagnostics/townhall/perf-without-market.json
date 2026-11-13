@@ -1,0 +1,39 @@
+{
+  "label": "without-market",
+  "captureNote": "SwiftShader CPU rasteriser — frame times are not device measurements",
+  "rows": [
+    {
+      "view": "frontage",
+      "pedestrians": 68,
+      "marketCrew": 0,
+      "drawCalls": 166,
+      "triangles": 1217881,
+      "geometries": 277,
+      "textures": 21,
+      "programs": 65,
+      "meanFrameMs": 2077.5
+    },
+    {
+      "view": "hall",
+      "pedestrians": 68,
+      "marketCrew": 0,
+      "drawCalls": 122,
+      "triangles": 830428,
+      "geometries": 277,
+      "textures": 21,
+      "programs": 65,
+      "meanFrameMs": 1862.4
+    },
+    {
+      "view": "aerial",
+      "pedestrians": 68,
+      "marketCrew": 0,
+      "drawCalls": 205,
+      "triangles": 1356395,
+      "geometries": 277,
+      "textures": 21,
+      "programs": 65,
+      "meanFrameMs": 1917.6
+    }
+  ]
+}

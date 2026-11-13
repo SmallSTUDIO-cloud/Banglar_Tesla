@@ -7,7 +7,7 @@
 import { t, getLocale, setLocale, STRING_KEYS, type Locale } from '../core/i18n';
 import { formatDistance, formatTaka, clamp, clamp01 } from '../core/mathx';
 import { QUALITY, type CameraMode, type QualityPreset } from '../core/config';
-import { APP_VERSION } from '../core/version';
+import { APP_VERSION, APP_BUILD } from '../core/version';
 import type { Settings, SettingsStore } from '../core/settings';
 import type { GameState } from '../core/gameState';
 import type { InputManager } from '../core/input';
@@ -26,6 +26,9 @@ import {
 } from '../economy/catalog';
 import { ROADS, PLACES, segmentById } from '../world/layout';
 import { h, button, slider, toggle, segmented, sheet, modal, statBar, clear } from './dom';
+import { MapScreen } from './mapScreen';
+import { POIS } from '../world/poiRegistry';
+import { ROAD_SEGMENTS } from '../world/layout';
 import { ICONS } from './icons';
 import type { MissionOffer } from '../missions/mission';
 import {
@@ -133,6 +136,12 @@ export interface UIBridge {
   dailyAvailable(): boolean;
   installPrompt?(): void;
   hasSave(): boolean;
+  /** Live player pose, used by the map to draw position and heading. */
+  getMapPlayerPose(): { x: number; z: number; yaw: number };
+  /** Currently selected destination POI id, or null. */
+  currentDestinationId(): string | null;
+  setMapDestination(poiId: string): void;
+  clearMapDestination(): void;
 }
 
 /** The v0.6.7 release carries the current web bundle in a debug-signed test APK. */
@@ -301,6 +310,57 @@ export class AppUI {
   }
 
   // -------------------------------------------------------------- screens
+  /** Opens the full-screen map, reusing a single instance across opens. */
+  openMap(): void {
+    if (!this.mapScreen) {
+      this.mapScreen = new MapScreen({
+        pois: POIS,
+        segments: ROAD_SEGMENTS,
+        getPlayer: () => this.bridge.getMapPlayerPose(),
+        onSetDestination: (poi) => {
+          this.bridge.setMapDestination(poi.id);
+          this.updateDestinationHud({ nameBn: poi.nameBn });
+        },
+        onClearDestination: () => {
+          this.bridge.clearMapDestination();
+          this.updateDestinationHud(null);
+        },
+        onClose: () => this.closeMap(),
+      });
+    }
+    this.mapScreen.setDestinationState(this.bridge.currentDestinationId());
+    this.mapScreen.open(this.bridge.currentDestinationId());
+  }
+
+  closeMap(): void {
+    this.mapScreen?.close();
+  }
+
+  get isMapOpen(): boolean {
+    return !!this.mapScreen?.isOpen;
+  }
+
+  /**
+   * Shows or hides the HUD destination chip. `distance` updates in place so the
+   * driving loop can refresh it without rebuilding DOM.
+   */
+  updateDestinationHud(state: { nameBn: string; distance?: number } | null): void {
+    const el = this.hudDestinationEl;
+    const text = this.hudDestinationText;
+    if (!el || !text) return;
+    if (!state) {
+      el.classList.add('hidden');
+      text.textContent = '';
+      return;
+    }
+    el.classList.remove('hidden');
+    const d = state.distance;
+    text.textContent =
+      d === undefined
+        ? state.nameBn
+        : `${state.nameBn} · ${d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d)} m`}`;
+  }
+
   private register(name: string, el: HTMLElement): HTMLElement {
     this.screens.set(name, el);
     el.classList.add('hidden');
@@ -479,8 +539,34 @@ export class AppUI {
       },
     });
 
+    // Hidden entry point for the device benchmark. The Android wrapper loads a
+    // fixed URL with no query string, so `?bench=1` cannot be typed there; five
+    // quick taps on the version label work everywhere. It only dispatches an
+    // event — main.ts does the lazy import, so nothing loads unless used.
+    let versionTaps = 0;
+    let lastTap = 0;
+    const versionSpan = h('span', {
+      text: `v${APP_VERSION}`,
+      attrs: { id: 'menu-version' },
+      on: {
+        click: () => {
+          const now = Date.now();
+          versionTaps = now - lastTap > 2000 ? 1 : versionTaps + 1;
+          lastTap = now;
+          if (versionTaps >= 5) {
+            versionTaps = 0;
+            window.dispatchEvent(new CustomEvent('bt:bench'));
+          }
+        },
+      },
+    });
+
     const meta = h('div', { class: 'menu-meta' },
-      h('span', { text: `v${APP_VERSION}` }),
+      versionSpan,
+      h('span', { text: '·' }),
+      // Build identity: the only way to tell two APKs apart, since the wrapper
+      // always reports the same version label.
+      h('span', { text: APP_BUILD, attrs: { id: 'menu-build', title: 'build' } }),
       h('span', { text: '·' }),
       h('span', { text: t('menu.district') }),
       h('span', { text: '·' }),
@@ -587,6 +673,17 @@ export class AppUI {
       html: ICONS.trophy,
       on: { click: () => this.bridge.openBlacklist('hud') },
     });
+    const mapBtn = h('button', {
+      class: 'icon-btn',
+      attrs: { id: 'hud-map-btn', type: 'button', 'aria-label': 'map', 'data-action': 'map' },
+      html: ICONS.map,
+      on: {
+        click: () => {
+          this.bridge.audio.uiTap();
+          this.openMap();
+        },
+      },
+    });
     const camChip = h('span', { class: 'cam-mode-chip', text: t(`cam.short.${this.settingsStore.get().cameraMode}`) });
     const camBtn = h('button', {
       class: 'icon-btn cam-btn',
@@ -616,16 +713,39 @@ export class AppUI {
     );
     this.hudCondWarnEl = condWarnBadge;
 
+    const hudDestinationText = h('span', { attrs: { id: 'hud-destination-text' }, text: '' });
+    const hudDestinationEl = h(
+      'div',
+      { class: 'hud-destination hidden', attrs: { id: 'hud-destination' } },
+      h('span', { text: '🎯' }),
+      hudDestinationText,
+      h('button', {
+        class: 'dest-cancel',
+        attrs: { type: 'button', 'aria-label': 'cancel destination', 'data-action': 'cancel-destination' },
+        text: '✕',
+        on: {
+          click: () => {
+            this.bridge.audio.uiTap();
+            this.bridge.clearMapDestination();
+            this.updateDestinationHud(null);
+            this.mapScreen?.setDestinationState(null);
+          },
+        },
+      }),
+    );
+    this.hudDestinationEl = hudDestinationEl;
+    this.hudDestinationText = hudDestinationText;
+
     const moodBarFill = h('i');
     const moodRow = h('div', { class: 'mood' }, h('span', { text: t('hud.mood') }), h('div', { class: 'mood-bar' }, moodBarFill));
     moodRow.id = 'hud-mood';
 
     const top = h('div', { class: 'hud-top' },
-      objective,
+      h('div', { class: 'hud-topleft' }, objective, hudDestinationEl),
       h(
         'div',
         { class: 'hud-topright' },
-        h('div', { class: 'row' }, hudSoundUnlock, pauseBtn, camBtn, blacklistHudBtn),
+        h('div', { class: 'row' }, hudSoundUnlock, pauseBtn, mapBtn, camBtn, blacklistHudBtn),
         wallet,
         repCondPill,
         condWarnBadge,
@@ -913,6 +1033,9 @@ export class AppUI {
   private hudRecoverBtn: HTMLElement | null = null;
   private miniCtx: CanvasRenderingContext2D | null = null;
   private minimapBase: HTMLCanvasElement | null = null;
+  private mapScreen: MapScreen | null = null;
+  private hudDestinationEl: HTMLElement | null = null;
+  private hudDestinationText: HTMLElement | null = null;
   private prevSpeedKmh = -1;
   private prevMoney = -1;
   private prevObjLabel = '';
