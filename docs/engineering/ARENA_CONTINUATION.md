@@ -11,10 +11,18 @@ remote, then continue from §7.
 |---|---|
 | Branch | `arena/f78d620e-banglar-tesla` |
 | Base commit | `2dc02d7` (branch point, per Arena) |
-| **Checkpoint commit** | **`73abdca`** (code `2824bdb`, then the handover text) |
-| Remote (verified via `git ls-remote`) | `arena/f78d620e-banglar-tesla` = **`73abdca`** (`62e3ee3..73abdca`, fast-forward) |
+| **Checkpoint commit** | **updated at the end of this session** — see §1a |
+| Remote (verified via `git ls-remote`) | `arena/f78d620e-banglar-tesla` — see §1a |
 | Production `main` | `84e79e4` — **untouched, never merged, never pushed** |
 | Push method | fast-forward only, verified after every push |
+
+## 1a. Latest checkpoint
+
+| Field | Value |
+|---|---|
+| Last verified remote tip before this session | `9fe5351` (Town Hall market pass 1) |
+| This session produced | see §3a; the tip is the last row of that table |
+| Production `main` | `84e79e4` — **untouched, never merged, never pushed** |
 
 ## 2. Session log (real timestamps, UTC)
 
@@ -23,7 +31,8 @@ remote, then continue from §7.
 | 2026-11-12 (earlier) | ~04:03 | ~04:20 | `f134e41`, `2e4d3a2`, `316ccf8`, `b57dd33` |
 | 2026-11-12 (this one) | ~05:31 | ~06:00 | `583654c` |
 | 2026-11-12 (audit) | ~15:0x | ~15:4x | `dac11e5`, `f257cd8`, `92c6299`, `62e3ee3` (synthetic-road audit) |
-| 2026-11-12 (frontage fix) | ≤15:56 (first artefact) | 16:2x | **`2824bdb`**, `73abdca` (this handover) |
+| 2026-11-12 (frontage fix) | ≤15:56 (first artefact) | 16:2x | **`2824bdb`**, `73abdca` |
+| 2026-11-13 (Town Hall passes 1–2) | 08:3x | 10:3x | `b37ffa6`, `24eaee0`, `9fe5351` (pass 1), then pass 2 (§3a) |
 
 Times are from the sandbox clock and file timestamps, not estimated: the frontage
 fix session spans roughly **30 minutes**, and the whole campaign remains well under
@@ -43,6 +52,57 @@ of longer runtime is made.
 | **`583654c`** | **Interior/infill generation isolation; zero-drift world preserved** |
 | `dac11e5` → `62e3ee3` | Synthetic-road impact audit: 54 evictions measured, 35 collateral, 4 commits |
 | **`2824bdb`** | **Frontage accept/reject isolation: 54 → 19 evictions, 0 collateral, world still `c60e15b5`** |
+| `3dc410f` | Town Hall visual research + real-browser capture harness (no `src/` change) |
+| `b37ffa6` | **Town Hall market geometry**: `src/world/townHall.ts`, site guard, 10 verified storefronts; 845 → 848, `c60e15b5` → `49d542e1` |
+| `24eaee0` | Baseline accept for that delta + 6 tests updated (assertions unchanged) |
+| `9fe5351` | 8-viewpoint capture, genuine stubbed-market control, perf probe, implementation report |
+| §3a | **Living-market pass**: staffed bazaar, re-laid bazaar street, corrugated roofing, textured shutters, arch/cornice arcade, working yard; props 390 → 395, buildings/digest unchanged |
+
+## 3a. Living-market pass — what changed (this session)
+
+Player-facing, not a refactor. Details and all measurements:
+`docs/TOWN_HALL_IMPLEMENTATION.md`.
+
+- **Staffed bazaar without new meshes.** `PedestrianSystem.setMarketVendorPosts()` lends
+  existing walkers to 22 stall posts (14 at a time). Same nine instanced parts, so zero
+  draw calls; a post is only taken by a walker >50 units from the rider, so nothing pops
+  out of frame. Walking population is topped up by the crew size so the pavement does not
+  empty.
+- **Bazaar street re-laid** — a 0.75 working strip behind each counter, which the pass-1
+  layout lacked entirely (counters were hard against both walls, so staff could not
+  stand).
+- **Roofing** — CI sheet at 0.55 pitch with ridge, gutter and rusted soffit; the deck cap
+  that had been hiding the corrugation from the air is now beneath it. Spine corrugation
+  runs along the street so it reads as ridge lines from the aisle.
+- **Shutters** into the city's textured shutter bucket with 11 proud slat ribs, guide
+  rails, lock housing, and near-white tints (mid-grey tints multiplied the already-dark
+  texture to near-black — observed, then fixed).
+- **Arcade** into the brick bucket with a plinth, capitals, cinq-voussoir segmental arches,
+  string course and cornice.
+- **Working yard** behind the halls: earth yard, 4 lorries, crates, sack pallets,
+  tarpaulin piles, refuse skip, compound wall + gate on the measured gap (`s 21..50`,
+  where the live build has no generated buildings). **No building or landmark invented.**
+- **Capture harness fixed.** It previously moved only the camera, while the pedestrian
+  system culls walkers beyond ~135 units of the rider — so every earlier frame photographed
+  an artificially empty market. Captures and perf now teleport the rider to the market
+  first. The old `baseline/` set was discarded and re-shot for the same reason.
+
+## 3b. Verified state after the living-market pass
+
+| Gate | Command | Result |
+|---|---|---|
+| Typecheck | `npx tsc --noEmit` | 0 errors |
+| Unit/integration | `npx vitest run` | **674 passed / 65 files** |
+| Python (OSM import) | `python3 -m unittest discover -s tests/map_import` | OK |
+| Python (APK) | `python3 -m unittest discover -s tests/apk_pipeline -p 'test_*.py'` | OK |
+| Production build | `npm run build` | **378.01 kB gzip** |
+| World baseline | `tests/unit/world-baseline.test.ts` | **848 / `49d542e1`**, `counts.props` 390 → 395 accepted |
+| Clearance | `npx vite-node diagnostics/townhall/clearance.ts` | **pass**, 0 colliders in any carriageway, min 1.02 |
+| Captures | `node diagnostics/townhall/capture.mjs … after` | **10 shots, `errors: none`** |
+| Render cost | `node diagnostics/townhall/perf.mjs with-market` | draw calls 166/122/205 vs 166/120/206 control |
+
+**Not measured: real-device performance.** Frame times in the perf JSON are SwiftShader
+CPU numbers and must not be quoted as Android figures.
 
 ## 4. Verified state at this checkpoint
 
@@ -197,6 +257,17 @@ digest mismatch, re-fixed, and every number above was re-measured afterwards.
 
 ## 7. The single next action
 
+**Town Hall next, if there is another pass:** bazaar lighting. Two of the ten frames are
+dominated by a bright, slabby soffit over the aisle, and a warmer/dimmer underside plus two
+or three hanging bulbs would improve "busy market" more than any further geometry. Then
+vendor-specific dress and a handcart, then carried goods at the counters. Everything else
+about this milestone is done and green; the remaining weakness list is in
+`docs/TOWN_HALL_IMPLEMENTATION.md` §8.
+
+The road/building precedence decision below is **still open** and still blocks Mirpur.
+
+### Previously recorded next action
+
 **Decide building-versus-carriageway precedence** (see §8). It is the only thing
 blocking a real production road: region fill is bounded, deterministic and
 corridor-safe, but a road through mapped blocks still evicts 54 shipped buildings,
@@ -229,6 +300,15 @@ absent); or shift centrelines (rejected — trades geographic accuracy).
   recorded (`BUILDING_RNG_ISOLATION.md` §4.4, `INTERIOR_INFILL_ISOLATION.md` §4.5).
 - **Do not re-measure the boundary**; `npm run audit:scope` reproduces it.
 - **Do not re-attempt the Mirpur patch** until §8 is decided.
+- **Do not re-run the Town Hall captures to "check"**; §3b reproduces them
+  (`node diagnostics/townhall/capture.mjs diagnostics/townhall/after after`, ~6 min under
+  SwiftShader). Do **not** re-run `npm run baseline:update-world` — the 395-prop accept is
+  already recorded with its reason.
+- **Do not move the bazaar counters back against the walls.** The 0.75 working strip is
+  what lets a stallholder stand behind their stall; without it the crew has nowhere to go
+  and the market reverts to looking unoccupied.
+- **Do not put the roof deck above the CI sheets.** A thick deck cap hides the
+  corrugation completely from the air and the roof reads as a smooth plate again.
 - **Do not "fix" the passing mutation** in `INTERIOR_INFILL_ISOLATION.md` §7.1 by deleting
   the ordinals. They are correct; the failure mode they defend is just not reachable from
   the current fixed candidate universe.
