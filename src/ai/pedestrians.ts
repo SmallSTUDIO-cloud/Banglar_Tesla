@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { QUALITY, type QualitySettings } from '../core/config';
 import { clamp, damp, mulberry32, TAU } from '../core/mathx';
 import { Bucket } from '../world/geo';
+import type { MarketVendorPost } from '../world/townHall';
 import { ROAD_SEGMENTS, isClearOfRoads, segmentById } from '../world/layout';
 import type { RoadsideStop } from '../missions/roadside';
 
@@ -35,6 +36,14 @@ export interface PedPath {
   length: number;
   busy: boolean;
 }
+
+/**
+ * The market borrows the pedestrian rig rather than adding meshes: a posted
+ * walker keeps the same 9 instanced parts, so staffing the bazaar costs no draw
+ * calls and no new materials. Posts are only claimed by walkers currently far
+ * from the rider, so converting one is never visible as a teleport.
+ */
+export type { MarketVendorPost };
 
 export interface PedestrianReactionEvent {
   x: number;
@@ -238,6 +247,10 @@ interface PedAgent {
   lookAtPlayer: number;
   /** Brief attention to a real market-loading stop; reuses the existing rig. */
   marketAttention: number;
+  /** Index into the market crew's post list, or -1 when this walker is free. */
+  vendorSlot: number;
+  /** Own clock for the stall-handling cycle; never shares the walk phase. */
+  vendorPhase: number;
   marketX: number;
   marketZ: number;
   worldX: number;
@@ -281,6 +294,12 @@ export class PedestrianSystem {
   private baseCount = 68;
   private quietFactor = 1;
   private populationTick = 0;
+
+  /** Fixed market posts, and the walkers currently holding them. */
+  private vendorPosts: MarketVendorPost[] = [];
+  private vendorCrew: PedAgent[] = [];
+  private marketCentreX = 0;
+  private marketCentreZ = 0;
 
   private rng = mulberry32(73319);
   private matrix = new THREE.Matrix4();
@@ -433,12 +452,19 @@ export class PedestrianSystem {
     this.populationTick += dt;
     if (this.populationTick < 1.25) return;
     this.populationTick = 0;
-    const desired = clamp(Math.round(this.baseCount * this.quietFactor), 8, this.maxCapacity);
+    // The stall crew are stand-ins drawn from the same pool, so the walking
+    // population is topped up by exactly that many: staffing the bazaar must
+    // thin the pavement.
+    const desired = clamp(
+      Math.round(this.baseCount * this.quietFactor) + this.vendorCrew.length,
+      8,
+      this.maxCapacity,
+    );
     if (this.activeCount < desired) this.activeCount++;
     else if (this.activeCount > desired) {
       const tail = this.peds[this.activeCount - 1];
       // Do not erase someone walking beside the player or a mission caller.
-      if (tail && !tail.roadsideReserved) {
+      if (tail && !tail.roadsideReserved && tail.vendorSlot < 0) {
         if (Math.hypot(tail.worldX - playerX, tail.worldZ - playerZ) > 50) {
           this.activeCount--;
         } else {
@@ -447,7 +473,8 @@ export class PedestrianSystem {
           // Reserved mission callers keep their stable index throughout.
           for (let i = this.activeCount - 2; i >= 0; i--) {
             const candidate = this.peds[i];
-            if (candidate.roadsideReserved || Math.hypot(candidate.worldX - playerX, candidate.worldZ - playerZ) <= 50) continue;
+            if (candidate.roadsideReserved || candidate.vendorSlot >= 0) continue;
+            if (Math.hypot(candidate.worldX - playerX, candidate.worldZ - playerZ) <= 50) continue;
             this.peds[i] = tail;
             this.peds[this.activeCount - 1] = candidate;
             this.activeCount--;
@@ -494,6 +521,8 @@ export class PedestrianSystem {
       hairScaleY: 0.94 + this.rng() * 0.14,
       lookAtPlayer: 0,
       marketAttention: 0,
+      vendorSlot: -1,
+      vendorPhase: this.rng() * TAU,
       marketX: 0,
       marketZ: 0,
       worldX: p ? p.ax + (p.bx - p.ax) * t : 0,
@@ -621,6 +650,84 @@ export class PedestrianSystem {
     }
   }
 
+  /**
+   * Give the market its crew. Posts are world positions with a facing; the
+   * system decides which walkers fill them, and hands the posts back when the
+   * rider leaves the district.
+   */
+  setMarketVendorPosts(posts: readonly MarketVendorPost[]): void {
+    this.vendorPosts = posts.map((p) => ({ ...p }));
+    this.releaseMarketCrew();
+    if (this.vendorPosts.length === 0) return;
+    let sx = 0, sz = 0;
+    for (const p of this.vendorPosts) { sx += p.x; sz += p.z; }
+    this.marketCentreX = sx / this.vendorPosts.length;
+    this.marketCentreZ = sz / this.vendorPosts.length;
+  }
+
+  /** How many stalls are currently staffed — for the perf/diagnostic readouts. */
+  get marketCrewCount(): number {
+    return this.vendorCrew.length;
+  }
+
+  private releaseMarketCrew(): void {
+    for (const ped of this.vendorCrew) {
+      ped.vendorSlot = -1;
+      // Send them back to the pavement at a fresh spot; they are always far
+      // from the rider when this runs, so the re-seat is not visible.
+      ped.t = this.rng();
+      ped.dir = this.rng() < 0.5 ? 1 : -1;
+      ped.pause = 0.2 + this.rng() * 1.6;
+    }
+    this.vendorCrew.length = 0;
+  }
+
+  /**
+   * Claim/free stall posts. A post is only taken by a walker more than 50 units
+   * from the rider, so staffing the bazaar never pops a pedestrian out of the
+   * frame in front of the player.
+   */
+  private updateMarketCrew(playerX: number, playerZ: number): void {
+    if (this.vendorPosts.length === 0) {
+      if (this.vendorCrew.length > 0) this.releaseMarketCrew();
+      return;
+    }
+    const dx = playerX - this.marketCentreX;
+    const dz = playerZ - this.marketCentreZ;
+    const d2 = dx * dx + dz * dz;
+    // Hysteresis: a rider parked on the frontage must not flicker the crew.
+    const engaged = this.vendorCrew.length > 0;
+    const near = engaged ? MARKET_KEEP * MARKET_KEEP : MARKET_ENGAGE * MARKET_ENGAGE;
+    if (d2 > near) {
+      if (engaged) this.releaseMarketCrew();
+      return;
+    }
+
+    const wanted = Math.min(this.vendorPosts.length, MAX_MARKET_CREW);
+    if (this.vendorCrew.length >= wanted) return;
+
+    // Posts are emitted stall by stall along the bazaar, so taking the first N
+    // would staff the west end and leave the rest of the street empty. Walk the
+    // list on a stride instead: the same number of people, spread end to end.
+    const postCount = this.vendorPosts.length;
+    for (let k = 0; k < wanted; k++) {
+      const slot = Math.floor((k * postCount) / wanted);
+      let ped: PedAgent | null = null;
+      for (let i = 0; i < this.activeCount; i++) {
+        const cand = this.peds[i];
+        if (cand.vendorSlot >= 0 || cand.roadsideReserved) continue;
+        if (Math.hypot(cand.worldX - playerX, cand.worldZ - playerZ) < 50) continue;
+        ped = cand;
+        break;
+      }
+      if (!ped) break;
+      ped.vendorSlot = slot;
+      ped.vendorPhase = this.rng() * TAU;
+      ped.hasBag = this.vendorPosts[slot].role === 'shopper' && this.rng() < 0.75;
+      this.vendorCrew.push(ped);
+    }
+  }
+
   update(
     dt: number,
     playerX: number,
@@ -629,6 +736,7 @@ export class PedestrianSystem {
     playerYaw = 0,
   ): void {
     if (PED_PATHS.length === 0) return;
+    this.updateMarketCrew(playerX, playerZ);
     this.adjustPopulation(dt, playerX, playerZ);
     this.globalReactCooldown = Math.max(0, this.globalReactCooldown - dt);
 
@@ -749,8 +857,17 @@ export class PedestrianSystem {
       }
 
       const lat = ped.sideJitter + ped.evadeAmount;
-      const wx = path.ax + (path.bx - path.ax) * ped.t + path.safeX * lat;
-      const wz = path.az + (path.bz - path.az) * ped.t + path.safeZ * lat;
+      let wx = path.ax + (path.bx - path.ax) * ped.t + path.safeX * lat;
+      let wz = path.az + (path.bz - path.az) * ped.t + path.safeZ * lat;
+
+      // A stall holder stands on their post instead of on a pavement.
+      const post = ped.vendorSlot >= 0 ? this.vendorPosts[ped.vendorSlot] : null;
+      if (post) {
+        wx = post.x;
+        wz = post.z;
+        // Stalls tick over on their own clock, even when the rider is stopped.
+        ped.vendorPhase = (ped.vendorPhase + stepDt * (post.role === 'vendor' ? 1.15 : 0.62)) % TAU;
+      }
       ped.worldX = wx;
       ped.worldZ = wz;
 
@@ -772,8 +889,13 @@ export class PedestrianSystem {
         continue;
       }
 
-      const walkYaw = ped.dir === 1 ? path.fwdYaw : path.revYaw;
+      const walkYaw = post ? post.yaw : ped.dir === 1 ? path.fwdYaw : path.revYaw;
       let yaw = walkYaw;
+      if (post) {
+        ped.marketAttention = 0;
+        ped.evadeAmount = 0;
+        ped.lookAtPlayer = 0;
+      }
       if (ped.marketAttention > 0 && distSq < 58 * 58) {
         const toMarketYaw = Math.atan2(ped.marketX - wx, ped.marketZ - wz);
         yaw += shortAngle(walkYaw, toMarketYaw) * Math.min(1, ped.marketAttention * 1.6);
@@ -786,8 +908,8 @@ export class PedestrianSystem {
       const stumbleTilt = ped.stumbleTimer > 0 ? Math.sin(ped.stumbleTimer * 12) * 0.24 : 0;
 
       const nearLod = distSq <= 58 * 58;
-      const swing = moving && nearLod ? Math.sin(ped.phase) * 0.44 : 0;
-      const bob = moving && nearLod ? Math.abs(Math.cos(ped.phase)) * 0.028 : 0;
+      const swing = moving && nearLod && !post ? Math.sin(ped.phase) * 0.44 : 0;
+      const bob = moving && nearLod && !post ? Math.abs(Math.cos(ped.phase)) * 0.028 : 0;
       const h = ped.heightScale;
       const groundY = 0.09;
 
@@ -827,7 +949,21 @@ export class PedestrianSystem {
       const idleGesture = ped.pause > 0 && nearLod &&
         (ped.marketAttention > 0 || ped.pathIdx % 5 === 0)
         ? -.25 - Math.sin(ped.phase) * .12 : 0;
-      const armSwingL = swing !== 0 ? -swing * 0.82 : evadeRaise || idleGesture;
+      // Stall work reuses the same arm instances: a vendor reaches down to the
+      // counter, lifts, sets the goods back — the small repetitive motion that
+      // reads as "occupied stall" from a moving rickshaw.
+      const stallYawArmL = post?.role === 'vendor'
+        ? -0.16 - Math.max(0, -Math.sin(ped.vendorPhase)) * 0.62
+        : post
+          ? -0.12 - Math.max(0, Math.sin(ped.vendorPhase * 0.7)) * 0.3
+          : 0;
+      const stallYawArmR = post?.role === 'vendor'
+        ? -0.16 - Math.max(0, Math.sin(ped.vendorPhase)) * 0.78
+        : post
+          ? -0.5 - Math.max(0, Math.sin(ped.vendorPhase * 0.9)) * 0.22
+          : 0;
+
+      const armSwingL = post ? stallYawArmL : swing !== 0 ? -swing * 0.82 : evadeRaise || idleGesture;
       if (armSwingL !== 0) {
         this.euler.set(armSwingL, yaw, 0.05, 'YXZ');
         this.quat.setFromEuler(this.euler);
@@ -839,7 +975,9 @@ export class PedestrianSystem {
       this.armL.setMatrixAt(i, this.matrix);
 
       // Right arm holds shopping bag steady when `hasBag`, otherwise counter-swings naturally
-      const armSwingR = ped.hasBag ? -0.18 : swing !== 0 ? swing * 0.82 : evadeRaise;
+      const armSwingR = post
+        ? stallYawArmR
+        : ped.hasBag ? -0.18 : swing !== 0 ? swing * 0.82 : evadeRaise;
       if (armSwingR !== 0) {
         this.euler.set(armSwingR, yaw, -0.05, 'YXZ');
         this.quat.setFromEuler(this.euler);
@@ -855,6 +993,12 @@ export class PedestrianSystem {
         this.quat.setFromAxisAngle(Y_AXIS, yaw);
         this.matrix.compose(this.pos, this.quat, this.scale);
         this.bag.setMatrixAt(i, this.matrix);
+      } else if (post) {
+        // A vendor claimed a slot that used to carry a bag; keep it hidden.
+        this.scale.set(0, 0, 0);
+        this.matrix.compose(this.pos, this.quat, this.scale);
+        this.bag.setMatrixAt(i, this.matrix);
+        this.scale.set(h, h, h);
       }
 
       const hipX = cosYaw * 0.082 * h;
@@ -891,6 +1035,8 @@ export class PedestrianSystem {
   }
 
   dispose(): void {
+    this.vendorCrew.length = 0;
+    this.vendorPosts.length = 0;
     this.body.geometry.dispose();
     this.head.geometry.dispose();
     this.hair.geometry.dispose();
@@ -902,6 +1048,12 @@ export class PedestrianSystem {
     this.group.clear();
   }
 }
+
+/** Staff the bazaar from here on in; drop it only once the rider is clear. */
+const MARKET_ENGAGE = 130;
+const MARKET_KEEP = 155;
+/** Ceiling on borrowed walkers, so the pavement never empties at the market. */
+const MAX_MARKET_CREW = 14;
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 

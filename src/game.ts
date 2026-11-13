@@ -324,6 +324,8 @@ export class Game implements UIBridge {
       this.audio.trafficHorn(x - this.controller.x, z - this.controller.z, kind);
 
     this.peds = new PedestrianSystem(initialQuality);
+    // Staff the Town Hall bazaar with borrowed walkers (see PedestrianSystem).
+    this.peds.setMarketVendorPosts(this.city.marketVendorPosts);
     this.scene.add(this.peds.group);
 
     this.controller = new RickshawController(

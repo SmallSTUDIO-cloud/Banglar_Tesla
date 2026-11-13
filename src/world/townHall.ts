@@ -138,6 +138,14 @@ export interface TownHallContext {
   walls: Bucket[];
   details: Bucket[];
   signs: Bucket[];
+  /**
+   * The city's corrugated-shutter and brick buckets. Roller shutters and the
+   * arcade go here rather than into `details`: they carry the real shutter and
+   * brick textures and the metallic response, which is the difference between a
+   * flat grey panel and a ribbed, oxidised shutter.
+   */
+  shutters: Bucket[];
+  bricks: Bucket[];
   /** Corrugated-shutter / painted-steel bucket. */
   metal: Bucket;
   /** Sidewalk & paving bucket. */
@@ -155,8 +163,25 @@ export interface TownHallContext {
   utilityPoleSites: { x: number; z: number }[];
 }
 
+/**
+ * A place in the bazaar where a pedestrian stands and works instead of walking.
+ *
+ * Emitted by the stall layout so the crew lines up with the counters that were
+ * actually built; `PedestrianSystem` borrows existing walkers to fill them.
+ */
+export interface MarketVendorPost {
+  x: number;
+  z: number;
+  /** Facing yaw, same convention as the walkers (`atan2(dx, dz)`). */
+  yaw: number;
+  /** `vendor` works a counter, `shopper` stands in the aisle facing one. */
+  role: 'vendor' | 'shopper';
+}
+
 export interface TownHallResult {
   colliders: Collider[];
+  /** Stall posts, in build order; empty when the segment is missing. */
+  vendorPosts: MarketVendorPost[];
   /** Next free sign slot, so the caller's cursor stays consistent. */
   signSlotEnd: number;
 }
@@ -172,9 +197,20 @@ export interface TownHallResult {
 const PLASTER = ['#e8e1d2', '#dfe3d8', '#e9e2df', '#d9d3c4', '#e3ddcd'] as const;
 const ARCADE_BRICK = '#9b5f4a';
 const ARCADE_BRICK_DARK = '#7d4a39';
-const SHUTTER = ['#8e9aa0', '#7f8d93', '#96a1a5'] as const;
+/**
+ * Roller-shutter tints. These multiply the city's corrugated shutter texture,
+ * which is already dark, so the tints sit near white — the first pass used
+ * mid-greys and the shutters came out almost black on the street.
+ */
+const SHUTTER = ['#cfd6d9', '#c2cbcf', '#d9dfe1'] as const;
 const AWNING = ['#c9b25a', '#b8543f', '#3f6f8c', '#5b7f4b'] as const;
-const ROOF_TIN = '#8d8f8a';
+/**
+ * Corrugated-sheet palette. Both tones are deliberately close in value: seen from
+ * the bazaar aisle we are looking at the underside, which gets bounce light only,
+ * so a wide crest/pan contrast turns the soffit into black stripes.
+ */
+const ROOF_TIN = '#9ca19e';
+const ROOF_TIN_CREST = '#b3b8b5';
 const TARPAULIN = ['#2f5f8a', '#b4622f', '#3f6b4a'] as const;
 const PRODUCE = ['#c8552f', '#7f9c3a', '#d8a52c', '#8a4a2a', '#b5402f', '#5f8f3a'] as const;
 
@@ -221,10 +257,11 @@ const TERRACE_STOREFRONTS: readonly { id: string; s: number }[] = [
  */
 export function buildTownHall(ctx: TownHallContext): TownHallResult {
   const seg = segmentById(TOWN_HALL_SEGMENT_ID);
-  if (!seg) return { colliders: [], signSlotEnd: ctx.signSlotStart };
+  if (!seg) return { colliders: [], signSlotEnd: ctx.signSlotStart, vendorPosts: [] };
 
   const colliders: Collider[] = [];
-  const { signAtlas, sectorOf, walls, details, signs, metal, walk, glow } = ctx;
+  const vendorPosts: MarketVendorPost[] = [];
+  const { signAtlas, sectorOf, walls, details, signs, shutters, bricks, metal, walk, glow } = ctx;
   let slot = ctx.signSlotStart;
 
   /**
@@ -232,12 +269,14 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
    * sector-chunked buckets so the market adds **no** draw calls; the shared
    * metal/walk/glow buckets are single meshes for the whole district.
    */
-  type Layer = 'wall' | 'detail' | 'sign' | 'metal' | 'walk' | 'glow';
+  type Layer = 'wall' | 'detail' | 'sign' | 'shutter' | 'brick' | 'metal' | 'walk' | 'glow';
   const pick = (layer: Layer, x: number, z: number): Bucket => {
     const sec = sectorOf(x, z);
     if (layer === 'wall') return walls[sec];
     if (layer === 'detail') return details[sec];
     if (layer === 'sign') return signs[sec];
+    if (layer === 'shutter') return shutters[sec];
+    if (layer === 'brick') return bricks[sec];
     if (layer === 'metal') return metal;
     if (layer === 'walk') return walk;
     return glow;
@@ -353,35 +392,55 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
       // level, deep shade behind them, brick piers between.
       // Solid brick piers carrying a deep, shaded arcade. The piers are wide and
       // few: a row of thin slats reads as a fence, not as masonry.
-      const pierW = 0.7;
+      const pierW = 0.8;
       const openingW = BAY - pierW * 4; // 5.2 units across three openings
       for (let k = 0; k <= 3; k++) {
         const ps = bayStart + pierW / 2 + k * (pierW + openingW / 3);
-        roadBox('wall', ps, FACE - 0.34, pierW, 0.92, 1.75, 3.5, ARCADE_BRICK);
+        roadBox('brick', ps, FACE - 0.34, pierW, 0.92, 1.75, 3.5, ARCADE_BRICK);
+        // Plinth course and pier capital, both proud of the pier face.
+        roadBox('brick', ps, FACE - 0.4, pierW + 0.1, 1.0, 0.16, 0.32, ARCADE_BRICK_DARK);
+        roadBox('brick', ps, FACE - 0.4, pierW + 0.1, 1.0, 3.34, 0.3, ARCADE_BRICK_DARK);
       }
       for (let k = 0; k < 3; k++) {
         const os = bayStart + pierW + (k + 0.5) * (openingW / 3);
         // Recessed opening: dark, inset behind the pier face.
         frontPanel('detail', os, FACE - 0.03, openingW / 3 - 0.12, 2.7, 1.4, '#201b17');
-        // A single flat arch head spanning the opening, then solid brick above.
-        roadBox('wall', os, FACE - 0.3, openingW / 3 - 0.06, 0.8, 3.05, 0.45, ARCADE_BRICK_DARK);
+        // Segmental arch over the opening: five short voussoirs stepping down
+        // to the springing, so the opening reads as arched rather than square.
+        const span = openingW / 3 - 0.06;
+        for (let a = 0; a < 5; a++) {
+          const t = (a + 0.5) / 5;
+          const rise = Math.sin(t * Math.PI) * 0.42;
+          roadBox('brick', os - span / 2 + t * span, FACE - 0.3, span / 5 + 0.02, 0.82, 3.0 + rise * 0.5, 0.34 + rise, ARCADE_BRICK_DARK);
+        }
       }
       // Spandrel: continuous brick band from the arch heads to the string course.
-      roadBox('wall', cs, FACE - 0.3, BAY - 0.12, 0.85, 3.72, 1.0, ARCADE_BRICK);
-      roadBox('detail', cs, FACE - 0.36, BAY - 0.1, 0.42, 4.3, 0.26, ARCADE_BRICK_DARK);
+      roadBox('brick', cs, FACE - 0.3, BAY - 0.12, 0.85, 3.72, 1.0, ARCADE_BRICK);
+      // String course and a moulded cornice over the whole bay.
+      roadBox('brick', cs, FACE - 0.36, BAY - 0.1, 0.42, 4.3, 0.26, ARCADE_BRICK_DARK);
+      roadBox('brick', cs, FACE - 0.44, BAY, 0.5, 4.62, 0.16, ARCADE_BRICK);
     } else {
       // Shopfront: three shuttered bays with a deep reveal, plus a sign band.
       for (let k = 0; k < 3; k++) {
         const ss = bayStart + 1.1 + k * 2.5;
-        frontPanel('detail', ss, FACE - PROUD, 2.15, 2.5, 1.3, SHUTTER[(bay + k) % SHUTTER.length]);
+        // Recessed reveal first (the shop's pilasters), then the roller itself,
+        // which uses the city's corrugated shutter texture and metallic response.
+        frontPanel('detail', ss, FACE - PROUD * 0.5, 2.42, 2.78, 1.39, '#c9c3b4');
+        frontPanel('shutter', ss, FACE - PROUD, 2.15, 2.5, 1.3, SHUTTER[(bay + k) % SHUTTER.length]);
         // One bay per shop is open — the dark interior every Dhaka shopfront has.
         if ((bay + k) % 3 === 0) frontPanel('detail', ss + 0.55, FACE - PROUD - 0.01, 0.75, 2.3, 1.2, '#1f1a16');
         frontPanel('detail', ss, FACE - PROUD, 2.3, 0.16, 2.62, '#4a4a44');
-        // Corrugation. A flat grey rectangle reads as a blank wall from the
-        // road; six shallow ribs are what makes it read as a rolling shutter.
-        for (let r = 0; r < 6; r++) {
-          frontPanel('detail', ss, FACE - PROUD - 0.02, 2.13, 0.05, 0.32 + r * 0.36,
-            r % 2 === 0 ? '#6f7c82' : '#a4aeb2');
+        // Slat depth: eleven shallow ribs standing proud of the roller, lit and
+        // shaded alternately, so the shutter has relief at walking distance
+        // rather than reading as a painted rectangle.
+        for (let r = 0; r < 11; r++) {
+          frontPanel('shutter', ss, FACE - PROUD - 0.035, 2.11, 0.055, 0.19 + r * 0.223,
+            r % 2 === 0 ? '#6f7c82' : '#b2bcc0');
+        }
+        // The lock housing and the guide rails either side.
+        frontPanel('metal', ss, FACE - PROUD - 0.02, 0.14, 0.2, 1.32, '#5d666a');
+        for (const dx of [-1.09, 1.09]) {
+          frontPanel('metal', ss + dx, FACE - PROUD - 0.01, 0.07, 2.52, 1.3, '#5d666a');
         }
         // Half-shut shutter on the street's edge bay: one shop still opening up.
         if (k === 2 && bay % 2 === 0) {
@@ -462,14 +521,30 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
   const hallS1 = 52;
   const hallHeight = 6.4;
   roadBox('wall', (hallS0 + hallS1) / 2, HALL_V + HALL_DEPTH / 2, hallS1 - hallS0, HALL_DEPTH, hallHeight / 2, hallHeight, '#ddd6c6');
-  roadBox('detail', (hallS0 + hallS1) / 2, HALL_V + HALL_DEPTH / 2, hallS1 - hallS0 + 0.4, HALL_DEPTH + 0.4, hallHeight + 0.15, 0.3, '#b9b09c');
-  // Sawtooth corrugated roof over the halls: alternating slopes read as ridges
-  // from above and as a busy tin skyline from the street.
-  for (let s = hallS0 + 1; s < hallS1; s += 2.4) {
-    const r = at(s + 1.2, HALL_V + HALL_DEPTH / 2);
-    pick('detail', r.x, r.z).box({ x: r.x, y: hallHeight + 0.55, z: r.z },
-      { x: HALL_DEPTH + 0.5, y: 0.1, z: 2.5 }, ROOF_TIN, { y: r.yaw, x: 0.22 });
+  // Deck: kept thin and BELOW the sheets. As a 0.3-thick cap it swallowed the
+  // corrugation strips and the roof rendered as one smooth plate from the air.
+  roadBox('detail', (hallS0 + hallS1) / 2, HALL_V + HALL_DEPTH / 2, hallS1 - hallS0 + 0.4, HALL_DEPTH + 0.4, hallHeight + 0.04, 0.08, '#b9b09c');
+  // Corrugated tin roof over the halls.
+  //
+  // The earlier pass used a few 2.5-unit plates, which read from the street as
+  // grey slabs. Real CI sheet is ~0.9 m between crests, so the roof is now a run
+  // of shallow, alternating crest and pan strips, plus a ridge capping and a
+  // rustier underside colour so the soffit is not one flat grey field.
+  for (let s = hallS0 + 0.4; s < hallS1; s += 0.55) {
+    const r = at(s, HALL_V + HALL_DEPTH / 2);
+    const crest = Math.round((s - hallS0) / 0.55) % 2 === 0;
+    pick('detail', r.x, r.z).box(
+      { x: r.x, y: hallHeight + (crest ? 0.12 : 0.09), z: r.z },
+      { x: HALL_DEPTH + 0.55, y: crest ? 0.1 : 0.05, z: 0.5 },
+      crest ? '#b6bbb8' : ROOF_TIN,
+      { y: r.yaw, x: 0.18 },
+    );
   }
+  // Soffit: warm rusted underside, visible from the aisle.
+  roadBox('detail', (hallS0 + hallS1) / 2, HALL_V + HALL_DEPTH / 2, hallS1 - hallS0 - 0.6, HALL_DEPTH - 0.5, hallHeight - 0.06, 0.06, '#7a6a58');
+  // Ridge capping along the spine, and the eave gutter over the aisle.
+  roadBox('detail', (hallS0 + hallS1) / 2, HALL_V + HALL_DEPTH / 2, hallS1 - hallS0, 0.34, hallHeight + 0.2, 0.1, '#8f9490');
+  roadBox('metal', (hallS0 + hallS1) / 2, HALL_V + 0.1, hallS1 - hallS0, 0.16, hallHeight + 0.02, 0.16, '#6f7274');
   // Long lean-to roof over the bazaar street, closing the gap between terrace
   // and hall — the "tin roof over the spine" reading from the photographs.
   for (let s = 18; s < 54; s += 4) {
@@ -477,13 +552,22 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
     // in patches, not sealed, and the light gaps are what stop the underside
     // reading as one long grey slab.
     if (Math.round((s - 18) / 4) % 2 === 1) continue;
-    const p = at(s + 2, STREET_V + STREET_WIDTH / 2);
-    pick('detail', p.x, p.z).box(
-      { x: p.x, y: 5.45, z: p.z },
-      { x: STREET_WIDTH + 0.6, y: 0.12, z: 4.2 },
-      ROOF_TIN,
-      { y: p.yaw, x: 0.1 },
-    );
+    // Corrugation runs ALONG the street, not across it: strips that are long in
+    // `s` and narrow in `v`, alternating crest and pan. Seen from the aisle they
+    // converge into ridge lines; the previous across-the-span ribs left a flat
+    // grey sheet as the only thing overhead.
+    const RIBS = 11;
+    for (let r = 0; r < RIBS; r++) {
+      const rv = STREET_V + ((r + 0.5) / RIBS) * STREET_WIDTH;
+      const rp = at(s + 2, rv);
+      const crest = r % 2 === 0;
+      pick('detail', rp.x, rp.z).box(
+        { x: rp.x, y: 5.42 + (crest ? 0.05 : 0), z: rp.z },
+        { x: STREET_WIDTH / RIBS + 0.02, y: 0.06, z: 4.15 },
+        crest ? ROOF_TIN_CREST : ROOF_TIN,
+        { y: rp.yaw, x: 0.1 },
+      );
+    }
     // Purlins under the sheet, so the underside is not a blank slab.
     for (const off of [-1.4, 1.4]) {
       const pp = at(s + 2 + off, STREET_V + STREET_WIDTH / 2);
@@ -511,6 +595,116 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
   frontPanel('sign', 43, HALL_V - 0.09, 5.0, 0.95, 3.85, '#ffffff', fishBoard);
   const vegBoard = signAtlas.storefrontSlot('sf_th_veg') ?? nextSign();
   frontPanel('sign', 46.5, HALL_V - 0.09, 5.0, 0.95, 3.85, '#ffffff', vegBoard);
+
+  /* -------------------------------------- 3b. the working yard behind the halls */
+
+  // The mapped marketplace polygon (OSM way 223068917, 5005 m2 = 1.24 acres) is a
+  // land-use parcel that in fact straddles Asad Avenue: its vertices run from
+  // v=-7.5 on the south side to v=+11 on the north, i.e. it includes the
+  // carriageway. It is therefore NOT a yard boundary and no wall may follow it.
+  // What is defensible here is the ground and the work a wholesale food market
+  // does: a packed-earth yard, deliveries, stacked crates, tarpaulin piles and a
+  // refuse skip — the waste problem is documented in the World Bank/FAO survey
+  // of this market. No buildings and no landmarks are invented.
+  // Packed-earth yard across the full band behind the halls (the first pass laid
+  // two thin strips, which from the air read as two painted lines on bare ground).
+  const YARD_V0 = HALL_V + HALL_DEPTH + 0.25; // 29.65
+  const YARD_V1 = 34.6;
+  for (let s = TOWN_HALL_SITE.s0 + 1; s < TOWN_HALL_SITE.s1 - 1; s += 5) {
+    roadBox('walk', s + 2.5, (YARD_V0 + YARD_V1) / 2, 4.9, YARD_V1 - YARD_V0, 0.03, 0.05, '#8b8272');
+  }
+  // Compound wall along the open stretch of the yard's north edge.
+  //
+  // This is generic market-boundary infrastructure, not a claimed landmark: it
+  // exists to terminate the built edge. Measured from the live build, the block
+  // north of the halls holds only six generated buildings and none between
+  // s 20 and s 50, so without an edge the yard reads as an empty cream plaza.
+  // The wall is deliberately drawn only where that gap is (s 21..50) and stops
+  // short of the generated blocks at s 51+ and s 6..20.
+  for (let s = 21; s < 50; s += 2.9) {
+    roadBox('wall', s + 1.45, 34.8, 2.85, 0.26, 0.8, 1.6, '#9c9686');
+    roadBox('detail', s + 1.45, 34.8, 2.85, 0.34, 1.66, 0.12, '#8a8474');
+  }
+  for (let s = 21; s <= 50; s += 2.9) {
+    roadBox('wall', s, 34.8, 0.34, 0.4, 0.9, 1.8, '#8c8677');
+  }
+  addCollider(35.5, 34.8, 29, 0.4, 1.8, 'prop');
+  // Yard gate: a gap in the wall with piers and a sliding leaf, where the
+  // deliveries come in from the north lane.
+  for (const gs of [30.5, 34.5]) {
+    roadBox('wall', gs, 34.8, 0.7, 0.6, 1.05, 2.1, '#8c8677');
+    roadBox('detail', gs, 34.8, 0.9, 0.75, 2.16, 0.14, '#7d7768');
+  }
+  roadBox('metal', 32.5, 34.85, 3.4, 0.1, 1.02, 1.9, '#5f6a5e');
+  // Damp patches and standing water on the yard — the survey documented both.
+  for (const [ds, dv, dr] of [[8, 2.2, 1.1], [19, 3.4, 1.5], [27, 1.9, 0.9], [38, 3.1, 1.3], [46, 2.4, 1.0]] as const) {
+    const wp = at(TOWN_HALL_SITE.s0 + ds, HALL_V + HALL_DEPTH + dv);
+    pick('walk', wp.x, wp.z).cylinder({ x: wp.x, y: 0.075, z: wp.z }, dr, 0.02, '#4e5350');
+  }
+
+  // Delivery trucks backed up to the hall loading bays. A lorry is a market
+  // function, not a landmark: it is what the "primary food source of the
+  // Biharis" survey describes arriving every morning.
+  const TRUCK_BODY = ['#3f5c72', '#6b4a3a', '#41594a', '#8a6a3a'] as const;
+  for (const [ds, kind] of [[7.5, 0], [20.5, 1], [33, 0], [44, 1]] as const) {
+    const tp = at(TOWN_HALL_SITE.s0 + ds, HALL_V + HALL_DEPTH + 1.7);
+    const yaw = tp.yaw + Math.PI / 2;
+    const box = TRUCK_BODY[kind];
+    // Chassis, cargo bed, cab, then wheels.
+    pick('detail', tp.x, tp.z).box({ x: tp.x, y: 0.62, z: tp.z }, { x: 1.05, y: 0.42, z: 3.5 }, '#4a4a48', { y: yaw });
+    pick('detail', tp.x, tp.z).box({ x: tp.x, y: 1.25, z: tp.z }, { x: 1.12, y: 0.9, z: 2.4 }, box, { y: yaw });
+    pick('metal', tp.x, tp.z).box({ x: tp.x, y: 1.34, z: tp.z }, { x: 1.16, y: 0.12, z: 2.5 }, '#9aa0a0', { y: yaw });
+    const cx = tp.x + Math.sin(yaw) * 1.65;
+    const cz = tp.z + Math.cos(yaw) * 1.65;
+    pick('detail', cx, cz).box({ x: cx, y: 1.15, z: cz }, { x: 1.08, y: 1.0, z: 1.2 }, '#8d9ba4', { y: yaw });
+    pick('detail', cx + Math.sin(yaw) * 0.62, cz + Math.cos(yaw) * 0.62).box(
+      { x: cx + Math.sin(yaw) * 0.62, y: 1.42, z: cz + Math.cos(yaw) * 0.62 },
+      { x: 0.98, y: 0.62, z: 0.06 }, '#2b3439', { y: yaw },
+    );
+    for (const wz of [-1.25, 1.3]) for (const wx of [-0.52, 0.52]) {
+      const ox = Math.cos(yaw) * wx + Math.sin(yaw) * wz;
+      const oz = -Math.sin(yaw) * wx + Math.cos(yaw) * wz;
+      pick('metal', tp.x + ox, tp.z + oz).cylinder(
+        { x: tp.x + ox, y: 0.38, z: tp.z + oz }, 0.38, 0.24, '#26282a', { x: Math.PI / 2, y: yaw },
+      );
+    }
+    addCollider(TOWN_HALL_SITE.s0 + ds, HALL_V + HALL_DEPTH + 1.7, 3.6, 1.3, 1.9, 'prop');
+  }
+
+  // Crate pyramids, sack pallets and tarpaulin-covered goods piles along the bay.
+  const yardRng = mulberry32(0x4a17c3);
+  for (let i = 0; i < 26; i++) {
+    const s = TOWN_HALL_SITE.s0 + 2.2 + (i % 13) * 3.6;
+    // Alternate a front row against the loading bays and a back row deeper into
+    // the yard, so the ground between them reads as a working surface.
+    const v = HALL_V + HALL_DEPTH + (i < 13 ? 0.9 + yardRng() * 0.6 : 2.9 + yardRng() * 1.4);
+    const p = at(s, v);
+    const roll = yardRng();
+    if (roll < 0.4) {
+      // Stacked crates, two high and two deep.
+      for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) {
+        const cp = at(s + b * 0.62, v + a * 0.66);
+        pick('detail', cp.x, cp.z).box({ x: cp.x, y: 0.2 + a * 0.4, z: cp.z },
+          { x: 0.58, y: 0.38, z: 0.58 }, a === 0 ? '#9a7b47' : '#8a6c3d', { y: cp.yaw });
+      }
+    } else if (roll < 0.72) {
+      // Pallet of jute sacks.
+      pick('detail', p.x, p.z).box({ x: p.x, y: 0.09, z: p.z }, { x: 1.3, y: 0.18, z: 1.3 }, '#7d6a4a', { y: p.yaw });
+      for (let k = 0; k < 3; k++) {
+        const sp = at(s - 0.4 + k * 0.4, v);
+        pick('detail', sp.x, sp.z).cylinder({ x: sp.x, y: 0.42, z: sp.z }, 0.28, 0.56, '#b9a87c');
+      }
+    } else {
+      // Goods under a tarpaulin, the way unsold stock is left overnight.
+      const tint = TARPAULIN[Math.floor(yardRng() * TARPAULIN.length)];
+      pick('detail', p.x, p.z).box({ x: p.x, y: 0.52, z: p.z }, { x: 1.5, y: 1.04, z: 2.0 }, tint, { y: p.yaw, z: 0.03 });
+      pick('detail', p.x, p.z).box({ x: p.x, y: 1.06, z: p.z }, { x: 1.3, y: 0.12, z: 1.8 }, tint, { y: p.yaw });
+    }
+  }
+  // Refuse skip at the yard gate: the waste-handling gap is documented, not invented.
+  const skip = at(TOWN_HALL_SITE.s0 + 2.2, HALL_V + HALL_DEPTH + 2.2);
+  pick('metal', skip.x, skip.z).box({ x: skip.x, y: 0.62, z: skip.z }, { x: 1.45, y: 0.95, z: 2.3 }, '#4c5a52', { y: skip.yaw });
+  pick('detail', skip.x, skip.z).box({ x: skip.x, y: 1.08, z: skip.z }, { x: 1.3, y: 0.06, z: 2.1 }, '#6a5a42', { y: skip.yaw });
 
   /* ------------------------------------------------- 4. the Town Hall Mosque */
 
@@ -583,42 +777,117 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
     }
   }
 
-  // Stalls inside the bazaar street: counters with tin hoods on both sides.
+  // Stalls inside the bazaar street.
+  //
+  // Cross-section, wall to wall (v 18.1 -> 22.3): a 0.75 working strip where the
+  // stallholder stands, a 0.7 counter, a 1.0 aisle, then the mirror image. The
+  // earlier layout put the counters hard against both walls, which left no room
+  // for anyone to stand behind them — the stalls could never look occupied, no
+  // matter how much was piled on them.
   const STALL_WOOD = ['#8a7c5f', '#7d6a4a', '#96876a', '#6f6047'] as const;
+  const COUNTER_DEPTH = 0.7;
+  const STALL_LEN = 3.0;
+  const KEEPER_V = [STREET_V + 0.42, STREET_V + STREET_WIDTH - 0.42] as const;
+  const COUNTER_V = [STREET_V + 1.15, STREET_V + STREET_WIDTH - 1.15] as const;
+  const AISLE_V = STREET_V + STREET_WIDTH / 2;
   for (let s = 20; s < 54; s += 4.4) {
+    const stallIndex = Math.round((s - 20) / 4.4);
     for (const side of [0, 1] as const) {
-      const v = side === 0 ? STREET_V + 0.95 : STREET_V + STREET_WIDTH - 0.95;
+      const v = COUNTER_V[side];
       const p = at(s, v);
       const stallRng = mulberry32(0x5 + Math.round(s * 7) + side * 31);
       const wood = STALL_WOOD[Math.floor(stallRng() * STALL_WOOD.length)];
-      // Counter, then a heap of goods along it, then the tin hood.
-      pick('detail', p.x, p.z).box({ x: p.x, y: 0.45, z: p.z }, { x: 1.25, y: 0.9, z: 3.0 }, wood, { y: p.yaw });
-      for (let k = 0; k < 3; k++) {
-        const gs = s - 0.9 + k * 0.9;
-        const gp = at(gs, v - (side === 0 ? 0.28 : -0.28));
+      const toAisle = side === 0 ? 1 : -1;
+
+      // Stallholder post, in the working strip behind the counter.
+      const kp = at(s, KEEPER_V[side]);
+      vendorPosts.push({
+        x: kp.x,
+        z: kp.z,
+        yaw: side === 0 ? Math.atan2(kp.leftX, kp.leftZ) : Math.atan2(-kp.leftX, -kp.leftZ),
+        role: 'vendor',
+      });
+      // A customer on the aisle side, facing the goods (every other bay, so the
+      // aisle keeps a walking lane).
+      if (side === 0 && stallIndex % 2 === 0) {
+        const sp = at(s + 1.4, AISLE_V + 0.1);
+        vendorPosts.push({
+          x: sp.x,
+          z: sp.z,
+          yaw: Math.atan2(-sp.leftX, -sp.leftZ),
+          role: 'shopper',
+        });
+      }
+
+      // Counter: a planked top on posts, not a solid block — you can see under it.
+      pick('detail', p.x, p.z).box({ x: p.x, y: 0.82, z: p.z },
+        { x: COUNTER_DEPTH, y: 0.09, z: STALL_LEN }, wood, { y: p.yaw });
+      pick('detail', p.x, p.z).box({ x: p.x, y: 0.42, z: p.z },
+        { x: COUNTER_DEPTH - 0.16, y: 0.72, z: STALL_LEN - 0.1 }, STALL_WOOD[(side + 1) % 4], { y: p.yaw });
+      // Goods heaped in three or four baskets along the plank, in tiers.
+      for (let k = 0; k < 4; k++) {
+        const gs = s - 1.05 + k * 0.7;
+        const gp = at(gs, v + toAisle * 0.02);
         const tint = PRODUCE[Math.floor(stallRng() * PRODUCE.length)];
-        if (stallRng() < 0.5) {
-          pick('detail', gp.x, gp.z).box({ x: gp.x, y: 1.0, z: gp.z },
-            { x: 0.72, y: 0.22, z: 0.72 }, tint, { y: gp.yaw });
-          pick('detail', gp.x, gp.z).cone({ x: gp.x, y: 1.18, z: gp.z }, 0.34, 0.22, tint);
+        const roll = stallRng();
+        if (roll < 0.45) {
+          pick('detail', gp.x, gp.z).cylinder({ x: gp.x, y: 0.9, z: gp.z }, 0.26, 0.1, '#a9884f');
+          pick('detail', gp.x, gp.z).cone({ x: gp.x, y: 1.02, z: gp.z }, 0.25, 0.2, tint);
+        } else if (roll < 0.75) {
+          pick('detail', gp.x, gp.z).box({ x: gp.x, y: 0.93, z: gp.z },
+            { x: 0.42, y: 0.14, z: 0.42 }, tint, { y: gp.yaw });
         } else {
-          pick('detail', gp.x, gp.z).cylinder({ x: gp.x, y: 1.02, z: gp.z }, 0.3, 0.24, '#a9884f');
-          pick('detail', gp.x, gp.z).cone({ x: gp.x, y: 1.2, z: gp.z }, 0.28, 0.2, tint);
+          // Aubergine / bottle gourd pile: a couple of small rounds.
+          pick('detail', gp.x, gp.z).cylinder({ x: gp.x, y: 0.95, z: gp.z }, 0.13, 0.2, tint);
+          const q = at(gs + 0.18, v + toAisle * 0.12);
+          pick('detail', q.x, q.z).cylinder({ x: q.x, y: 0.93, z: q.z }, 0.12, 0.18, tint);
         }
       }
-      // Hanging stock under the hood: narrow bolts of cloth, not a wall panel.
+      // Baskets and sacks stacked on the floor behind the counter.
+      const bp = at(s - 1.05, KEEPER_V[side]);
+      pick('detail', bp.x, bp.z).cylinder({ x: bp.x, y: 0.18, z: bp.z }, 0.3, 0.36, '#9a7b47');
+      const sp2 = at(s + 1.1, KEEPER_V[side]);
+      pick('detail', sp2.x, sp2.z).cylinder({ x: sp2.x, y: 0.32, z: sp2.z }, 0.24, 0.62, '#b9a87c');
+      // Hanging scales on a hook — the thing every Bangladeshi bazaar counter has.
+      const hp = at(s + 1.15, v + toAisle * 0.4);
+      pick('metal', hp.x, hp.z).cylinder({ x: hp.x, y: 1.92, z: hp.z }, 0.02, 0.4, '#6b6a63');
+      pick('metal', hp.x, hp.z).box({ x: hp.x, y: 2.14, z: hp.z }, { x: 0.06, y: 0.05, z: 0.34 }, '#8a8a80', { y: hp.yaw });
+      pick('metal', hp.x, hp.z).cylinder({ x: hp.x, y: 1.72, z: hp.z }, 0.14, 0.03, '#8a8a80');
+      // Cloth bolts hung from the hood frame: narrow vertical drops tight to the
+      // stall's back edge. The first pass had them out over the counter, where
+      // they read as floating panels filling the aisle view.
       const hangTint = TARPAULIN[Math.floor(stallRng() * TARPAULIN.length)];
-      for (const hz of [-0.9, 0, 0.9]) {
-        const hp = at(s + hz, v - (side === 0 ? 0.62 : -0.62));
-        pick('detail', hp.x, hp.z).box({ x: hp.x, y: 2.02, z: hp.z },
-          { x: 0.12, y: 0.44, z: 0.62 }, hangTint, { y: hp.yaw });
+      for (const hz of [-0.85, 0.15]) {
+        const hq = at(s + hz, KEEPER_V[side] - toAisle * 0.16);
+        pick('detail', hq.x, hq.z).box({ x: hq.x, y: 2.02, z: hq.z },
+          { x: 0.07, y: 0.42, z: 0.3 }, hangTint, { y: hq.yaw });
       }
-      pick('detail', p.x, p.z).box({ x: p.x, y: 2.35, z: p.z }, { x: 1.7, y: 0.08, z: 3.4 }, ROOF_TIN, { y: p.yaw, x: 0.07 });
-      for (const ds of [-1.4, 1.4]) {
-        const pp = at(s + ds, v);
-        pick('detail', pp.x, pp.z).cylinder({ x: pp.x, y: 1.2, z: pp.z }, 0.05, 2.4, '#6f6a5e');
+      // Tin hood over the stall: corrugated ribs along the slope, then the sheet.
+      // Ridge line and the two edge purlins, so the hood has a frame rather than
+      // floating: the corrugation itself is the sheet drawn just above.
+      pick('detail', p.x, p.z).box({ x: p.x, y: 2.36, z: p.z },
+        { x: 0.1, y: 0.05, z: 3.4 }, '#6f7574', { y: p.yaw, x: 0.07 });
+      for (const dv of [-0.56, 0.56]) {
+        const ep = at(s, v + toAisle * dv);
+        pick('detail', ep.x, ep.z).box({ x: ep.x, y: 2.28, z: ep.z },
+          { x: 0.07, y: 0.07, z: 3.4 }, '#6f7574', { y: ep.yaw, x: 0.07 });
+      }
+      for (const ds of [-1.5, 1.5]) {
+        const pp = at(s + ds, v + toAisle * 0.55);
+        pick('detail', pp.x, pp.z).cylinder({ x: pp.x, y: 1.16, z: pp.z }, 0.045, 2.32, '#6f6a5e');
       }
     }
+  }
+
+  // Two more hands out on the apron, working the kerbside heaps.
+  for (const s of [24.5, 41.0]) {
+    const ap = at(s, TOWN_HALL_SITE.v0 + 2.15);
+    vendorPosts.push({
+      x: ap.x,
+      z: ap.z,
+      yaw: Math.atan2(-ap.leftX, -ap.leftZ),
+      role: 'vendor',
+    });
   }
 
   /* --------------------------------------- 6. kerbside poles and wire tangle */
@@ -643,9 +912,15 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
   for (let s = TOWN_HALL_SITE.s0 + 3; s < TOWN_HALL_SITE.s1 - 3; s += 3.4) {
     const bp = at(s, TERRACE_V + TERRACE_DEPTH - 0.06);
     const backYaw = Math.atan2(bp.leftX, bp.leftZ);
-    pick('detail', bp.x, bp.z).quad({ x: bp.x, y: 1.6, z: bp.z }, 2.4, 3.2, '#cdc5b2', { y: backYaw });
+    // `wall`, not `detail`: the detail bucket bakes ground AO, and a full-height
+    // panel at the far end of a shaded bazaar street came out as a black void.
+    pick('wall', bp.x, bp.z).quad({ x: bp.x, y: 1.7, z: bp.z }, 2.4, 3.4, '#d9d1be', { y: backYaw });
     if (Math.round(s) % 2 === 0) {
-      pick('detail', bp.x, bp.z).quad({ x: bp.x, y: 4.3, z: bp.z }, 1.1, 0.95, '#25373d', { y: backYaw });
+      pick('wall', bp.x, bp.z).quad({ x: bp.x, y: 4.3, z: bp.z }, 1.1, 0.95, '#3d5560', { y: backYaw });
+    }
+    // Service door and a meter box, so the back of the shops reads as built.
+    if (Math.round(s) % 3 === 0) {
+      pick('detail', bp.x, bp.z).quad({ x: bp.x, y: 1.0, z: bp.z }, 0.85, 2.0, '#5d5346', { y: backYaw });
     }
   }
 
@@ -699,5 +974,5 @@ export function buildTownHall(ctx: TownHallContext): TownHallResult {
       { y: Math.atan2(-p.leftX, -p.leftZ) });
   }
 
-  return { colliders, signSlotEnd: slot };
+  return { colliders, signSlotEnd: slot, vendorPosts };
 }

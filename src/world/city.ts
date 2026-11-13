@@ -144,6 +144,11 @@ export interface CityResult {
     halfX: number;
     halfZ: number;
   }[];
+  /**
+   * Stall posts inside the Town Hall bazaar. `PedestrianSystem` borrows walkers
+   * to staff them, so the market reads as occupied without any new meshes.
+   */
+  marketVendorPosts: readonly import('./townHall').MarketVendorPost[];
   interiorCount: number;
   courtyardCount: number;
   courtyardSites: readonly { x: number; z: number }[];
@@ -2262,6 +2267,8 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     walls: sectorWalls,
     details: sectorDetails,
     signs: sectorSigns,
+    shutters: sectorShutters,
+    bricks: sectorBricks,
     metal: bMetal,
     walk: bWalk,
     glow: bGlow,
@@ -2685,6 +2692,7 @@ export function buildCity(signAtlas: SignAtlas, quality: QualitySettings): CityR
     treeCount: treeSites.length,
     treeSites,
     utilityPoleSites,
+    marketVendorPosts: townHall.vendorPosts,
     interiorCount,
     courtyardCount,
     courtyardSites,
