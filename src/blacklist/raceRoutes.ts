@@ -243,7 +243,7 @@ const AUTHORED_COURSES: Record<string, AuthoredCourseBlueprint> = {
     ],
   },
 
-  // #6 Bazarer Badsha Halim — Town Hall -> Babar Culvert Bridge Delivery Rush
+  // #6 Bazarer Badsha Halim — Town Hall -> Babor Culvert Bridge Delivery Rush
   bl_boss_06: {
     eventId: 'bl_boss_06',
     laps: 1,
@@ -263,7 +263,7 @@ const AUTHORED_COURSES: Record<string, AuthoredCourseBlueprint> = {
         shortcutViaNodeId: 'johuri_deadend',
         turboZoneAfter: true,
         labelBn: 'বাবর ব্রিজ ক্রেস্ট',
-        labelEn: 'Babar Bridge Crest',
+        labelEn: 'Babor Bridge Crest',
       },
       { ref: 'humayun_w', labelBn: 'হুমায়ুন পশ্চিম ফিনিশ', labelEn: 'Humayun West Finish' },
     ],
@@ -582,7 +582,7 @@ const AUTHORED_COURSES: Record<string, AuthoredCourseBlueprint> = {
     gateAnchors: [
       { ref: 'bus_stand', turboZoneAfter: true, labelBn: 'বাস স্ট্যান্ড এস্কেপ', labelEn: 'Bus Stand Escape' },
       { ref: 'ring_tajmahal', turboZoneAfter: true, labelBn: 'শিয়া মসজিদ করিডোর', labelEn: 'Shia Mosque' },
-      { ref: 'babar_mid', labelBn: 'বাবর রোড ব্রিজ সেফ জোন', labelEn: 'Babar Bridge Safe Zone' },
+      { ref: 'babar_mid', labelBn: 'বাবর রোড ব্রিজ সেফ জোন', labelEn: 'Babor Bridge Safe Zone' },
     ],
   },
 

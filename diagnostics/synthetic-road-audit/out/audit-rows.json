@@ -1,0 +1,236 @@
+{
+  "summary": {
+    "base": {
+      "buildings": 845,
+      "digest": "c60e15b5"
+    },
+    "perturbed": {
+      "buildings": 829,
+      "digest": "01743076"
+    },
+    "evicted": 19,
+    "added": 6,
+    "counts": {
+      "carriageway-overlap": 17,
+      "corridor-clearance": 2,
+      "frontage-reroll": 0,
+      "unexplained": 0
+    },
+    "control": {
+      "roadId": "synth_control",
+      "evicted": 0
+    },
+    "frontages": 7
+  },
+  "rows": [
+    {
+      "id": "zakir_1:46.53,123.76",
+      "cls": "carriageway-overlap",
+      "x": 46.53,
+      "z": 123.76,
+      "d": 1.32,
+      "overlap": 7.49,
+      "front": "zakir_1#1",
+      "u": 15.1,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "zakir_1:44.51,134.05",
+      "cls": "carriageway-overlap",
+      "x": 44.51,
+      "z": 134.05,
+      "d": 6.49,
+      "overlap": 3.99,
+      "front": "zakir_1#1",
+      "u": 25.4,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "zakir_5:54.66,161.32",
+      "cls": "carriageway-overlap",
+      "x": 54.66,
+      "z": 161.32,
+      "d": 5.48,
+      "overlap": 4.78,
+      "front": "zakir_5#1",
+      "u": 39.9,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "zakir_5:63.59,160.83",
+      "cls": "carriageway-overlap",
+      "x": 63.59,
+      "z": 160.83,
+      "d": 3.68,
+      "overlap": 3.65,
+      "front": "zakir_5#1",
+      "u": 48.9,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "tajmahal_5:-26.70,-83.22",
+      "cls": "carriageway-overlap",
+      "x": -26.7,
+      "z": -83.22,
+      "d": 5.34,
+      "overlap": 4.91,
+      "front": "tajmahal_5#1",
+      "u": 24.4,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "tajmahal_5:-25.98,-94.03",
+      "cls": "carriageway-overlap",
+      "x": -25.98,
+      "z": -94.03,
+      "d": 1.24,
+      "overlap": 8.77,
+      "front": "tajmahal_5#1",
+      "u": 35.2,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "aziz_2:-36.25,-117.81",
+      "cls": "carriageway-overlap",
+      "x": -36.25,
+      "z": -117.81,
+      "d": 3.46,
+      "overlap": 7.89,
+      "front": "aziz_2#1",
+      "u": 53.2,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "aziz_2:-25.60,-120.78",
+      "cls": "carriageway-overlap",
+      "x": -25.6,
+      "z": -120.78,
+      "d": 7.58,
+      "overlap": 4.61,
+      "front": "aziz_2#1",
+      "u": 64.3,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "humayun_2:-47.85,-140.81",
+      "cls": "carriageway-overlap",
+      "x": -47.85,
+      "z": -140.81,
+      "d": 7.19,
+      "overlap": 3.93,
+      "front": "humayun_2#-1",
+      "u": 77.1,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "humayun_2:-38.54,-144.84",
+      "cls": "carriageway-overlap",
+      "x": -38.54,
+      "z": -144.84,
+      "d": 2.92,
+      "overlap": 8.75,
+      "front": "humayun_2#-1",
+      "u": 87.1,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "humayun_2:-58.92,-165.08",
+      "cls": "carriageway-overlap",
+      "x": -58.92,
+      "z": -165.08,
+      "d": 10.02,
+      "overlap": 1.07,
+      "front": "humayun_2#1",
+      "u": 72,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "humayun_2:-50.37,-167.76",
+      "cls": "carriageway-overlap",
+      "x": -50.37,
+      "z": -167.76,
+      "d": 1.06,
+      "overlap": 9,
+      "front": "humayun_2#1",
+      "u": 81,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "humayun_2:-41.72,-169.78",
+      "cls": "carriageway-overlap",
+      "x": -41.72,
+      "z": -169.78,
+      "d": 7.78,
+      "overlap": 3.62,
+      "front": "humayun_2#1",
+      "u": 89.9,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "babar_1:-68.43,-208.23",
+      "cls": "carriageway-overlap",
+      "x": -68.43,
+      "z": -208.23,
+      "d": 11.78,
+      "overlap": 0.74,
+      "front": "babar_1#-1",
+      "u": 68.4,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "babar_1:-60.16,-209.28",
+      "cls": "carriageway-overlap",
+      "x": -60.16,
+      "z": -209.28,
+      "d": 9.29,
+      "overlap": 2.21,
+      "front": "babar_1#-1",
+      "u": 76.8,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "shershah_2:5.56,-33.61",
+      "cls": "corridor-clearance",
+      "x": 5.56,
+      "z": -33.61,
+      "d": 9.58,
+      "overlap": 0,
+      "front": "shershah_2#-1",
+      "u": 51.1,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "humayun_2:-55.70,-187.00",
+      "cls": "carriageway-overlap",
+      "x": -55.7,
+      "z": -187,
+      "d": 0.03,
+      "overlap": 9,
+      "front": "humayun_2#1",
+      "u": 80.3,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "zakir_1:62.30,140.20",
+      "cls": "corridor-clearance",
+      "x": 62.3,
+      "z": 140.2,
+      "d": 8.44,
+      "overlap": 0,
+      "front": "zakir_1#1",
+      "u": 25,
+      "nearestAfter": "synth_near"
+    },
+    {
+      "id": "aziz_2:-35.20,-129.60",
+      "cls": "carriageway-overlap",
+      "x": -35.2,
+      "z": -129.6,
+      "d": 1.26,
+      "overlap": 7.69,
+      "front": "aziz_2#1",
+      "u": 56.8,
+      "nearestAfter": "synth_near"
+    }
+  ]
+}

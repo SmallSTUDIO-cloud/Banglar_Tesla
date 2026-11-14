@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Synthetic road impact audit</title>
+    <style>
+      :root {
+        --bg: #10151c;
+        --panel: #161d26;
+        --ink: #e8eef5;
+        --muted: #9db0c3;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      #app { display: flex; height: 100%; }
+      #stage { position: relative; flex: 1; min-width: 0; }
+      canvas { display: block; width: 100%; height: 100%; position: absolute; inset: 0; }
+      #hud { width: 360px; background: var(--panel); border-left: 1px solid #24303d;
+        padding: 14px 16px; overflow-y: auto; }
+      #hud h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .02em; }
+      #hud h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+        color: var(--muted); margin: 18px 0 7px; font-weight: 600; }
+      .sub { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
+      .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+      .sw { width: 15px; height: 15px; border-radius: 3px; flex: none; border: 1px solid #00000055; }
+      .k { flex: 1; }
+      .v { color: var(--muted); font-variant-numeric: tabular-nums; }
+      .badge { display: inline-block; padding: 1px 6px; border-radius: 10px;
+        background: #22303f; color: var(--muted); font-size: 10px; letter-spacing: .06em; }
+      .note { color: var(--muted); font-size: 11px; border-left: 2px solid #2c3c4d;
+        padding-left: 9px; margin: 10px 0; }
+      .big { font-size: 22px; font-variant-numeric: tabular-nums; }
+      #status { position: absolute; inset: 0; display: grid; place-items: center;
+        background: #10151ce8; font-size: 13px; color: var(--muted); text-align: center; padding: 24px; }
+      #title { position: absolute; left: 16px; top: 14px; font-size: 12px; color: #cfe0f0;
+        background: #10151cd9; border: 1px solid #24303d; border-radius: 6px; padding: 7px 11px; }
+      #scale { position: absolute; left: 16px; bottom: 14px; font-size: 11px; color: var(--muted);
+        background: #10151cd9; border: 1px solid #24303d; border-radius: 6px; padding: 6px 10px; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="stage">
+        <canvas id="view"></canvas>
+        <canvas id="view3d" style="display:none"></canvas>
+        <div id="title">Synthetic road impact audit</div>
+        <div id="scale"></div>
+        <div id="status">building the shipped world, the perturbed world and a control…</div>
+      </div>
+      <aside id="hud">
+        <h1>Synthetic road impact</h1>
+        <div class="sub">Diagnostic only — no production code path</div>
+        <div id="hudbody"></div>
+      </aside>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

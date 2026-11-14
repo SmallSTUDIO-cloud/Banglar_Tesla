@@ -1,0 +1,2152 @@
+{
+ "_note": "Golden gameplay reference. Compared field-by-field by tests/unit/gameplay-baseline.test.ts. Regenerate only via `npm run baseline:update` with BASELINE_ACCEPT set to a reason. Values are GAME UNITS (1 unit = 2.778 real m) except segments[].width, which is authored in real metres. aiReferenceTimesS are deterministic unobstructed simulation values, NOT device or human measurements.",
+ "capturedWith": "npx vite-node tools/snapshot-gameplay.ts",
+ "acceptedReason": "initial baseline captured from fc971cd (pre-Step-1 reverted state)",
+ "counts": {
+  "segments": 70,
+  "nodes": 42,
+  "places": 14,
+  "courses": 17
+ },
+ "nodes": [
+  {
+   "id": "bus_stand",
+   "x": -112,
+   "z": 194
+  },
+  {
+   "id": "beribadh_w",
+   "x": -168,
+   "z": 204
+  },
+  {
+   "id": "satmasjid_mid",
+   "x": -58,
+   "z": 232
+  },
+  {
+   "id": "satmasjid_se",
+   "x": 18,
+   "z": 248
+  },
+  {
+   "id": "asad_nurjahan",
+   "x": -70,
+   "z": 162
+  },
+  {
+   "id": "asad_salimullah",
+   "x": -15,
+   "z": 132
+  },
+  {
+   "id": "town_hall",
+   "x": 42,
+   "z": 106
+  },
+  {
+   "id": "asad_post",
+   "x": 118,
+   "z": 84
+  },
+  {
+   "id": "asad_iqbal",
+   "x": 196,
+   "z": 82
+  },
+  {
+   "id": "asad_gate_e",
+   "x": 242,
+   "z": 78
+  },
+  {
+   "id": "zakir_w",
+   "x": 16,
+   "z": 176
+  },
+  {
+   "id": "zakir_e",
+   "x": 96,
+   "z": 168
+  },
+  {
+   "id": "zakir_s",
+   "x": 112,
+   "z": 236
+  },
+  {
+   "id": "ring_south",
+   "x": -204,
+   "z": 96
+  },
+  {
+   "id": "ring_nurjahan",
+   "x": -208,
+   "z": 42
+  },
+  {
+   "id": "ring_tajmahal",
+   "x": -212,
+   "z": -56
+  },
+  {
+   "id": "ring_humayun",
+   "x": -216,
+   "z": -106
+  },
+  {
+   "id": "ring_north",
+   "x": -218,
+   "z": -196
+  },
+  {
+   "id": "nurjahan_mid",
+   "x": -98,
+   "z": 54
+  },
+  {
+   "id": "nurjahan_north",
+   "x": -134,
+   "z": -26
+  },
+  {
+   "id": "salimullah_mid",
+   "x": -42,
+   "z": 34
+  },
+  {
+   "id": "salimullah_north",
+   "x": -74,
+   "z": -42
+  },
+  {
+   "id": "shershah_mid",
+   "x": 14,
+   "z": 18
+  },
+  {
+   "id": "shershah_spur_e",
+   "x": 74,
+   "z": 4
+  },
+  {
+   "id": "shershah_north",
+   "x": -16,
+   "z": -58
+  },
+  {
+   "id": "shahjahan_s",
+   "x": 58,
+   "z": -22
+  },
+  {
+   "id": "aurangzeb_mid",
+   "x": 134,
+   "z": -38
+  },
+  {
+   "id": "iqbal_north",
+   "x": 208,
+   "z": -4
+  },
+  {
+   "id": "iqbal_aurangzeb",
+   "x": 214,
+   "z": -58
+  },
+  {
+   "id": "tajmahal_w",
+   "x": -148,
+   "z": -78
+  },
+  {
+   "id": "krishi_cut",
+   "x": -176,
+   "z": -18
+  },
+  {
+   "id": "tajmahal_e",
+   "x": -12,
+   "z": -112
+  },
+  {
+   "id": "aziz_gali",
+   "x": -86,
+   "z": -96
+  },
+  {
+   "id": "humayun_w",
+   "x": -126,
+   "z": -136
+  },
+  {
+   "id": "humayun_shahjahan",
+   "x": 6,
+   "z": -168
+  },
+  {
+   "id": "humayun_e",
+   "x": 84,
+   "z": -188
+  },
+  {
+   "id": "humayun_far_e",
+   "x": 162,
+   "z": -172
+  },
+  {
+   "id": "babar_w",
+   "x": -138,
+   "z": -214
+  },
+  {
+   "id": "babar_mid",
+   "x": -18,
+   "z": -228
+  },
+  {
+   "id": "babar_humayun",
+   "x": 56,
+   "z": -236
+  },
+  {
+   "id": "babar_e",
+   "x": 146,
+   "z": -244
+  },
+  {
+   "id": "johuri_deadend",
+   "x": -18,
+   "z": -256
+  }
+ ],
+ "segments": [
+  {
+   "id": "asad_0",
+   "from": "beribadh_w",
+   "to": "bus_stand",
+   "ax": -168,
+   "az": 204,
+   "bx": -112,
+   "bz": 194,
+   "length": 56.89,
+   "width": 11.5,
+   "kind": "main"
+  },
+  {
+   "id": "asad_1",
+   "from": "bus_stand",
+   "to": "asad_nurjahan",
+   "ax": -112,
+   "az": 194,
+   "bx": -70,
+   "bz": 162,
+   "length": 52.8,
+   "width": 12.2,
+   "kind": "main"
+  },
+  {
+   "id": "asad_2",
+   "from": "asad_nurjahan",
+   "to": "asad_salimullah",
+   "ax": -70,
+   "az": 162,
+   "bx": -15,
+   "bz": 132,
+   "length": 62.65,
+   "width": 12.2,
+   "kind": "main"
+  },
+  {
+   "id": "asad_3",
+   "from": "asad_salimullah",
+   "to": "town_hall",
+   "ax": -15,
+   "az": 132,
+   "bx": 42,
+   "bz": 106,
+   "length": 62.65,
+   "width": 12.4,
+   "kind": "main"
+  },
+  {
+   "id": "asad_4",
+   "from": "town_hall",
+   "to": "asad_post",
+   "ax": 42,
+   "az": 106,
+   "bx": 118,
+   "bz": 84,
+   "length": 79.12,
+   "width": 12.2,
+   "kind": "main"
+  },
+  {
+   "id": "asad_5",
+   "from": "asad_post",
+   "to": "asad_iqbal",
+   "ax": 118,
+   "az": 84,
+   "bx": 196,
+   "bz": 82,
+   "length": 78.03,
+   "width": 12,
+   "kind": "main"
+  },
+  {
+   "id": "asad_6",
+   "from": "asad_iqbal",
+   "to": "asad_gate_e",
+   "ax": 196,
+   "az": 82,
+   "bx": 242,
+   "bz": 78,
+   "length": 46.17,
+   "width": 12,
+   "kind": "main"
+  },
+  {
+   "id": "satmasjid_1",
+   "from": "bus_stand",
+   "to": "satmasjid_mid",
+   "ax": -112,
+   "az": 194,
+   "bx": -58,
+   "bz": 232,
+   "length": 66.03,
+   "width": 11.4,
+   "kind": "main"
+  },
+  {
+   "id": "satmasjid_2",
+   "from": "satmasjid_mid",
+   "to": "satmasjid_se",
+   "ax": -58,
+   "az": 232,
+   "bx": 18,
+   "bz": 248,
+   "length": 77.67,
+   "width": 11.4,
+   "kind": "main"
+  },
+  {
+   "id": "zakir_1",
+   "from": "town_hall",
+   "to": "zakir_w",
+   "ax": 42,
+   "az": 106,
+   "bx": 16,
+   "bz": 176,
+   "length": 74.67,
+   "width": 6.4,
+   "kind": "gali"
+  },
+  {
+   "id": "zakir_2",
+   "from": "zakir_w",
+   "to": "satmasjid_mid",
+   "ax": 16,
+   "az": 176,
+   "bx": -58,
+   "bz": 232,
+   "length": 92.8,
+   "width": 6.2,
+   "kind": "gali"
+  },
+  {
+   "id": "zakir_3",
+   "from": "asad_post",
+   "to": "zakir_e",
+   "ax": 118,
+   "az": 84,
+   "bx": 96,
+   "bz": 168,
+   "length": 86.83,
+   "width": 7.8,
+   "kind": "medium"
+  },
+  {
+   "id": "zakir_4",
+   "from": "zakir_e",
+   "to": "zakir_s",
+   "ax": 96,
+   "az": 168,
+   "bx": 112,
+   "bz": 236,
+   "length": 69.86,
+   "width": 7.8,
+   "kind": "medium"
+  },
+  {
+   "id": "zakir_5",
+   "from": "zakir_w",
+   "to": "zakir_e",
+   "ax": 16,
+   "az": 176,
+   "bx": 96,
+   "bz": 168,
+   "length": 80.4,
+   "width": 6.2,
+   "kind": "gali"
+  },
+  {
+   "id": "zakir_6",
+   "from": "satmasjid_se",
+   "to": "zakir_s",
+   "ax": 18,
+   "az": 248,
+   "bx": 112,
+   "bz": 236,
+   "length": 94.76,
+   "width": 7.6,
+   "kind": "medium"
+  },
+  {
+   "id": "ring_0",
+   "from": "beribadh_w",
+   "to": "ring_south",
+   "ax": -168,
+   "az": 204,
+   "bx": -204,
+   "bz": 96,
+   "length": 113.84,
+   "width": 9.2,
+   "kind": "medium"
+  },
+  {
+   "id": "ring_1",
+   "from": "ring_south",
+   "to": "ring_nurjahan",
+   "ax": -204,
+   "az": 96,
+   "bx": -208,
+   "bz": 42,
+   "length": 54.15,
+   "width": 11.2,
+   "kind": "main"
+  },
+  {
+   "id": "ring_2",
+   "from": "ring_nurjahan",
+   "to": "ring_tajmahal",
+   "ax": -208,
+   "az": 42,
+   "bx": -212,
+   "bz": -56,
+   "length": 98.08,
+   "width": 11.2,
+   "kind": "main"
+  },
+  {
+   "id": "ring_3",
+   "from": "ring_tajmahal",
+   "to": "ring_humayun",
+   "ax": -212,
+   "az": -56,
+   "bx": -216,
+   "bz": -106,
+   "length": 50.16,
+   "width": 11.2,
+   "kind": "main"
+  },
+  {
+   "id": "ring_4",
+   "from": "ring_humayun",
+   "to": "ring_north",
+   "ax": -216,
+   "az": -106,
+   "bx": -218,
+   "bz": -196,
+   "length": 90.02,
+   "width": 11,
+   "kind": "main"
+  },
+  {
+   "id": "nurjahan_1",
+   "from": "asad_nurjahan",
+   "to": "nurjahan_mid",
+   "ax": -70,
+   "az": 162,
+   "bx": -98,
+   "bz": 54,
+   "length": 111.57,
+   "width": 8.6,
+   "kind": "medium"
+  },
+  {
+   "id": "nurjahan_2",
+   "from": "nurjahan_mid",
+   "to": "nurjahan_north",
+   "ax": -98,
+   "az": 54,
+   "bx": -134,
+   "bz": -26,
+   "length": 87.73,
+   "width": 8.6,
+   "kind": "medium"
+  },
+  {
+   "id": "nurjahan_w",
+   "from": "nurjahan_mid",
+   "to": "ring_nurjahan",
+   "ax": -98,
+   "az": 54,
+   "bx": -208,
+   "bz": 42,
+   "length": 110.65,
+   "width": 7.8,
+   "kind": "medium"
+  },
+  {
+   "id": "chanmia_s",
+   "from": "bus_stand",
+   "to": "ring_south",
+   "ax": -112,
+   "az": 194,
+   "bx": -204,
+   "bz": 96,
+   "length": 134.42,
+   "width": 6.4,
+   "kind": "gali"
+  },
+  {
+   "id": "salimullah_1",
+   "from": "asad_salimullah",
+   "to": "salimullah_mid",
+   "ax": -15,
+   "az": 132,
+   "bx": -42,
+   "bz": 34,
+   "length": 101.65,
+   "width": 8.4,
+   "kind": "medium"
+  },
+  {
+   "id": "salimullah_2",
+   "from": "salimullah_mid",
+   "to": "salimullah_north",
+   "ax": -42,
+   "az": 34,
+   "bx": -74,
+   "bz": -42,
+   "length": 82.46,
+   "width": 8.4,
+   "kind": "medium"
+  },
+  {
+   "id": "salimullah_link",
+   "from": "nurjahan_mid",
+   "to": "salimullah_mid",
+   "ax": -98,
+   "az": 54,
+   "bx": -42,
+   "bz": 34,
+   "length": 59.46,
+   "width": 6,
+   "kind": "gali"
+  },
+  {
+   "id": "shershah_1",
+   "from": "town_hall",
+   "to": "shershah_mid",
+   "ax": 42,
+   "az": 106,
+   "bx": 14,
+   "bz": 18,
+   "length": 92.35,
+   "width": 9.2,
+   "kind": "medium"
+  },
+  {
+   "id": "shershah_2",
+   "from": "shershah_mid",
+   "to": "shershah_north",
+   "ax": 14,
+   "az": 18,
+   "bx": -16,
+   "bz": -58,
+   "length": 81.71,
+   "width": 9,
+   "kind": "medium"
+  },
+  {
+   "id": "shershah_cross",
+   "from": "salimullah_mid",
+   "to": "shershah_mid",
+   "ax": -42,
+   "az": 34,
+   "bx": 14,
+   "bz": 18,
+   "length": 58.24,
+   "width": 6.2,
+   "kind": "gali"
+  },
+  {
+   "id": "shershah_deadend",
+   "from": "shershah_mid",
+   "to": "shershah_spur_e",
+   "ax": 14,
+   "az": 18,
+   "bx": 74,
+   "bz": 4,
+   "length": 61.61,
+   "width": 6,
+   "kind": "gali"
+  },
+  {
+   "id": "tajmahal_1",
+   "from": "ring_tajmahal",
+   "to": "tajmahal_w",
+   "ax": -212,
+   "az": -56,
+   "bx": -148,
+   "bz": -78,
+   "length": 67.68,
+   "width": 9.2,
+   "kind": "medium"
+  },
+  {
+   "id": "tajmahal_2",
+   "from": "tajmahal_w",
+   "to": "nurjahan_north",
+   "ax": -148,
+   "az": -78,
+   "bx": -134,
+   "bz": -26,
+   "length": 53.85,
+   "width": 9,
+   "kind": "medium"
+  },
+  {
+   "id": "tajmahal_3",
+   "from": "nurjahan_north",
+   "to": "salimullah_north",
+   "ax": -134,
+   "az": -26,
+   "bx": -74,
+   "bz": -42,
+   "length": 62.1,
+   "width": 9.2,
+   "kind": "medium"
+  },
+  {
+   "id": "tajmahal_4",
+   "from": "salimullah_north",
+   "to": "shershah_north",
+   "ax": -74,
+   "az": -42,
+   "bx": -16,
+   "bz": -58,
+   "length": 60.17,
+   "width": 9.2,
+   "kind": "medium"
+  },
+  {
+   "id": "tajmahal_5",
+   "from": "shershah_north",
+   "to": "tajmahal_e",
+   "ax": -16,
+   "az": -58,
+   "bx": -12,
+   "bz": -112,
+   "length": 54.15,
+   "width": 8.8,
+   "kind": "medium"
+  },
+  {
+   "id": "aziz_1",
+   "from": "tajmahal_w",
+   "to": "aziz_gali",
+   "ax": -148,
+   "az": -78,
+   "bx": -86,
+   "bz": -96,
+   "length": 64.56,
+   "width": 5.8,
+   "kind": "gali"
+  },
+  {
+   "id": "aziz_2",
+   "from": "aziz_gali",
+   "to": "tajmahal_e",
+   "ax": -86,
+   "az": -96,
+   "bx": -12,
+   "bz": -112,
+   "length": 75.71,
+   "width": 5.8,
+   "kind": "gali"
+  },
+  {
+   "id": "aziz_3",
+   "from": "salimullah_north",
+   "to": "aziz_gali",
+   "ax": -74,
+   "az": -42,
+   "bx": -86,
+   "bz": -96,
+   "length": 55.32,
+   "width": 5.8,
+   "kind": "gali"
+  },
+  {
+   "id": "shahjahan_1",
+   "from": "shershah_north",
+   "to": "shahjahan_s",
+   "ax": -16,
+   "az": -58,
+   "bx": 58,
+   "bz": -22,
+   "length": 82.29,
+   "width": 8.6,
+   "kind": "medium"
+  },
+  {
+   "id": "shahjahan_2",
+   "from": "shahjahan_s",
+   "to": "tajmahal_e",
+   "ax": 58,
+   "az": -22,
+   "bx": -12,
+   "bz": -112,
+   "length": 114.02,
+   "width": 8.6,
+   "kind": "medium"
+  },
+  {
+   "id": "shahjahan_3",
+   "from": "tajmahal_e",
+   "to": "humayun_shahjahan",
+   "ax": -12,
+   "az": -112,
+   "bx": 6,
+   "bz": -168,
+   "length": 58.82,
+   "width": 8.6,
+   "kind": "medium"
+  },
+  {
+   "id": "post_shahjahan",
+   "from": "asad_post",
+   "to": "shahjahan_s",
+   "ax": 118,
+   "az": 84,
+   "bx": 58,
+   "bz": -22,
+   "length": 121.8,
+   "width": 6.6,
+   "kind": "gali"
+  },
+  {
+   "id": "aurangzeb_1",
+   "from": "shahjahan_s",
+   "to": "aurangzeb_mid",
+   "ax": 58,
+   "az": -22,
+   "bx": 134,
+   "bz": -38,
+   "length": 77.67,
+   "width": 8.8,
+   "kind": "medium"
+  },
+  {
+   "id": "aurangzeb_2",
+   "from": "aurangzeb_mid",
+   "to": "iqbal_aurangzeb",
+   "ax": 134,
+   "az": -38,
+   "bx": 214,
+   "bz": -58,
+   "length": 82.46,
+   "width": 8.8,
+   "kind": "medium"
+  },
+  {
+   "id": "iqbal_1",
+   "from": "asad_iqbal",
+   "to": "iqbal_north",
+   "ax": 196,
+   "az": 82,
+   "bx": 208,
+   "bz": -4,
+   "length": 86.83,
+   "width": 8.4,
+   "kind": "medium"
+  },
+  {
+   "id": "iqbal_2",
+   "from": "iqbal_north",
+   "to": "iqbal_aurangzeb",
+   "ax": 208,
+   "az": -4,
+   "bx": 214,
+   "bz": -58,
+   "length": 54.33,
+   "width": 8.4,
+   "kind": "medium"
+  },
+  {
+   "id": "iqbal_gate",
+   "from": "asad_gate_e",
+   "to": "iqbal_north",
+   "ax": 242,
+   "az": 78,
+   "bx": 208,
+   "bz": -4,
+   "length": 88.77,
+   "width": 6.4,
+   "kind": "gali"
+  },
+  {
+   "id": "humayun_1",
+   "from": "ring_humayun",
+   "to": "humayun_w",
+   "ax": -216,
+   "az": -106,
+   "bx": -126,
+   "bz": -136,
+   "length": 94.87,
+   "width": 8.4,
+   "kind": "medium"
+  },
+  {
+   "id": "humayun_2",
+   "from": "humayun_w",
+   "to": "humayun_shahjahan",
+   "ax": -126,
+   "az": -136,
+   "bx": 6,
+   "bz": -168,
+   "length": 135.82,
+   "width": 8.4,
+   "kind": "medium"
+  },
+  {
+   "id": "humayun_3",
+   "from": "humayun_shahjahan",
+   "to": "humayun_e",
+   "ax": 6,
+   "az": -168,
+   "bx": 84,
+   "bz": -188,
+   "length": 80.52,
+   "width": 8.4,
+   "kind": "medium"
+  },
+  {
+   "id": "humayun_4",
+   "from": "humayun_e",
+   "to": "humayun_far_e",
+   "ax": 84,
+   "az": -188,
+   "bx": 162,
+   "bz": -172,
+   "length": 79.62,
+   "width": 8,
+   "kind": "medium"
+  },
+  {
+   "id": "humayun_taj",
+   "from": "tajmahal_w",
+   "to": "humayun_w",
+   "ax": -148,
+   "az": -78,
+   "bx": -126,
+   "bz": -136,
+   "length": 62.03,
+   "width": 6.2,
+   "kind": "gali"
+  },
+  {
+   "id": "aurangzeb_humayun",
+   "from": "aurangzeb_mid",
+   "to": "humayun_e",
+   "ax": 134,
+   "az": -38,
+   "bx": 84,
+   "bz": -188,
+   "length": 158.11,
+   "width": 6.6,
+   "kind": "gali"
+  },
+  {
+   "id": "iqbal_humayun",
+   "from": "iqbal_aurangzeb",
+   "to": "humayun_far_e",
+   "ax": 214,
+   "az": -58,
+   "bx": 162,
+   "bz": -172,
+   "length": 125.3,
+   "width": 8,
+   "kind": "medium"
+  },
+  {
+   "id": "babar_0",
+   "from": "ring_north",
+   "to": "babar_w",
+   "ax": -218,
+   "az": -196,
+   "bx": -138,
+   "bz": -214,
+   "length": 82,
+   "width": 8.6,
+   "kind": "medium"
+  },
+  {
+   "id": "babar_1",
+   "from": "babar_w",
+   "to": "babar_mid",
+   "ax": -138,
+   "az": -214,
+   "bx": -18,
+   "bz": -228,
+   "length": 120.81,
+   "width": 9,
+   "kind": "medium"
+  },
+  {
+   "id": "babar_2",
+   "from": "babar_mid",
+   "to": "babar_humayun",
+   "ax": -18,
+   "az": -228,
+   "bx": 56,
+   "bz": -236,
+   "length": 74.43,
+   "width": 9,
+   "kind": "medium"
+  },
+  {
+   "id": "babar_3",
+   "from": "babar_humayun",
+   "to": "babar_e",
+   "ax": 56,
+   "az": -236,
+   "bx": 146,
+   "bz": -244,
+   "length": 90.35,
+   "width": 9,
+   "kind": "medium"
+  },
+  {
+   "id": "babar_link_w",
+   "from": "humayun_w",
+   "to": "babar_w",
+   "ax": -126,
+   "az": -136,
+   "bx": -138,
+   "bz": -214,
+   "length": 78.92,
+   "width": 6.4,
+   "kind": "gali"
+  },
+  {
+   "id": "babar_link_m",
+   "from": "humayun_shahjahan",
+   "to": "babar_mid",
+   "ax": 6,
+   "az": -168,
+   "bx": -18,
+   "bz": -228,
+   "length": 64.62,
+   "width": 6.4,
+   "kind": "gali"
+  },
+  {
+   "id": "babar_link_h",
+   "from": "humayun_e",
+   "to": "babar_humayun",
+   "ax": 84,
+   "az": -188,
+   "bx": 56,
+   "bz": -236,
+   "length": 55.57,
+   "width": 8,
+   "kind": "medium"
+  },
+  {
+   "id": "babar_link_e",
+   "from": "humayun_far_e",
+   "to": "babar_e",
+   "ax": 162,
+   "az": -172,
+   "bx": 146,
+   "bz": -244,
+   "length": 73.76,
+   "width": 7.8,
+   "kind": "medium"
+  },
+  {
+   "id": "babar_deadend",
+   "from": "babar_mid",
+   "to": "johuri_deadend",
+   "ax": -18,
+   "az": -228,
+   "bx": -18,
+   "bz": -256,
+   "length": 28,
+   "width": 5.8,
+   "kind": "gali"
+  },
+  {
+   "id": "bazar_cut_n",
+   "from": "shershah_spur_e",
+   "to": "shahjahan_s",
+   "ax": 74,
+   "az": 4,
+   "bx": 58,
+   "bz": -22,
+   "length": 30.53,
+   "width": 5.8,
+   "kind": "gali"
+  },
+  {
+   "id": "bazar_cut_se",
+   "from": "shershah_spur_e",
+   "to": "asad_post",
+   "ax": 74,
+   "az": 4,
+   "bx": 118,
+   "bz": 84,
+   "length": 91.3,
+   "width": 5.8,
+   "kind": "gali"
+  },
+  {
+   "id": "krishi_cut_s",
+   "from": "ring_nurjahan",
+   "to": "krishi_cut",
+   "ax": -208,
+   "az": 42,
+   "bx": -176,
+   "bz": -18,
+   "length": 68,
+   "width": 5.8,
+   "kind": "gali"
+  },
+  {
+   "id": "krishi_cut_n",
+   "from": "krishi_cut",
+   "to": "tajmahal_w",
+   "ax": -176,
+   "az": -18,
+   "bx": -148,
+   "bz": -78,
+   "length": 66.21,
+   "width": 5.8,
+   "kind": "gali"
+  },
+  {
+   "id": "lalmatia_cut",
+   "from": "asad_salimullah",
+   "to": "zakir_w",
+   "ax": -15,
+   "az": 132,
+   "bx": 16,
+   "bz": 176,
+   "length": 53.82,
+   "width": 6,
+   "kind": "gali"
+  },
+  {
+   "id": "johuri_bypass",
+   "from": "johuri_deadend",
+   "to": "babar_humayun",
+   "ax": -18,
+   "az": -256,
+   "bx": 56,
+   "bz": -236,
+   "length": 76.66,
+   "width": 5.8,
+   "kind": "gali"
+  }
+ ],
+ "places": [
+  {
+   "id": "stand",
+   "segmentId": "asad_1",
+   "x": -105,
+   "z": 180.5
+  },
+  {
+   "id": "bazaar",
+   "segmentId": "asad_4",
+   "x": 67.4,
+   "z": 106.6
+  },
+  {
+   "id": "tea",
+   "segmentId": "nurjahan_1",
+   "x": -89.1,
+   "z": 107
+  },
+  {
+   "id": "school",
+   "segmentId": "iqbal_1",
+   "x": 198.1,
+   "z": 34.1
+  },
+  {
+   "id": "garage",
+   "segmentId": "shershah_1",
+   "x": 33.3,
+   "z": 62.3
+  },
+  {
+   "id": "pharmacy",
+   "segmentId": "asad_4",
+   "x": 87.3,
+   "z": 86.2
+  },
+  {
+   "id": "launch",
+   "segmentId": "satmasjid_1",
+   "x": -77.2,
+   "z": 211.1
+  },
+  {
+   "id": "mosque",
+   "segmentId": "ring_2",
+   "x": -216.8,
+   "z": -28.3
+  },
+  {
+   "id": "market",
+   "segmentId": "humayun_1",
+   "x": -173.4,
+   "z": -125.9
+  },
+  {
+   "id": "bridge",
+   "segmentId": "babar_2",
+   "x": 20,
+   "z": -237
+  },
+  {
+   "id": "library",
+   "segmentId": "tajmahal_3",
+   "x": -105.3,
+   "z": -38.8
+  },
+  {
+   "id": "salimullah",
+   "segmentId": "salimullah_1",
+   "x": -25.2,
+   "z": 77.9
+  },
+  {
+   "id": "humayun",
+   "segmentId": "humayun_2",
+   "x": -61.1,
+   "z": -156.4
+  },
+  {
+   "id": "zakir",
+   "segmentId": "zakir_3",
+   "x": 110.7,
+   "z": 128.8
+  }
+ ],
+ "landmarks": [
+  {
+   "id": "town_hall_bazar",
+   "frontageSegmentId": "asad_4",
+   "x": 64.93,
+   "z": 98.11
+  },
+  {
+   "id": "krishi_market",
+   "frontageSegmentId": "humayun_1",
+   "x": -176.16,
+   "z": -134.28
+  },
+  {
+   "id": "geneva_camp",
+   "frontageSegmentId": null,
+   "x": 31.34,
+   "z": -240.03
+  },
+  {
+   "id": "town_hall_mosque",
+   "frontageSegmentId": null,
+   "x": 29.79,
+   "z": 110.02
+  },
+  {
+   "id": "shia_jame_masjid",
+   "frontageSegmentId": "ring_2",
+   "x": -201.32,
+   "z": 11.79
+  },
+  {
+   "id": "tokyo_square",
+   "frontageSegmentId": "ring_3",
+   "x": -226.46,
+   "z": -101.73
+  },
+  {
+   "id": "queens_college",
+   "frontageSegmentId": "ring_4",
+   "x": -233.09,
+   "z": -139.8
+  },
+  {
+   "id": "mohammadpur_graveyard",
+   "frontageSegmentId": "tajmahal_4",
+   "x": -50.56,
+   "z": -37.45
+  },
+  {
+   "id": "mohammadpur_eidgah",
+   "frontageSegmentId": "tajmahal_4",
+   "x": -25.76,
+   "z": -37.66
+  }
+ ],
+ "courses": [
+  {
+   "eventId": "bl_boss_10",
+   "startSegmentId": "zakir_3",
+   "startBanner": {
+    "x": 104.97,
+    "z": 133.76,
+    "yaw": 2.8854,
+    "width": 7.8
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": 42,
+     "z": 106
+    },
+    {
+     "x": -42,
+     "z": 34
+    },
+    {
+     "x": -98,
+     "z": 54
+    }
+   ],
+   "totalDistanceM": 591,
+   "gridSlots": [
+    {
+     "x": 103.03,
+     "z": 135.73
+    },
+    {
+     "x": 105.14,
+     "z": 138.56
+    },
+    {
+     "x": 101.86,
+     "z": 140.18
+    },
+    {
+     "x": 103.97,
+     "z": 143.01
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_bazar_gali_10",
+     "mainDistanceM": 164,
+     "shortcutDistanceM": 151,
+     "savingM": 13
+    }
+   ],
+   "deadlineSeconds": 115,
+   "aiReferenceTimesS": [
+    69.1
+   ]
+  },
+  {
+   "eventId": "bl_boss_09",
+   "startSegmentId": "asad_1",
+   "startBanner": {
+    "x": -92.45,
+    "z": 179.11,
+    "yaw": 2.2219,
+    "width": 12.2
+   },
+   "gateCount": 3,
+   "gateSample": [
+    {
+     "x": -15,
+     "z": 132
+    },
+    {
+     "x": 42,
+     "z": 106
+    },
+    {
+     "x": 58,
+     "z": -22
+    }
+   ],
+   "totalDistanceM": 387,
+   "gridSlots": [
+    {
+     "x": -95.2,
+     "z": 179.46
+    },
+    {
+     "x": -95.27,
+     "z": 182.99
+    },
+    {
+     "x": -98.86,
+     "z": 182.25
+    },
+    {
+     "x": -98.93,
+     "z": 185.78
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_kachabazar_09",
+     "mainDistanceM": 164,
+     "shortcutDistanceM": 92,
+     "savingM": 72
+    }
+   ],
+   "deadlineSeconds": 88,
+   "aiReferenceTimesS": [
+    51.9
+   ]
+  },
+  {
+   "eventId": "bl_boss_08",
+   "startSegmentId": "salimullah_1",
+   "startBanner": {
+    "x": -26.98,
+    "z": 88.53,
+    "yaw": -2.8728,
+    "width": 8.4
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": -74,
+     "z": -42
+    },
+    {
+     "x": 58,
+     "z": -22
+    },
+    {
+     "x": 208,
+     "z": -4
+    }
+   ],
+   "totalDistanceM": 750,
+   "gridSlots": [
+    {
+     "x": -27.67,
+     "z": 91.21
+    },
+    {
+     "x": -24.43,
+     "z": 92.59
+    },
+    {
+     "x": -26.45,
+     "z": 95.64
+    },
+    {
+     "x": -23.2,
+     "z": 97.03
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_aziz_08",
+     "mainDistanceM": 230,
+     "shortcutDistanceM": 140,
+     "savingM": 90
+    }
+   ],
+   "deadlineSeconds": 115,
+   "aiReferenceTimesS": [
+    87.5
+   ]
+  },
+  {
+   "eventId": "bl_boss_07",
+   "startSegmentId": "tajmahal_3",
+   "startBanner": {
+    "x": -105.12,
+    "z": -33.7,
+    "yaw": -1.3102,
+    "width": 9.2
+   },
+   "gateCount": 6,
+   "gateSample": [
+    {
+     "x": -208,
+     "z": 42
+    },
+    {
+     "x": -98,
+     "z": 54
+    },
+    {
+     "x": -74,
+     "z": -42
+    }
+   ],
+   "totalDistanceM": 1010,
+   "gridSlots": [
+    {
+     "x": -102.44,
+     "z": -32.99
+    },
+    {
+     "x": -101.03,
+     "z": -36.22
+    },
+    {
+     "x": -98,
+     "z": -34.17
+    },
+    {
+     "x": -96.59,
+     "z": -37.41
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_krishi_07",
+     "mainDistanceM": 166,
+     "shortcutDistanceM": 134,
+     "savingM": 32
+    }
+   ],
+   "deadlineSeconds": 180,
+   "aiReferenceTimesS": [
+    139.7
+   ]
+  },
+  {
+   "eventId": "bl_boss_06",
+   "startSegmentId": "asad_3",
+   "startBanner": {
+    "x": 18.53,
+    "z": 116.7,
+    "yaw": 1.9987,
+    "width": 12.4
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": 58,
+     "z": -22
+    },
+    {
+     "x": 6,
+     "z": -168
+    },
+    {
+     "x": 56,
+     "z": -236
+    }
+   ],
+   "totalDistanceM": 791,
+   "gridSlots": [
+    {
+     "x": 15.78,
+     "z": 116.44
+    },
+    {
+     "x": 14.92,
+     "z": 119.87
+    },
+    {
+     "x": 11.59,
+     "z": 118.35
+    },
+    {
+     "x": 10.74,
+     "z": 121.78
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_bazar_06",
+     "mainDistanceM": 256,
+     "shortcutDistanceM": 184,
+     "savingM": 72
+    }
+   ],
+   "deadlineSeconds": 145,
+   "aiReferenceTimesS": [
+    109
+   ]
+  },
+  {
+   "eventId": "bl_boss_05",
+   "startSegmentId": "shershah_1",
+   "startBanner": {
+    "x": 28.67,
+    "z": 64.11,
+    "yaw": -2.8335,
+    "width": 9.2
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": -148,
+     "z": -78
+    },
+    {
+     "x": -208,
+     "z": 42
+    },
+    {
+     "x": -15,
+     "z": 132
+    }
+   ],
+   "totalDistanceM": 979,
+   "gridSlots": [
+    {
+     "x": 28.08,
+     "z": 66.82
+    },
+    {
+     "x": 31.38,
+     "z": 68.08
+    },
+    {
+     "x": 29.48,
+     "z": 71.2
+    },
+    {
+     "x": 32.78,
+     "z": 72.46
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_aziz_05",
+     "mainDistanceM": 230,
+     "shortcutDistanceM": 140,
+     "savingM": 90
+    },
+    {
+     "id": "sc_lalmatia_05",
+     "mainDistanceM": 229,
+     "shortcutDistanceM": 134,
+     "savingM": 95
+    }
+   ],
+   "deadlineSeconds": 140,
+   "aiReferenceTimesS": [
+    106.6
+   ]
+  },
+  {
+   "eventId": "bl_boss_04",
+   "startSegmentId": "humayun_2",
+   "startBanner": {
+    "x": -64.97,
+    "z": -150.79,
+    "yaw": -1.333,
+    "width": 8.4
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": -216,
+     "z": -106
+    },
+    {
+     "x": -208,
+     "z": 42
+    },
+    {
+     "x": -168,
+     "z": 204
+    }
+   ],
+   "totalDistanceM": 729,
+   "gridSlots": [
+    {
+     "x": -62.31,
+     "z": -150.02
+    },
+    {
+     "x": -60.83,
+     "z": -153.22
+    },
+    {
+     "x": -57.84,
+     "z": -151.1
+    },
+    {
+     "x": -56.36,
+     "z": -154.3
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_krishi_04",
+     "mainDistanceM": 166,
+     "shortcutDistanceM": 134,
+     "savingM": 32
+    }
+   ],
+   "deadlineSeconds": 105,
+   "aiReferenceTimesS": [
+    76.1
+   ]
+  },
+  {
+   "eventId": "bl_boss_03",
+   "startSegmentId": "satmasjid_2",
+   "startBanner": {
+    "x": -13.23,
+    "z": 241.43,
+    "yaw": -1.7783,
+    "width": 11.4
+   },
+   "gateCount": 3,
+   "gateSample": [
+    {
+     "x": -112,
+     "z": 194
+    },
+    {
+     "x": -98,
+     "z": 54
+    },
+    {
+     "x": -74,
+     "z": -42
+    }
+   ],
+   "totalDistanceM": 490,
+   "gridSlots": [
+    {
+     "x": -11.16,
+     "z": 243.27
+    },
+    {
+     "x": -8.44,
+     "z": 241.02
+    },
+    {
+     "x": -6.66,
+     "z": 244.22
+    },
+    {
+     "x": -3.94,
+     "z": 241.97
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_chanmia_03",
+     "mainDistanceM": 225,
+     "shortcutDistanceM": 189,
+     "savingM": 36
+    }
+   ],
+   "deadlineSeconds": 105,
+   "aiReferenceTimesS": [
+    50.1
+   ]
+  },
+  {
+   "eventId": "bl_boss_02",
+   "startSegmentId": "ring_4",
+   "startBanner": {
+    "x": -217.19,
+    "z": -159.4,
+    "yaw": 0.0222,
+    "width": 11
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": -212,
+     "z": -56
+    },
+    {
+     "x": -70,
+     "z": 162
+    },
+    {
+     "x": 42,
+     "z": 106
+    }
+   ],
+   "totalDistanceM": 866,
+   "gridSlots": [
+    {
+     "x": -215.86,
+     "z": -161.83
+    },
+    {
+     "x": -218.67,
+     "z": -163.97
+    },
+    {
+     "x": -215.96,
+     "z": -166.43
+    },
+    {
+     "x": -218.77,
+     "z": -168.57
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_bazar_02",
+     "mainDistanceM": 256,
+     "shortcutDistanceM": 184,
+     "savingM": 72
+    }
+   ],
+   "deadlineSeconds": 105,
+   "aiReferenceTimesS": [
+    74.5
+   ]
+  },
+  {
+   "eventId": "bl_boss_01",
+   "startSegmentId": "asad_5",
+   "startBanner": {
+    "x": 160.84,
+    "z": 82.9,
+    "yaw": -1.5452,
+    "width": 12
+   },
+   "gateCount": 10,
+   "gateSample": [
+    {
+     "x": 42,
+     "z": 106
+    },
+    {
+     "x": -112,
+     "z": 194
+    },
+    {
+     "x": -148,
+     "z": -78
+    }
+   ],
+   "totalDistanceM": 2233,
+   "gridSlots": [
+    {
+     "x": 163.28,
+     "z": 84.22
+    },
+    {
+     "x": 165.4,
+     "z": 81.4
+    },
+    {
+     "x": 167.87,
+     "z": 84.1
+    },
+    {
+     "x": 170,
+     "z": 81.29
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_krishi_01",
+     "mainDistanceM": 166,
+     "shortcutDistanceM": 134,
+     "savingM": 32
+    },
+    {
+     "id": "sc_aziz_01",
+     "mainDistanceM": 230,
+     "shortcutDistanceM": 140,
+     "savingM": 90
+    }
+   ],
+   "deadlineSeconds": 270,
+   "aiReferenceTimesS": [
+    213.5
+   ]
+  },
+  {
+   "eventId": "ev_street_asad",
+   "startSegmentId": "asad_2",
+   "startBanner": {
+    "x": -43.14,
+    "z": 147.35,
+    "yaw": 2.0701,
+    "width": 12.2
+   },
+   "gateCount": 8,
+   "gateSample": [
+    {
+     "x": 42,
+     "z": 106
+    },
+    {
+     "x": 58,
+     "z": -22
+    },
+    {
+     "x": -42,
+     "z": 34
+    }
+   ],
+   "totalDistanceM": 1091,
+   "gridSlots": [
+    {
+     "x": -45.91,
+     "z": 147.29
+    },
+    {
+     "x": -46.52,
+     "z": 150.76
+    },
+    {
+     "x": -49.95,
+     "z": 149.49
+    },
+    {
+     "x": -50.56,
+     "z": 152.97
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_asad_bazar",
+     "mainDistanceM": 256,
+     "shortcutDistanceM": 184,
+     "savingM": 72
+    }
+   ],
+   "deadlineSeconds": 245,
+   "aiReferenceTimesS": [
+    170.9,
+    183.1,
+    194.6
+   ]
+  },
+  {
+   "eventId": "ev_sprint_nurjahan",
+   "startSegmentId": "nurjahan_1",
+   "startBanner": {
+    "x": -83.2,
+    "z": 111.08,
+    "yaw": -2.8879,
+    "width": 8.6
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": -134,
+     "z": -26
+    },
+    {
+     "x": -16,
+     "z": -58
+    },
+    {
+     "x": 14,
+     "z": 18
+    }
+   ],
+   "totalDistanceM": 548,
+   "gridSlots": [
+    {
+     "x": -83.94,
+     "z": 113.75
+    },
+    {
+     "x": -80.71,
+     "z": 115.18
+    },
+    {
+     "x": -82.78,
+     "z": 118.2
+    },
+    {
+     "x": -79.56,
+     "z": 119.64
+    }
+   ],
+   "shortcuts": [],
+   "deadlineSeconds": 125,
+   "aiReferenceTimesS": [
+    67,
+    71.7,
+    93.2
+   ]
+  },
+  {
+   "eventId": "ev_delivery_bazaar",
+   "startSegmentId": "asad_3",
+   "startBanner": {
+    "x": 18.53,
+    "z": 116.7,
+    "yaw": 1.9987,
+    "width": 12.4
+   },
+   "gateCount": 3,
+   "gateSample": [
+    {
+     "x": 14,
+     "z": 18
+    },
+    {
+     "x": -148,
+     "z": -78
+    },
+    {
+     "x": 6,
+     "z": -168
+    }
+   ],
+   "totalDistanceM": 574,
+   "gridSlots": [
+    {
+     "x": 15.78,
+     "z": 116.44
+    },
+    {
+     "x": 14.92,
+     "z": 119.87
+    },
+    {
+     "x": 11.59,
+     "z": 118.35
+    },
+    {
+     "x": 10.74,
+     "z": 121.78
+    }
+   ],
+   "shortcuts": [],
+   "deadlineSeconds": 140,
+   "aiReferenceTimesS": [
+    96.5,
+    100.6,
+    104.3
+   ]
+  },
+  {
+   "eventId": "ev_shortcut_gali",
+   "startSegmentId": "ring_2",
+   "startBanner": {
+    "x": -210.5,
+    "z": -19.3,
+    "yaw": 0.0408,
+    "width": 11.2
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": -208,
+     "z": 42
+    },
+    {
+     "x": -148,
+     "z": -78
+    },
+    {
+     "x": -42,
+     "z": 34
+    }
+   ],
+   "totalDistanceM": 703,
+   "gridSlots": [
+    {
+     "x": -209.22,
+     "z": -21.76
+    },
+    {
+     "x": -212.07,
+     "z": -23.84
+    },
+    {
+     "x": -209.41,
+     "z": -26.35
+    },
+    {
+     "x": -212.26,
+     "z": -28.44
+    }
+   ],
+   "shortcuts": [
+    {
+     "id": "sc_gali_lalmatia",
+     "mainDistanceM": 229,
+     "shortcutDistanceM": 134,
+     "savingM": 95
+    }
+   ],
+   "deadlineSeconds": 155,
+   "aiReferenceTimesS": [
+    100.7,
+    104.2,
+    119
+   ]
+  },
+  {
+   "eventId": "ev_pursuit_satmasjid",
+   "startSegmentId": "satmasjid_1",
+   "startBanner": {
+    "x": -80.48,
+    "z": 216.18,
+    "yaw": -2.184,
+    "width": 11.4
+   },
+   "gateCount": 3,
+   "gateSample": [
+    {
+     "x": -112,
+     "z": 194
+    },
+    {
+     "x": -212,
+     "z": -56
+    },
+    {
+     "x": -18,
+     "z": -228
+    }
+   ],
+   "totalDistanceM": 724,
+   "gridSlots": [
+    {
+     "x": -79.31,
+     "z": 218.69
+    },
+    {
+     "x": -75.93,
+     "z": 217.7
+    },
+    {
+     "x": -75.55,
+     "z": 221.34
+    },
+    {
+     "x": -72.16,
+     "z": 220.34
+    }
+   ],
+   "shortcuts": [],
+   "deadlineSeconds": 150,
+   "aiReferenceTimesS": [
+    97.1,
+    109.7,
+    112.6
+   ]
+  },
+  {
+   "eventId": "ev_duel_ring",
+   "startSegmentId": "ring_3",
+   "startBanner": {
+    "x": -214.01,
+    "z": -81.11,
+    "yaw": 0.0798,
+    "width": 11.2
+   },
+   "gateCount": 3,
+   "gateSample": [
+    {
+     "x": -98,
+     "z": 54
+    },
+    {
+     "x": 42,
+     "z": 106
+    },
+    {
+     "x": 208,
+     "z": -4
+    }
+   ],
+   "totalDistanceM": 765,
+   "gridSlots": [
+    {
+     "x": -212.82,
+     "z": -83.61
+    },
+    {
+     "x": -215.75,
+     "z": -85.58
+    },
+    {
+     "x": -213.19,
+     "z": -88.2
+    },
+    {
+     "x": -216.12,
+     "z": -90.17
+    }
+   ],
+   "shortcuts": [],
+   "deadlineSeconds": 185,
+   "aiReferenceTimesS": [
+    91,
+    103.2,
+    145.3
+   ]
+  },
+  {
+   "eventId": "ev_survival_jam",
+   "startSegmentId": "asad_5",
+   "startBanner": {
+    "x": 156.16,
+    "z": 83.02,
+    "yaw": -1.5452,
+    "width": 12
+   },
+   "gateCount": 4,
+   "gateSample": [
+    {
+     "x": 118,
+     "z": 84
+    },
+    {
+     "x": 42,
+     "z": 106
+    },
+    {
+     "x": -112,
+     "z": 194
+    }
+   ],
+   "totalDistanceM": 439,
+   "gridSlots": [
+    {
+     "x": 158.6,
+     "z": 84.34
+    },
+    {
+     "x": 160.72,
+     "z": 81.52
+    },
+    {
+     "x": 163.19,
+     "z": 84.22
+    },
+    {
+     "x": 165.32,
+     "z": 81.41
+    }
+   ],
+   "shortcuts": [],
+   "deadlineSeconds": 100,
+   "aiReferenceTimesS": [
+    69.1,
+    71.1,
+    72.5
+   ]
+  }
+ ]
+}

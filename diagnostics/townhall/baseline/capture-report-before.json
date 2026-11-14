@@ -1,0 +1,42 @@
+{
+  "capturedAt": "2026-11-13T18:03:25.189Z",
+  "base": "http://127.0.0.1:4211",
+  "tag": "before",
+  "playerAnchor": {
+    "x": 67,
+    "z": 98.8,
+    "yaw": 1.85
+  },
+  "live": {
+    "pedestrians": 68,
+    "marketCrew": 0,
+    "marketPosts": 0
+  },
+  "summary": {
+    "maxDrawCalls": 0,
+    "maxTriangles": 0,
+    "worstMeanFrameMs": 0,
+    "measuredViews": 0
+  },
+  "shots": [
+    {
+      "name": "11-vendor-closeup",
+      "pos": [
+        64.06,
+        1.52,
+        82.28
+      ],
+      "look": [
+        64.51,
+        1.25,
+        80.2
+      ],
+      "fov": 52,
+      "note": "close on a stallholder at ~2 m: pose, hands, produce",
+      "file": "diagnostics/townhall/baseline/11-vendor-closeup-before.png",
+      "bytes": 313163,
+      "perf": null
+    }
+  ],
+  "errors": []
+}

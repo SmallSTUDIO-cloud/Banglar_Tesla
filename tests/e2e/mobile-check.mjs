@@ -289,7 +289,9 @@ async function main() {
     const camToggle = await page.evaluate(() => {
       const g = window.__banglarTesla;
       const before = g.settings.get().cameraMode;
-      const camBtn = [...document.querySelectorAll('.hud-topright .icon-btn')][1];
+      // By action, not by position: the map button sits between pause and camera,
+      // so an index here silently clicked "map" once that button was added.
+      const camBtn = document.querySelector('.hud-topright [data-action="camera"]');
       camBtn?.click();
       const after = g.settings.get().cameraMode;
       return { before, after };
